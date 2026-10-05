@@ -4,9 +4,10 @@ import { createCourseView, createRadialProfileView } from './em-course-view.js';
 import { inductionAfterStructural, inductionAfterNumeric, inductionNumericReason } from './course-illustration-contract.js';
 import { renderSymbolic } from './course-symbolic-view.js';
 import { appendCourseMath } from './course-math-view.js';
+import { plainText, siComplex, siText, siVector } from './em-format.js';
 
 const statusLabel = { valid: '유효', singular: '특이점', boundary: '경계', invalid: '입력 오류', unsupported: '지원 범위 밖' };
-const format = value => Number.isFinite(value) ? (value === 0 ? '0' : value.toExponential(5)) : '미정';
+const format = plainText;
 const list = (parent, values) => { parent.replaceChildren(); for (const text of values || []) { const item = document.createElement('li'); item.textContent = String(text); parent.append(item); } };
 
 export function createEMCourseController(root, { onClose } = {}) {
@@ -157,9 +158,9 @@ export function createEMCourseController(root, { onClose } = {}) {
   function showError(message) { $('#em-course-error').hidden = !message; $('#em-course-error').textContent = message; }
   function renderAnswer(){
     const data=record(),result=data.result,items=[],units={E:'V/m',D:'C/m²',B:'T',H:'A/m'};
-    for(const [key,v] of Object.entries(result.vectors||{}))if(Array.isArray(v)&&v.every(Number.isFinite)){items.push({key:'vector:'+key,label:key+' 벡터',text:`${key}=(${v.map(format).join(', ')}) ${units[key]||''}`});items.push({key:'magnitude:'+key,label:'|'+key+'| 크기',text:`|${key}|=${format(Math.hypot(...v))} ${units[key]||''}`});}
-    for(const s of result.scalars||[])if(Number.isFinite(s.value))items.push({key:'scalar:'+s.key,label:s.label,text:`${s.label}=${format(s.value)} ${s.unit||''}`});
-    for(const p of result.phasors||[])if(Number.isFinite(p.re)&&Number.isFinite(p.im))items.push({key:'phasor:'+p.key,label:p.label+' 위상자',text:`${p.label}=${format(p.re)} ${p.im<0?'−':'+'} j${format(Math.abs(p.im))} ${p.unit||''} · ${p.reference||''}`});
+    for(const [key,v] of Object.entries(result.vectors||{}))if(Array.isArray(v)&&v.every(Number.isFinite)){items.push({key:'vector:'+key,label:key+' 벡터',text:`${key}=${siVector(v,units[key]||'')}`});items.push({key:'magnitude:'+key,label:'|'+key+'| 크기',text:`|${key}|=${siText(Math.hypot(...v),units[key]||'')}`});}
+    for(const s of result.scalars||[])if(Number.isFinite(s.value))items.push({key:'scalar:'+s.key,label:s.label,text:`${s.label}=${siText(s.value,s.unit||'')}`});
+    for(const p of result.phasors||[])if(Number.isFinite(p.re)&&Number.isFinite(p.im))items.push({key:'phasor:'+p.key,label:p.label+' 위상자',text:`${p.label}=${siComplex(p.re,p.im,p.unit||'',{polar:false})} · ${p.reference||''}`});
     if(!data.requestedKey&&items.length){const first=items.find(i=>i.key==='phasor:voltage')||items[0];data.requestedKey=first.key;data.requestedLabel=first.label;}
     const select=$('#em-course-requested');select.replaceChildren();
     for(const item of items){const option=document.createElement('option');option.value=item.key;option.textContent=item.label;select.append(option);}
@@ -168,7 +169,7 @@ export function createEMCourseController(root, { onClose } = {}) {
     select.value=data.requestedKey;
     const infinity=data.requestedKey==='scalar:swr'&&(result.notes||[]).some(n=>n.includes('SWR')&&n.includes('무한'));
     $('#em-course-answer').textContent=data.numericIllustrationSupported===false?'이 구조 조건은 기호 풀이만 표시합니다. 일치하는 수치 모델이 연결되지 않았습니다.':data.problemMode&&data.problemPending?'필요한 수치·조건을 입력하고 적용하세요. 아직 문제의 답을 표시하지 않습니다.':item?item.text:infinity?'SWR = ∞ (완전반사 · 유한 숫자 없음)':`요청한 값은 이 위치/모델에서 유한 단일값으로 표시할 수 없습니다. ${result.reason||''}`;
-    $('#em-course-substitution').textContent=data.problemMode&&data.problemPending?'입력 조건 미완성':(definition().parameters||[]).map(p=>`${p.label}: ${format(data.params[p.key])} ${p.unit}`).join(' · ')+` · 측정점 (${data.point.map(format).join(', ')}) m`;
+    $('#em-course-substitution').textContent=data.problemMode&&data.problemPending?'입력 조건 미완성':(definition().parameters||[]).map(p=>`${p.label}: ${siText(data.params[p.key],p.unit)}`).join(' · ')+` · 측정점 ${siVector(data.point,'m')}`;
   }
   function runChecks() {
     const def = definition(), data = record(); data.checkError = '';
@@ -188,7 +189,7 @@ export function createEMCourseController(root, { onClose } = {}) {
     for (const row of data.checks) {
       const block = document.createElement('div'); block.className = 'em-course-check'; block.dataset.status = row.status;
       const title = document.createElement('strong'); title.textContent = `${row.status === 'pass' ? 'PASS' : row.status === 'fail' ? '비교 불일치' : ['unconverged','inconclusive'].includes(row.status)?'수치 미수렴/미판정':'미판정/범위 제외'} · ${row.label}`;
-      const numbers = document.createElement('p'); numbers.textContent = `수치 ${format(row.actual)} / 기준 ${format(row.expected)} ${row.unit || ''}`;
+      const numbers = document.createElement('p'); numbers.textContent = `수치 ${siText(row.actual,row.unit||'')} / 기준 ${siText(row.expected,row.unit||'')}`;
       const detail = document.createElement('p'); detail.textContent = [row.method, row.reason, `허용오차 abs ${row.absTolerance ?? '—'} / rel ${row.relTolerance ?? '—'}`].filter(Boolean).join(' · ');
       block.append(title,numbers,detail); container.append(block);
     }
@@ -201,13 +202,12 @@ export function createEMCourseController(root, { onClose } = {}) {
     const pending=data.problemMode&&data.problemPending,unpicturedCoax=def.id.startsWith('coax-current')&&data.symbolicOptions.innerMode===1&&data.symbolicOptions.outerMode===1,unmappedParameterChoice=(def.symbolicControls||[]).some(c=>{const p=def.parameters.find(p=>p.key===c.key),v=data.symbolicOptions[c.key];return p&&typeof v==='number'&&(p.min!==undefined&&v<p.min||p.max!==undefined&&v>p.max);}),inductionReason=inductionNumericReason(def.id,data.symbolicOptions),unpicturedModel=unpicturedCoax||unmappedParameterChoice||Boolean(inductionReason);data.numericIllustrationSupported=!unpicturedModel;$('#em-course-illustration').hidden=Boolean(inductionReason);
     const units = { E:'V/m',D:'C/m²',B:'T',H:'A/m' }, keys = [];
     if (result.status === 'valid') {
-      for (const [key,vector] of Object.entries(result.vectors || {})) { if (!Array.isArray(vector) || !vector.every(Number.isFinite)) continue; keys.push(key); addValue(`${key} (x, y, z)`,`(${vector.map(format).join(', ')}) ${units[key] || ''}`); addValue(`|${key}|`,`${format(Math.hypot(...vector))} ${units[key] || ''}`); }
+      for (const [key,vector] of Object.entries(result.vectors || {})) { if (!Array.isArray(vector) || !vector.every(Number.isFinite)) continue; keys.push(key); addValue(`${key} (x, y, z)`,siVector(vector,units[key] || '')); addValue(`|${key}|`,siText(Math.hypot(...vector),units[key] || '')); }
     } else addValue('계산 상태', result.reason || '이 측정 위치에서는 장을 표시하지 않습니다.');
     // Boundary results may carry finite one-sided limits or a continuous potential.
-    for(const item of result.scalars || [])if(Number.isFinite(item.value))addValue(item.label || item.key,`${format(item.value)} ${item.unit || ''}`);
+    for(const item of result.scalars || [])if(Number.isFinite(item.value))addValue(item.label || item.key,siText(item.value,item.unit || ''));
     for(const phasor of result.phasors || [])if(Number.isFinite(phasor.re)&&Number.isFinite(phasor.im)){
-      const m=Math.hypot(phasor.re,phasor.im),angle=m?`${(Math.atan2(phasor.im,phasor.re)*180/Math.PI).toFixed(2)}°`:'위상 미정';
-      addValue(`${phasor.label} · 복소/극형`,`${format(phasor.re)} ${phasor.im<0?'−':'+'} j${format(Math.abs(phasor.im))} = ${format(m)} ∠ ${angle} ${phasor.unit || ''}`);
+      addValue(`${phasor.label} · 복소/극형`,siComplex(phasor.re,phasor.im,phasor.unit || ''));
     }
     const references=[...new Set((result.phasors || []).map(p=>p.reference).filter(Boolean))];
     const vectorSelect = $('#em-course-vector'), choices = keys.length ? keys : [''];

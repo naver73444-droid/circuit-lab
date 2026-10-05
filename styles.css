@@ -84,6 +84,9 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .canvas-caption strong { font-size: 14px; white-space: nowrap; }
 .canvas-caption span { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .file-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.file-menu > summary, .canvas-corner { display: none; }
+.head-tools { display: flex; align-items: center; gap: 4px; }
+.head-tools:empty { display: none; }
 .file-actions button, .file-actions select { min-height: 32px; padding: 2px 9px; font-size: 13px; }
 #example-select { min-width: 130px; max-width: 200px; padding: 0 6px; }
 .canvas-bar { display: flex; align-items: center; gap: 6px 10px; padding: 4px 10px 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line-soft); }
@@ -342,18 +345,34 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
   .workbench > .panel { flex: 0 0 auto; order: 1; }
   .workbench > .canvas-panel { order: 0; overflow: visible; }
   .canvas-wrap { flex: 0 0 auto; height: clamp(280px, 46dvh, 460px); }
-  .canvas-head { padding: 6px 8px 2px; gap: 4px; }
+  /* Header: two rows. Row 1 = title + undo/redo/help + file menu; row 2 = tools. Zoom and selection actions sit on the canvas. */
+  .canvas-head { flex-wrap: nowrap; padding: 6px 8px 2px; gap: 4px; }
+  .canvas-caption { flex: 1 1 0; min-width: 0; }
   .canvas-caption span { display: none; }
-  .canvas-caption { flex: 1 1 100%; }
-  .file-actions { width: 100%; flex-wrap: nowrap; gap: 4px; }
-  .file-actions button, .file-actions select { min-height: 40px; flex: 0 0 auto; padding: 2px 7px; font-size: 13px; }
-  #example-select { flex: 1 1 0; min-width: 0; max-width: none; }
-  .canvas-bar { padding: 4px 8px 6px; gap: 4px 8px; }
-  .tool-group button { min-height: 40px; padding-inline: 9px; }
+  .canvas-caption strong { overflow: hidden; text-overflow: ellipsis; }
+  .head-tools button, .head-tools > summary, .file-menu > summary { min-height: 40px; }
+  .head-tools button { min-width: 40px; padding: 2px 4px; font-size: 16px; }
+  .file-menu { position: relative; flex: 0 0 auto; }
+  .file-menu > summary { display: flex; align-items: center; gap: 4px; padding: 2px 11px; list-style: none; font-size: 13px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 9px; }
+  .file-menu > summary::-webkit-details-marker { display: none; }
+  .file-menu > summary::after { content: "▾"; color: var(--muted); }
+  .file-menu[open] > summary { color: var(--accent); border-color: var(--accent); background: var(--selection); }
+  .file-menu .file-actions { position: absolute; right: 0; top: calc(100% + 6px); z-index: 38; width: min(260px, calc(100vw - 24px)); flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 6px; padding: 10px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.4); }
+  .file-actions button, .file-actions select { min-height: 44px; padding: 2px 10px; font-size: 14px; text-align: left; max-width: none; width: 100%; }
+  .canvas-bar { flex-wrap: nowrap; padding: 2px 8px 6px; gap: 4px 6px; }
+  .canvas-bar .tool-group:first-child { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; }
+  .canvas-bar .tool-group:first-child .tool { flex: 1 1 auto; min-width: 40px; }
+  .tool-group button { min-height: 40px; padding-inline: 6px; font-size: 13px; }
   .tool-group.compact { gap: 3px; }
-  .tool-group.compact button { min-width: 36px; padding-inline: 4px; }
-  .interaction-help > summary { min-height: 40px; }
+  .tool-group.compact button { min-width: 40px; padding-inline: 4px; }
+  .interaction-help > summary { min-height: 40px; min-width: 40px; justify-content: center; padding: 2px 4px; font-size: 0; }
+  .interaction-help > summary::before { margin-right: 0; width: 20px; height: 20px; font-size: 13px; }
   .interaction-help-card { position: fixed; left: 8px; right: 8px; top: 120px; width: auto; max-height: calc(100dvh - 190px); }
+  .canvas-corner { position: absolute; right: 8px; bottom: 8px; z-index: 5; display: flex; align-items: center; gap: 4px; padding: 3px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line-soft); border-radius: 12px; }
+  .canvas-corner button { min-height: 40px; min-width: 40px; padding: 2px 6px; font-size: 16px; }
+  .canvas-corner #fit-button { font-size: 13px; color: var(--accent); }
+  .canvas-corner button:disabled { display: none; }
+  .canvas-corner .tool-group { gap: 3px; flex-wrap: nowrap; }
   .analysis-bar { padding: 6px 8px; }
   .analysis-pick select, .run-button, .cancel-analysis { min-height: 40px; }
   .draft-notice { position: fixed; left: 8px; bottom: 64px; z-index: 60; background: var(--warning-bg); border: 1px solid var(--warning); padding: 6px 8px; border-radius: 10px; }
@@ -682,3 +701,15 @@ body[data-workspace="em"] #em-course-root #em-course-advanced[open]{display:flex
 /* Shared field navigation: private signals course occupies the central panel. */
 #signals-workspace{grid-row:2;min-height:0;overflow:auto;background:var(--bg)}
 #signals-workspace[hidden]{display:none!important}
+
+/* EM learning-screen grouping (formerly injected at runtime). */
+#em-workspace .em-mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--line);border-radius:9px;min-height:42px;flex:0 0 auto}
+#em-workspace .em-mode-switch button{border:0;border-radius:0;min-height:42px;font-weight:600}
+#em-workspace .em-mode-switch button:first-child{border-radius:8px 0 0 8px}
+#em-workspace .em-mode-switch button:last-child{border-radius:0 8px 8px 0}
+#em-workspace .em-mode-switch button+button{border-left:1px solid var(--line)}
+#em-workspace .em-mode-switch button[aria-pressed="true"]{background:var(--selection);color:var(--accent)}
+#em-workspace #em-pg-advanced{margin:0}
+#em-workspace #em-pg-advanced>.em-pg-toolbar,#em-workspace #em-pg-advanced>.em-field-grid{margin:10px}
+#em-workspace .em-results dt[hidden],#em-workspace .em-results dd[hidden]{display:none}
+#em-workspace #em-slice-note:empty{display:none}

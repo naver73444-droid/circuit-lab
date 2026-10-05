@@ -125,9 +125,6 @@ export function createCircuitCourseView(host) {
   let settingsOpen = false;
   const onToggle = event => { if (event.target.matches?.('[data-circuit-course-display-settings]')) settingsOpen = event.target.open; };
   host.addEventListener('toggle', onToggle, true);
-  // The shell header outside the host repeats the title; keep only the back button (tolerates the simplified static markup).
-  const shellHeader = host.closest?.('#circuit-course-shell')?.querySelector('.circuit-course-integration-header');
-  if (shellHeader) { shellHeader.querySelector('strong')?.remove(); const back = shellHeader.querySelector('#circuit-course-back'); if (back && back.textContent !== '← 회로 편집기') back.textContent = '← 회로 편집기'; }
   const q = name => host.querySelector('[data-circuit-course-' + name + ']');
   const mathCards = parent => {for(const box of parent.querySelectorAll('.circuit-course-formula')){const source=box.textContent;box.replaceChildren();appendCourseMath(box,source);}};
   function showSymbolicAnswers(data, solution) {

@@ -55,6 +55,7 @@ import { distanceToSegment } from "./touch-targets.js";
 import { initializePhasorPractice } from "./phasor-practice.js";
 import { currentArrowGeometry, currentDirectionDescriptor, currentDirectionGuide, currentProbeLabel } from "./current-direction.js";
 import { createLazyController, createWorkspaceTabs } from "./workspace-tabs.js";
+import { initResponsiveEditor } from "./responsive-editor.js";
 
 const COLORS = ["#80bfff", "#f5bc79", "#c5a2f2", "#8ed4ad", "#ff969e", "#d7d783", "#83d2db", "#eea7d0"];
 // [type, symbol, label, basic]: non-basic parts (dependent sources, sensors) sit under "더보기".
@@ -1978,6 +1979,7 @@ function setupEvents() {
   for(const type of ['pointerenter','focus'])document.getElementById('circuit-course-open').addEventListener(type,()=>circuitCourseLazy.prefetch());
   document.getElementById('circuit-course-back').addEventListener('click',()=>showCircuitCourse(false));
   window.addEventListener('resize',()=>{if(circuitCourseActive&&workspaceTabs.active==='circuit')updateCircuitCourseTop();});
+  initResponsiveEditor(document, window);
   // The help card is a popover: Escape or an outside click closes it.
   const help = document.getElementById("interaction-help");
   document.addEventListener("click", (event) => { if (help.open && !help.contains(event.target)) help.open = false; });
