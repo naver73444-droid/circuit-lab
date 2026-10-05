@@ -649,28 +649,146 @@ function stampVoltage(A, b, a, z, branch, voltage) {
 const PIVOT_RELATIVE_TOLERANCE = 1e-12;
 const PIVOT_ABSOLUTE_FLOOR = 1e-300;
 
-function solveLinear(A, b) {
-  const n = b.length;
-  const matrix = A.map((row, index) => [...row, b[index]]);
-  const columnScale = Array(n).fill(0);
-  for (let row = 0; row < n; row += 1) for (let column = 0; column < n; column += 1) columnScale[column] = Math.max(columnScale[column], Math.abs(matrix[row][column]));
+// LU with partial pivoting on flat Float64Array storage (n^3/3 instead of the
+// n^3 of Gauss-Jordan). Pivot choice and the singular test are the same as the
+// Gauss-Jordan elimination it replaces: the largest |entry| of the (reduced)
+// column wins, and it must exceed the relative tolerance of the ORIGINAL column.
+// Reusable scratch buffers for one-shot solves (Newton iterations, DC, initial
+// state): small systems are dominated by typed-array allocation otherwise. The
+// solver is synchronous and never re-entered, so one module-level set is safe.
+let scratchSize = 0;
+let scratchLu = new Float64Array(0);
+let scratchScale = new Float64Array(0);
+let scratchPivots = new Int32Array(0);
+let scratchX = new Float64Array(0);
+
+function ensureScratch(n) {
+  if (n <= scratchSize) return;
+  scratchSize = n;
+  scratchLu = new Float64Array(n * n);
+  scratchScale = new Float64Array(n);
+  scratchPivots = new Int32Array(n);
+  scratchX = new Float64Array(n);
+}
+
+// In-place LU: `lu` holds the n*n row-major matrix on entry and L (unit lower,
+// multipliers) + U on exit; `columnScale` holds the original column maxima.
+function luFactorInPlace(lu, columnScale, pivots, n) {
   for (let column = 0; column < n; column += 1) {
     let pivot = column;
-    for (let row = column + 1; row < n; row += 1) if (Math.abs(matrix[row][column]) > Math.abs(matrix[pivot][column])) pivot = row;
-    if (Math.abs(matrix[pivot][column]) <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "회로 방정식이 특이행렬입니다.", "떠 있는 노드, 이상적 전원 단락·모순, 병렬 이상 전원을 확인하세요.");
-    [matrix[column], matrix[pivot]] = [matrix[pivot], matrix[column]];
-    const divisor = matrix[column][column];
-    for (let col = column; col <= n; col += 1) matrix[column][col] /= divisor;
-    for (let row = 0; row < n; row += 1) {
-      if (row === column) continue;
-      const factor = matrix[row][column];
+    let best = Math.abs(lu[column * n + column]);
+    for (let row = column + 1; row < n; row += 1) {
+      const magnitude = Math.abs(lu[row * n + column]);
+      if (magnitude > best) { pivot = row; best = magnitude; }
+    }
+    if (best <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "회로 방정식이 특이행렬입니다.", "떠 있는 노드, 이상적 전원 단락·모순, 병렬 이상 전원을 확인하세요.");
+    pivots[column] = pivot;
+    if (pivot !== column) {
+      for (let k = 0; k < n; k += 1) {
+        const swap = lu[column * n + k];
+        lu[column * n + k] = lu[pivot * n + k];
+        lu[pivot * n + k] = swap;
+      }
+    }
+    const base = column * n;
+    const divisor = lu[base + column];
+    for (let row = column + 1; row < n; row += 1) {
+      const offset = row * n;
+      const factor = lu[offset + column] / divisor;
+      lu[offset + column] = factor;
       if (factor === 0) continue;
-      for (let col = column; col <= n; col += 1) matrix[row][col] -= factor * matrix[column][col];
+      for (let k = column + 1; k < n; k += 1) lu[offset + k] -= factor * lu[base + k];
     }
   }
-  const result = matrix.map((row) => row[n]);
-  if (result.some((value) => !Number.isFinite(value))) throw new CircuitError("NUMERIC_FAILURE", "해석 결과에 비유한 수가 발생했습니다.");
+}
+
+function luSubstitute(lu, pivots, n, b, x) {
+  for (let index = 0; index < n; index += 1) x[index] = b[index];
+  for (let column = 0; column < n; column += 1) {
+    const pivot = pivots[column];
+    if (pivot !== column) { const swap = x[column]; x[column] = x[pivot]; x[pivot] = swap; }
+  }
+  for (let row = 1; row < n; row += 1) {
+    const offset = row * n;
+    let sum = x[row];
+    for (let k = 0; k < row; k += 1) sum -= lu[offset + k] * x[k];
+    x[row] = sum;
+  }
+  for (let row = n - 1; row >= 0; row -= 1) {
+    const offset = row * n;
+    let sum = x[row];
+    for (let k = row + 1; k < n; k += 1) sum -= lu[offset + k] * x[k];
+    x[row] = sum / lu[offset + row];
+  }
+  const result = new Array(n);
+  for (let index = 0; index < n; index += 1) {
+    const value = x[index];
+    if (!Number.isFinite(value)) throw new CircuitError("NUMERIC_FAILURE", "해석 결과에 비유한 수가 발생했습니다.");
+    result[index] = value;
+  }
   return result;
+}
+
+function loadMatrix(A, n, lu, columnScale) {
+  columnScale.fill(0, 0, n);
+  for (let row = 0; row < n; row += 1) {
+    const source = A[row];
+    for (let column = 0; column < n; column += 1) {
+      const value = source[column];
+      lu[row * n + column] = value;
+      columnScale[column] = Math.max(columnScale[column], Math.abs(value));
+    }
+  }
+}
+
+function solveLinear(A, b) {
+  const n = b.length;
+  ensureScratch(n);
+  loadMatrix(A, n, scratchLu, scratchScale);
+  luFactorInPlace(scratchLu, scratchScale, scratchPivots, n);
+  return luSubstitute(scratchLu, scratchPivots, n, b, scratchX);
+}
+
+// Persistent factorization (kept in the per-dt cache): owns its buffers and a copy
+// of the original matrix for the exact-reuse check.
+function luFactor(A, n) {
+  const original = new Float64Array(n * n);
+  const columnScale = new Float64Array(n);
+  loadMatrix(A, n, original, columnScale);
+  const lu = new Float64Array(original);
+  const pivots = new Int32Array(n);
+  luFactorInPlace(lu, columnScale, pivots, n);
+  return { n, original, lu, pivots, x: new Float64Array(n) };
+}
+
+function luSolve(factor, b) {
+  return luSubstitute(factor.lu, factor.pivots, factor.n, b, factor.x);
+}
+
+// Linear transient: A depends only on the actual step dt, so the LU factors are
+// reused per exact dt. The freshly stamped A is compared with the matrix the
+// cached factors came from (O(n^2)), so the reuse is exact even if a future
+// stamp starts depending on something else. Never used for the diode Newton path.
+const LU_CACHE_LIMIT = 32;
+
+function solveLinearCached(cache, key, A, b) {
+  const n = b.length;
+  let entry = cache.get(key);
+  if (entry) {
+    const original = entry.original;
+    let same = entry.n === n;
+    for (let row = 0; same && row < n; row += 1) {
+      const source = A[row];
+      const offset = row * n;
+      for (let column = 0; column < n; column += 1) if (source[column] !== original[offset + column]) { same = false; break; }
+    }
+    if (same) return luSolve(entry, b);
+    cache.delete(key);
+  }
+  entry = luFactor(A, n);
+  if (cache.size >= LU_CACHE_LIMIT) cache.delete(cache.keys().next().value);
+  cache.set(key, entry);
+  return luSolve(entry, b);
 }
 
 function makeBranchMap(circuit, mode, nodeCount, skippedConstraints = new Set()) {
@@ -874,7 +992,9 @@ function solveRealPoint(circuit, topology, mode, context) {
       }
       if (["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type)) stampRealControlledSource(A, topology, component, branchMap);
     }
-    const candidate = solveLinear(A, b);
+    const candidate = !hasDiode && mode === "transient" && context.luCache
+      ? solveLinearCached(context.luCache, context.dt, A, b)
+      : solveLinear(A, b);
     if (!hasDiode) {
       solution = candidate;
       break;
@@ -1106,10 +1226,11 @@ export function simulateTransient(circuit, settings = {}) {
   let initialPoint = realPoint(circuit, topology, initialSolved, "initial", { dt, time: start, capacitorVoltages, inductorCurrents });
   if (skippedConstraints.size) initialPoint = resolveInitialCapacitorCurrents(circuit, topology, initialPoint, start);
   const points = [initialPoint];
+  const luCache = new Map();
   for (let index = 1; index <= steps; index += 1) {
     const time = xValues[index];
     const actualDt = time - xValues[index - 1];
-    const context = { time, dt: actualDt, capacitorVoltages, inductorCurrents, guess };
+    const context = { time, dt: actualDt, capacitorVoltages, inductorCurrents, guess, luCache };
     const solved = solveRealPoint(circuit, topology, "transient", context);
     const point = realPoint(circuit, topology, solved, "transient", context);
     for (const component of circuit.components) {
@@ -1129,18 +1250,11 @@ export function simulateTransient(circuit, settings = {}) {
 function complex(re = 0, im = 0) {
   return { re, im };
 }
-function cadd(a, b) {
-  return complex(a.re + b.re, a.im + b.im);
-}
 function csub(a, b) {
   return complex(a.re - b.re, a.im - b.im);
 }
 function cmul(a, b) {
   return complex(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
-}
-function cdiv(a, b) {
-  const denominator = b.re * b.re + b.im * b.im;
-  return complex((a.re * b.re + a.im * b.im) / denominator, (a.im * b.re - a.re * b.im) / denominator);
 }
 function cabs(a) {
   return Math.hypot(a.re, a.im);
@@ -1148,45 +1262,55 @@ function cabs(a) {
 
 function complexZeros(size) {
   assertMatrixSize(size);
-  return Array.from({ length: size }, () => Array.from({ length: size }, () => complex()));
+  return { n: size, re: new Float64Array(size * size), im: new Float64Array(size * size) };
 }
 
-function stampComplexConductance(A, a, b, g) {
+function complexVector(size) {
+  return { re: new Float64Array(size), im: new Float64Array(size) };
+}
+
+function addComplexEntry(A, row, column, re, im = 0) {
+  const index = row * A.n + column;
+  A.re[index] += re;
+  A.im[index] += im;
+}
+
+function stampComplexConductance(A, a, b, re, im) {
   const ia = nodeIndex(a);
   const ib = nodeIndex(b);
-  if (ia >= 0) A[ia][ia] = cadd(A[ia][ia], g);
-  if (ib >= 0) A[ib][ib] = cadd(A[ib][ib], g);
+  if (ia >= 0) addComplexEntry(A, ia, ia, re, im);
+  if (ib >= 0) addComplexEntry(A, ib, ib, re, im);
   if (ia >= 0 && ib >= 0) {
-    A[ia][ib] = csub(A[ia][ib], g);
-    A[ib][ia] = csub(A[ib][ia], g);
+    addComplexEntry(A, ia, ib, -re, -im);
+    addComplexEntry(A, ib, ia, -re, -im);
   }
 }
 
 function stampComplexCurrent(b, a, z, current) {
   const ia = nodeIndex(a);
   const iz = nodeIndex(z);
-  if (ia >= 0) b[ia] = csub(b[ia], current);
-  if (iz >= 0) b[iz] = cadd(b[iz], current);
+  if (ia >= 0) { b.re[ia] -= current.re; b.im[ia] -= current.im; }
+  if (iz >= 0) { b.re[iz] += current.re; b.im[iz] += current.im; }
 }
 
 function stampComplexVoltage(A, b, a, z, branch, voltage) {
-  const one = complex(1, 0);
   const ia = nodeIndex(a);
   const iz = nodeIndex(z);
   if (ia >= 0) {
-    A[ia][branch] = cadd(A[ia][branch], one);
-    A[branch][ia] = cadd(A[branch][ia], one);
+    addComplexEntry(A, ia, branch, 1);
+    addComplexEntry(A, branch, ia, 1);
   }
   if (iz >= 0) {
-    A[iz][branch] = csub(A[iz][branch], one);
-    A[branch][iz] = csub(A[branch][iz], one);
+    addComplexEntry(A, iz, branch, -1);
+    addComplexEntry(A, branch, iz, -1);
   }
-  b[branch] = cadd(b[branch], voltage);
+  b.re[branch] += voltage.re;
+  b.im[branch] += voltage.im;
 }
 
 function addComplexCoefficient(A, rowNode, columnNode, value) {
   const row = nodeIndex(rowNode), column = nodeIndex(columnNode);
-  if (row >= 0 && column >= 0) A[row][column] = cadd(A[row][column], complex(value, 0));
+  if (row >= 0 && column >= 0) addComplexEntry(A, row, column, value);
 }
 
 function stampComplexControlledSource(A, topology, component, branchMap) {
@@ -1195,18 +1319,18 @@ function stampComplexControlledSource(A, topology, component, branchMap) {
   if (component.type === "CCCS") {
     const control = controlledBranch(component, branchMap);
     const pIndex = nodeIndex(p), nIndex = nodeIndex(n);
-    const value = complex(coefficient * control.direction, 0);
-    if (pIndex >= 0) A[pIndex][control.branch] = cadd(A[pIndex][control.branch], value);
-    if (nIndex >= 0) A[nIndex][control.branch] = csub(A[nIndex][control.branch], value);
+    const value = coefficient * control.direction;
+    if (pIndex >= 0) addComplexEntry(A, pIndex, control.branch, value);
+    if (nIndex >= 0) addComplexEntry(A, nIndex, control.branch, -value);
     return;
   }
   if (component.type === "CCVS") {
     const branch = branchMap.get(component.id);
     const control = controlledBranch(component, branchMap);
-    const pIndex = nodeIndex(p), nIndex = nodeIndex(n), one = complex(1, 0);
-    if (pIndex >= 0) { A[pIndex][branch] = cadd(A[pIndex][branch], one); A[branch][pIndex] = cadd(A[branch][pIndex], one); }
-    if (nIndex >= 0) { A[nIndex][branch] = csub(A[nIndex][branch], one); A[branch][nIndex] = csub(A[branch][nIndex], one); }
-    A[branch][control.branch] = csub(A[branch][control.branch], complex(coefficient * control.direction, 0));
+    const pIndex = nodeIndex(p), nIndex = nodeIndex(n);
+    if (pIndex >= 0) { addComplexEntry(A, pIndex, branch, 1); addComplexEntry(A, branch, pIndex, 1); }
+    if (nIndex >= 0) { addComplexEntry(A, nIndex, branch, -1); addComplexEntry(A, branch, nIndex, -1); }
+    addComplexEntry(A, branch, control.branch, -(coefficient * control.direction));
     return;
   }
   const cp = topology.nodeFor(component.id, 2), cn = topology.nodeFor(component.id, 3);
@@ -1217,33 +1341,99 @@ function stampComplexControlledSource(A, topology, component, branchMap) {
   }
   const branch = branchMap.get(component.id);
   const pIndex = nodeIndex(p), nIndex = nodeIndex(n), cpIndex = nodeIndex(cp), cnIndex = nodeIndex(cn);
-  const add = (row, column, value) => { if (row >= 0 && column >= 0) A[row][column] = cadd(A[row][column], complex(value, 0)); };
+  const add = (row, column, value) => { if (row >= 0 && column >= 0) addComplexEntry(A, row, column, value); };
   add(pIndex, branch, 1); add(nIndex, branch, -1);
   add(branch, pIndex, 1); add(branch, nIndex, -1);
   add(branch, cpIndex, -coefficient); add(branch, cnIndex, coefficient);
 }
 
+// Complex LU with partial pivoting on split re/im Float64Arrays: no per-operation
+// object allocation. Same pivot selection (|z| via hypot) and singular test as the
+// Gauss-Jordan elimination it replaces. Works in place: A and b are consumed.
 function solveComplex(A, b) {
-  const n = b.length;
-  const matrix = A.map((row, index) => [...row.map((value) => ({ ...value })), { ...b[index] }]);
-  const columnScale = Array(n).fill(0);
-  for (let row = 0; row < n; row += 1) for (let column = 0; column < n; column += 1) columnScale[column] = Math.max(columnScale[column], cabs(matrix[row][column]));
-  for (let column = 0; column < n; column += 1) {
-    let pivot = column;
-    for (let row = column + 1; row < n; row += 1) if (cabs(matrix[row][column]) > cabs(matrix[pivot][column])) pivot = row;
-    if (cabs(matrix[pivot][column]) <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "AC 회로 방정식이 특이행렬입니다.", "떠 있는 노드와 이상적 전원 연결을 확인하세요.");
-    [matrix[column], matrix[pivot]] = [matrix[pivot], matrix[column]];
-    const divisor = matrix[column][column];
-    for (let col = column; col <= n; col += 1) matrix[column][col] = cdiv(matrix[column][col], divisor);
-    for (let row = 0; row < n; row += 1) {
-      if (row === column) continue;
-      const factor = matrix[row][column];
-      if (cabs(factor) === 0) continue;
-      for (let col = column; col <= n; col += 1) matrix[row][col] = csub(matrix[row][col], cmul(factor, matrix[column][col]));
+  const n = b.re.length;
+  const re = A.re;
+  const im = A.im;
+  const columnScale = new Float64Array(n);
+  for (let row = 0; row < n; row += 1) {
+    for (let column = 0; column < n; column += 1) {
+      const index = row * n + column;
+      columnScale[column] = Math.max(columnScale[column], Math.hypot(re[index], im[index]));
     }
   }
-  const result = matrix.map((row) => row[n]);
-  if (result.some((value) => !Number.isFinite(value.re) || !Number.isFinite(value.im))) throw new CircuitError("NUMERIC_FAILURE", "AC 결과에 비유한 수가 발생했습니다.");
+  const pivots = new Int32Array(n);
+  for (let column = 0; column < n; column += 1) {
+    let pivot = column;
+    let best = Math.hypot(re[column * n + column], im[column * n + column]);
+    for (let row = column + 1; row < n; row += 1) {
+      const magnitude = Math.hypot(re[row * n + column], im[row * n + column]);
+      if (magnitude > best) { pivot = row; best = magnitude; }
+    }
+    if (best <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "AC 회로 방정식이 특이행렬입니다.", "떠 있는 노드와 이상적 전원 연결을 확인하세요.");
+    pivots[column] = pivot;
+    if (pivot !== column) {
+      for (let k = 0; k < n; k += 1) {
+        const first = column * n + k, second = pivot * n + k;
+        const swapRe = re[first]; re[first] = re[second]; re[second] = swapRe;
+        const swapIm = im[first]; im[first] = im[second]; im[second] = swapIm;
+      }
+    }
+    const base = column * n;
+    const pivotRe = re[base + column], pivotIm = im[base + column];
+    const denominator = pivotRe * pivotRe + pivotIm * pivotIm;
+    for (let row = column + 1; row < n; row += 1) {
+      const offset = row * n;
+      const entryRe = re[offset + column], entryIm = im[offset + column];
+      const factorRe = (entryRe * pivotRe + entryIm * pivotIm) / denominator;
+      const factorIm = (entryIm * pivotRe - entryRe * pivotIm) / denominator;
+      re[offset + column] = factorRe;
+      im[offset + column] = factorIm;
+      if (factorRe === 0 && factorIm === 0) continue;
+      for (let k = column + 1; k < n; k += 1) {
+        const upperRe = re[base + k], upperIm = im[base + k];
+        re[offset + k] -= factorRe * upperRe - factorIm * upperIm;
+        im[offset + k] -= factorRe * upperIm + factorIm * upperRe;
+      }
+    }
+  }
+  const xRe = b.re;
+  const xIm = b.im;
+  for (let column = 0; column < n; column += 1) {
+    const pivot = pivots[column];
+    if (pivot !== column) {
+      const swapRe = xRe[column]; xRe[column] = xRe[pivot]; xRe[pivot] = swapRe;
+      const swapIm = xIm[column]; xIm[column] = xIm[pivot]; xIm[pivot] = swapIm;
+    }
+  }
+  for (let row = 1; row < n; row += 1) {
+    const offset = row * n;
+    let sumRe = xRe[row], sumIm = xIm[row];
+    for (let k = 0; k < row; k += 1) {
+      const lowerRe = re[offset + k], lowerIm = im[offset + k];
+      sumRe -= lowerRe * xRe[k] - lowerIm * xIm[k];
+      sumIm -= lowerRe * xIm[k] + lowerIm * xRe[k];
+    }
+    xRe[row] = sumRe;
+    xIm[row] = sumIm;
+  }
+  for (let row = n - 1; row >= 0; row -= 1) {
+    const offset = row * n;
+    let sumRe = xRe[row], sumIm = xIm[row];
+    for (let k = row + 1; k < n; k += 1) {
+      const upperRe = re[offset + k], upperIm = im[offset + k];
+      sumRe -= upperRe * xRe[k] - upperIm * xIm[k];
+      sumIm -= upperRe * xIm[k] + upperIm * xRe[k];
+    }
+    const diagonalRe = re[offset + row], diagonalIm = im[offset + row];
+    const denominator = diagonalRe * diagonalRe + diagonalIm * diagonalIm;
+    xRe[row] = (sumRe * diagonalRe + sumIm * diagonalIm) / denominator;
+    xIm[row] = (sumIm * diagonalRe - sumRe * diagonalIm) / denominator;
+  }
+  const result = new Array(n);
+  for (let index = 0; index < n; index += 1) {
+    if (!Number.isFinite(xRe[index]) || !Number.isFinite(xIm[index])) throw new CircuitError("NUMERIC_FAILURE", "AC 결과에 비유한 수가 발생했습니다.");
+    result[index] = complex(xRe[index], xIm[index]);
+  }
   return result;
 }
 
@@ -1251,14 +1441,14 @@ function solveACPoint(circuit, topology, frequency, dcBias) {
   const omega = 2 * Math.PI * frequency;
   const { map: branchMap, size } = cachedBranchMap(circuit, "ac", topology);
   const A = complexZeros(size);
-  const b = Array.from({ length: size }, () => complex());
+  const b = complexVector(size);
   for (const component of circuit.components) {
     const a = topology.nodeFor(component.id, 0);
     const z = pinCount(component.type) > 1 ? topology.nodeFor(component.id, 1) : 0;
     const p = component.props ?? {};
-    if (component.type === "R") stampComplexConductance(A, a, z, complex(1 / parseValue(p.value), 0));
-    if (component.type === "C") stampComplexConductance(A, a, z, complex(0, omega * parseValue(p.value)));
-    if (component.type === "L") stampComplexConductance(A, a, z, complex(0, -1 / (omega * parseValue(p.value))));
+    if (component.type === "R") stampComplexConductance(A, a, z, 1 / parseValue(p.value), 0);
+    if (component.type === "C") stampComplexConductance(A, a, z, 0, omega * parseValue(p.value));
+    if (component.type === "L") stampComplexConductance(A, a, z, 0, -1 / (omega * parseValue(p.value)));
     if (component.type === "I") stampComplexCurrent(b, a, z, sourceValue(component, 0, "ac"));
     if (component.type === "V") stampComplexVoltage(A, b, a, z, branchMap.get(component.id), sourceValue(component, 0, "ac"));
     if (component.type === "CURRENT_SENSOR") stampComplexVoltage(A, b, a, z, branchMap.get(component.id), complex());
@@ -1266,7 +1456,7 @@ function solveACPoint(circuit, topology, frequency, dcBias) {
       const biasA = dcBias?.nodeVoltages[a] ?? 0;
       const biasZ = dcBias?.nodeVoltages[z] ?? 0;
       const conductance = diodeSmallSignalConductance(component, biasA - biasZ);
-      stampComplexConductance(A, a, z, complex(conductance, 0));
+      stampComplexConductance(A, a, z, conductance, 0);
     }
     if (component.type === "OPAMP") {
       const plus = a;
@@ -1274,27 +1464,25 @@ function solveACPoint(circuit, topology, frequency, dcBias) {
       const out = topology.nodeFor(component.id, 2);
       const branch = branchMap.get(component.id);
       const outputIndex = nodeIndex(out);
-      const one = complex(1, 0);
       if (outputIndex >= 0) {
-        A[outputIndex][branch] = cadd(A[outputIndex][branch], one);
-        A[branch][outputIndex] = cadd(A[branch][outputIndex], one);
+        addComplexEntry(A, outputIndex, branch, 1);
+        addComplexEntry(A, branch, outputIndex, 1);
       }
       const gain = parseValue(p.gain ?? "100k");
       const plusIndex = nodeIndex(plus);
       const minusIndex = nodeIndex(minus);
-      if (plusIndex >= 0) A[branch][plusIndex] = csub(A[branch][plusIndex], complex(gain, 0));
-      if (minusIndex >= 0) A[branch][minusIndex] = cadd(A[branch][minusIndex], complex(gain, 0));
+      if (plusIndex >= 0) addComplexEntry(A, branch, plusIndex, -gain);
+      if (minusIndex >= 0) addComplexEntry(A, branch, minusIndex, gain);
     }
     if (component.type === "OPAMP_IDEAL") {
       const out = topology.nodeFor(component.id, 2);
       const branch = branchMap.get(component.id);
       const outputIndex = nodeIndex(out);
-      const one = complex(1, 0);
-      if (outputIndex >= 0) A[outputIndex][branch] = cadd(A[outputIndex][branch], one);
+      if (outputIndex >= 0) addComplexEntry(A, outputIndex, branch, 1);
       const plusIndex = nodeIndex(a);
       const minusIndex = nodeIndex(z);
-      if (plusIndex >= 0) A[branch][plusIndex] = cadd(A[branch][plusIndex], one);
-      if (minusIndex >= 0) A[branch][minusIndex] = csub(A[branch][minusIndex], one);
+      if (plusIndex >= 0) addComplexEntry(A, branch, plusIndex, 1);
+      if (minusIndex >= 0) addComplexEntry(A, branch, minusIndex, -1);
     }
     if (["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type)) stampComplexControlledSource(A, topology, component, branchMap);
   }
