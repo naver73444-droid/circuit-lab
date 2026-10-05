@@ -8,7 +8,7 @@ import {
   splitWireAtJunction,
 } from "./circuit-edit.js";
 import { GRID_SIZE, appendFixedWaypoint, snapPoint } from "./circuit-geometry.js";
-import { shortcutFor } from "./editor-shortcuts.js";
+import { commitsActiveDrag, shortcutFor } from "./editor-shortcuts.js";
 import { stepSeriesText } from "./value-series.js";
 import { probeKeysForTarget } from "./ui-model.js";
 import { beginPointerSession, finishPointerSession, ownsPointer } from "./pointer-session.js";
@@ -402,7 +402,18 @@ export function createEditorInput(deps) {
 
   // ---- selection commands
 
+  /**
+   * Keyboard and toolbar edits must see the finished drag: commit it (its history entry comes first) before they record their own.
+   * Otherwise R / Ctrl+D / Delete / undo during a drag would push their snapshots between the drag's start and its commit.
+   */
+  function commitActiveDrag() {
+    if (state.drag) finishCanvasPointer(state.drag.pointerId, "commit");
+  }
+  const undoEdit = () => { commitActiveDrag(); undo(); };
+  const redoEdit = () => { commitActiveDrag(); redo(); };
+
   function deleteSelection() {
+    commitActiveDrag();
     if (!state.selected) return;
     const selected = state.selected;
     if (state.inlineEdit?.componentId === selected.id) { state.inlineEdit = null; elements["inline-value-editor"].classList.add("hidden"); }
@@ -424,6 +435,7 @@ export function createEditorInput(deps) {
   }
 
   function cloneSelection(event = null) {
+    commitActiveDrag();
     if (state.selected?.kind !== "component") return;
     const original = state.circuit.components.find((component) => component.id === state.selected.id);
     if (!original) return;
@@ -441,6 +453,7 @@ export function createEditorInput(deps) {
   }
 
   function rotateSelection(direction = 1) {
+    commitActiveDrag();
     if (state.selected?.kind !== "component") return;
     mutate(() => {
       const component = state.circuit.components.find((item) => item.id === state.selected.id);
@@ -466,12 +479,17 @@ export function createEditorInput(deps) {
     return true;
   }
 
-  /** Arrow keys are canvas keys: leave them to focused tabs, plots, menus and form controls. */
+  /**
+   * Arrow keys move the selection only while focus is on the page itself, the canvas or an editor tool button (tools, edit actions,
+   * zoom, palette). Scope controls, the B-cursor button, menus, notices, the inspector and tabs keep their own arrow-key behaviour.
+   */
+  const ARROW_OWNERS = "#probe-context-menu, #canvas-notices, #scope-controls, #cursor-b-button, #inspector-content, #side-panel, #wave-panel, .file-menu, [role=tablist], [role=tab], [role=menu], [role=menuitem]";
   function arrowKeysBelongToCanvas() {
     const active = document.activeElement;
     if (!active || active === document.body || active === document.documentElement) return true;
-    if (active.closest?.("#circuit-canvas, #canvas-wrap")) return true;
-    return active.tagName === "BUTTON" && !active.closest("[role=tablist], [role=tab]");
+    if (active.closest?.(ARROW_OWNERS)) return false;
+    if (active.id === "canvas-wrap" || active.closest?.("#circuit-canvas")) return true;
+    return active.tagName === "BUTTON" && Boolean(active.closest(".canvas-bar .tool-group, #palette-panel"));
   }
 
   // Wheel over an R/C/L value label steps the value along the E12 series. Small trackpad deltas accumulate; a mouse notch is one step.
@@ -767,8 +785,8 @@ export function createEditorInput(deps) {
       const point = svgPoint(event);
       if (point) zoomCanvas(event.deltaY > 0 ? 1.18 : .84, point);
     }, { passive: false });
-    elements["undo-button"].addEventListener("click", undo);
-    elements["redo-button"].addEventListener("click", redo);
+    elements["undo-button"].addEventListener("click", undoEdit);
+    elements["redo-button"].addEventListener("click", redoEdit);
     elements["clone-button"].addEventListener("click", (event) => cloneSelection(event));
     elements["zoom-out-button"].addEventListener("click", () => zoomCanvas(1.2));
     elements["zoom-in-button"].addEventListener("click", () => zoomCanvas(.82));
@@ -840,14 +858,15 @@ export function createEditorInput(deps) {
       const shortcut = shortcutFor(event, { typing });
       if (!shortcut) return;
       if (shortcut.action === "nudge" && (!arrowKeysBelongToCanvas() || event.target.closest?.("#wave-plot"))) return;
+      if (commitsActiveDrag(shortcut.action)) commitActiveDrag();
       const handled = {
         save: () => { saveProject(); return true; },
         run: () => { runAnalysis(); return true; },
         delete: () => { deleteSelection(); return false; },
         rotate: () => { rotateSelection(shortcut.direction); return false; },
         clone: () => { cloneSelection(); return true; },
-        undo: () => { undo(); return true; },
-        redo: () => { redo(); return true; },
+        undo: () => { undoEdit(); return true; },
+        redo: () => { redoEdit(); return true; },
         tool: () => { setTool(shortcut.tool); return false; },
         nudge: () => nudgeSelection(shortcut),
       }[shortcut.action]();

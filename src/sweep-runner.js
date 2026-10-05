@@ -23,6 +23,8 @@ export function createSweepState() {
  */
 export function createSweepRunner(deps) {
   const { state, client, setStatus, beginJob, endJob, isCurrent, commitPendingInputs, synchronizeIntent, cancelScheduledRun, presentProbe, activeKey, onState, onOverlay } = deps;
+  // Injectable for tests: the wall-clock limit, the clock and the deadline timer.
+  const { limitMs = SWEEP_TIME_LIMIT_MS, now = () => performance.now(), setTimer = (...args) => setTimeout(...args), clearTimer = (...args) => clearTimeout(...args) } = deps;
   const sweep = state.sweep;
   let overlaySerial = 0;
 
@@ -69,9 +71,16 @@ export function createSweepRunner(deps) {
     sweep.messageKind = "";
     const job = beginJob();
     onOverlay();
-    const startedAt = performance.now();
+    const startedAt = now();
     const results = [];
     let aborted = null;
+    // A real deadline: when it fires the in-flight worker job is cancelled, so one slow run cannot hold the sweep past the limit.
+    let timedOut = false;
+    const expired = () => timedOut || now() - startedAt > limitMs;
+    const deadline = setTimer(() => {
+      timedOut = true;
+      if (isCurrent(job)) client.cancel("sweep-time-limit");
+    }, limitMs);
     try {
       for (let index = 0; index < total; index += 1) {
         sweep.progress = `스윕 ${index + 1}/${total}`;
@@ -79,20 +88,26 @@ export function createSweepRunner(deps) {
         onState();
         await frame();
         if (!isCurrent(job)) { aborted = "cancelled"; break; }
-        if (performance.now() - startedAt > SWEEP_TIME_LIMIT_MS) { aborted = "time"; break; }
+        if (expired()) { aborted = "time"; break; }
         const request = client.start("normal", { circuit: built.entries[index].circuit, settings });
         job.requestId = request.requestId;
         try {
           const value = await request.promise;
           if (!isCurrent(job)) { aborted = "cancelled"; break; }
+          if (expired()) { aborted = "time"; break; } // elapsed is checked after every response too
           results.push(value.result);
         } catch (error) {
-          if (error instanceof AnalysisCancelledError || !isCurrent(job)) { aborted = "cancelled"; break; }
+          if (!isCurrent(job)) { aborted = "cancelled"; break; }
+          if (timedOut) { aborted = "time"; break; } // our own deadline cancelled the worker
+          if (error instanceof AnalysisCancelledError) { aborted = "cancelled"; break; }
           results.push({ ok: false, reason: error?.message ?? String(error) });
         }
       }
+      // Last gate before anything is published.
+      if (!aborted && !isCurrent(job)) aborted = "cancelled";
+      if (!aborted && expired()) aborted = "time";
       if (aborted === "time") {
-        say(`스윕이 ${SWEEP_TIME_LIMIT_MS / 1000}초 안전 한도를 넘어 중단했습니다. 점 수나 해석 범위를 줄이세요.`, "error");
+        say(`스윕이 ${limitMs / 1000}초 안전 한도를 넘어 중단했습니다. 점 수나 해석 범위를 줄이세요.`, "error");
         setStatus("스윕 중단", "error");
       } else if (!aborted) {
         const overlay = { id: (overlaySerial += 1), generation: job.generation, probe, plan, results, componentRef: target.ref, views: new Map(), resultLike: null };
@@ -109,6 +124,7 @@ export function createSweepRunner(deps) {
         }
       }
     } finally {
+      clearTimer(deadline);
       sweep.running = false;
       sweep.progress = "";
       endJob(job);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { shortcutFor } from "../../src/editor-shortcuts.js";
+import { commitsActiveDrag, shortcutFor } from "../../src/editor-shortcuts.js";
 
 const key = (k, extra = {}) => ({ key: k, code: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, isComposing: false, repeat: false, ...extra });
 const action = (event, options) => shortcutFor(event, options)?.action ?? null;
@@ -62,4 +62,12 @@ test("한글 입력기가 켜져 있어도 event.code(KeyW/KeyR/KeyV)로 동작"
   assert.deepEqual(shortcutFor(key("ㅃ", { code: "KeyR", shiftKey: true })), { action: "rotate", direction: -1 });
   assert.deepEqual(shortcutFor(key("ㅍ", { code: "KeyV" })), { action: "tool", tool: "select" });
   assert.equal(action(key("ㄴ", { code: "KeyS", ctrlKey: true })), "save");
+});
+
+test("드래그 중 키보드 편집: 기록을 남기거나 되돌리는 동작만 진행 중인 드래그를 먼저 확정한다", () => {
+  for (const name of ["delete", "rotate", "clone", "undo", "redo"]) assert.equal(commitsActiveDrag(name), true, name);
+  for (const name of ["save", "run", "tool", "nudge", undefined]) assert.equal(commitsActiveDrag(name), false, String(name));
+  assert.equal(commitsActiveDrag(shortcutFor(key("r")).action), true);
+  assert.equal(commitsActiveDrag(shortcutFor(key("z", { ctrlKey: true })).action), true);
+  assert.equal(commitsActiveDrag(shortcutFor(key("w")).action), false);
 });

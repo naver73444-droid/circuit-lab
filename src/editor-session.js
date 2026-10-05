@@ -52,9 +52,15 @@ export function createEditorSession(deps) {
     return value;
   }
 
-  function recordProbeEdit() {
-    pushCapped(state.history, snapshot());
+  /** Every history write goes through here: it ends the open coalescing group, so a later grouped edit (wheel, held arrow) starts its own entry. */
+  function recordHistory(entry) {
+    closeEditGroup();
+    pushCapped(state.history, entry);
     state.future = [];
+  }
+
+  function recordProbeEdit() {
+    recordHistory(snapshot());
   }
 
   function snapshot() {
@@ -63,6 +69,7 @@ export function createEditorSession(deps) {
 
   function restore(serialized) {
     const saved = JSON.parse(serialized);
+    closeEditGroup();
     resetProjectSession();
     state.circuit = { ...saved.circuit, junctions: saved.circuit.junctions ?? [] };
     state.settings = saved.settings;
@@ -84,10 +91,7 @@ export function createEditorSession(deps) {
   }
 
   function mutate(change, { history = true, auto = true, autosave = true } = {}) {
-    if (history) {
-      pushCapped(state.history, snapshot());
-      state.future = [];
-    }
+    if (history) recordHistory(snapshot());
     change();
     inputDrafts.retainComponents(new Set(state.circuit.components.map((item) => item.id)));
     synchronizeIntent();
@@ -176,8 +180,7 @@ export function createEditorSession(deps) {
 
   /** Commit a finished drag: the pre-drag snapshot becomes one undo step. */
   function commitMove(before) {
-    pushCapped(state.history, before);
-    state.future = [];
+    recordHistory(before);
     bumpGeneration();
     markStale();
     renderAll();

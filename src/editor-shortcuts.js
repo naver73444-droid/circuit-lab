@@ -20,6 +20,10 @@ function letterOf(event) {
   return match ? match[1].toLowerCase() : "";
 }
 
+/** Actions that write history or replay it: an in-progress drag is committed first so its history entry comes before theirs. */
+const DRAG_COMMITTING = new Set(["delete", "rotate", "clone", "undo", "redo"]);
+export const commitsActiveDrag = (action) => DRAG_COMMITTING.has(action);
+
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 
 export function shortcutFor(event, { typing = false } = {}) {

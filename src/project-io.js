@@ -5,7 +5,7 @@ import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geom
 import { currentProbeLabel } from "./current-direction.js";
 import { escapeHtml } from "./safe-dom.js";
 import { PROBE_COLORS } from "./editor-session.js";
-import { createAutosave, describeSavedAt, isEmptyProject, shouldOfferRestore } from "./persistence.js";
+import { createAutosave, describeSavedAt, isEmptyProject } from "./persistence.js";
 import { buildShareUrl, decodeProjectFromHash, encodeProjectToHash } from "./share-url.js";
 import { createCanvasNotices } from "./canvas-notices.js";
 
@@ -16,24 +16,40 @@ import { createCanvasNotices } from "./canvas-notices.js";
 export function createProjectIO(deps) {
   const { state, elements, mutate, confirmDiscardDrafts, commitPendingInputs, resetProjectSession, setTool, fitCanvas, setStatus, seriesForProbes } = deps;
   const notices = createCanvasNotices(elements["canvas-notices"]);
-  const autosave = createAutosave({ debounceMs: 800 });
-  // Launch sources (?example=..., #p=...) are dropped from the address bar after the first user edit, so a reload does not
-  // silently replace the edited circuit with the original link content.
-  const launch = { example: false, hash: false };
   let lastAutosaveFailure = null;
+  // Each tab saves only into its own slot (see persistence.js). Timer-driven results (quota, unavailable) arrive through onResult.
+  const autosave = createAutosave({ debounceMs: 800, onResult: (outcome) => reportAutosave(outcome) });
+  // Launch sources (?example=..., ?run=1, #p=...) are dropped from the address bar after the first user edit or any explicit
+  // project replacement (new, open, restore, example), so a reload does not silently bring the original link content back.
+  const launch = { example: false, run: false, hash: false };
 
   const currentProject = () => ({ title: state.title, subtitle: state.subtitle, circuit: state.circuit, settings: state.settings, probes: state.probes });
 
+  /** Startup records which launch parameters it consumed (example id, run flag, share hash) so they can be cleaned later. */
+  function registerLaunch({ example = false, run = false, hash = false } = {}) {
+    launch.example ||= Boolean(example);
+    launch.run ||= Boolean(run);
+    launch.hash ||= Boolean(hash);
+  }
+
   function dropLaunchSources() {
-    if (!launch.example && !launch.hash) return;
+    if (!launch.example && !launch.run && !launch.hash) return;
     try {
       const url = new URL(location.href);
-      if (launch.example) { url.searchParams.delete("example"); url.searchParams.delete("run"); }
+      if (launch.example) url.searchParams.delete("example");
+      if (launch.run) url.searchParams.delete("run");
       if (launch.hash) url.hash = "";
       history.replaceState(history.state, "", url.pathname + url.search + url.hash);
     } catch { /* address bar cleanup is cosmetic */ }
     launch.example = false;
+    launch.run = false;
     launch.hash = false;
+  }
+
+  /** Called once the user has agreed to replace the project: no earlier save may land on top of the new one, and the launch link is spent. */
+  function beginReplacement({ startup = false } = {}) {
+    autosave.cancel();
+    if (!startup) dropLaunchSources();
   }
 
   function reportAutosave(outcome) {
@@ -50,17 +66,20 @@ export function createProjectIO(deps) {
    */
   function noteCommitted() {
     dropLaunchSources();
-    if (isEmptyProject(currentProject())) return;
-    reportAutosave(autosave.schedule(currentProject()));
+    // An uncommitted drag has already moved the live coordinates; its own commit (commitMove) schedules the save.
+    if (state.drag?.moved && state.drag.kind !== "pan") return;
+    if (isEmptyProject(currentProject())) { autosave.cancel(); return; }
+    autosave.schedule(currentProject()); // takes its own snapshot; failures come back through onResult
   }
 
   function flushAutosave() {
-    reportAutosave(autosave.flush());
+    autosave.flush();
   }
 
   function loadExample(id, { silent = false } = {}) {
     if (!id) return;
     if (!confirmDiscardDrafts()) { elements["example-select"].value = ""; return; }
+    beginReplacement({ startup: silent });
     const example = cloneExample(id);
     const manualSettings = Object.fromEntries([...state.manualSettingKeys]
       .filter((key) => key !== "analysis" && state.settings[key] !== undefined)
@@ -95,7 +114,6 @@ export function createProjectIO(deps) {
       state.cursorIndex = null;
       elements["result-summary"].textContent = state.learningId ? "학습 예제 준비 · 자동 계산을 기다립니다." : "예제를 불러왔습니다. 해석 실행으로 계산하세요.";
     }, { autosave: !silent }); // a startup ?example= load must not replace an earlier autosave
-    if (silent) launch.example = true;
     elements["example-select"].value = "";
     setStatus(state.learningId ? "학습 자동 갱신 대기" : "예제 준비", "ready");
     setTool("select");
@@ -124,8 +142,9 @@ export function createProjectIO(deps) {
    * The one atomic open path (JSON file, autosave restore, share link): replaces the whole project, clears results and
    * gestures through resetProjectSession(), records one undo step. Returns false when the user cancels the draft prompt.
    */
-  function openProject(project, { fallbackTitle, fallbackSubtitle, resultText, autosave: save = true }) {
+  function openProject(project, { fallbackTitle, fallbackSubtitle, resultText, autosave: save = true, startup = false }) {
     if (!confirmDiscardDrafts()) return false;
+    beginReplacement({ startup });
     mutate(() => {
       resetProjectSession();
       state.intent = "manual";
@@ -177,8 +196,9 @@ export function createProjectIO(deps) {
 
   /** At startup: if a valid autosave differs from the loaded circuit, offer (never apply) it in a dismissible banner. */
   function offerRestore() {
-    const saved = autosave.loadDetailed(state.settings);
-    if (!saved.ok || !shouldOfferRestore({ project: saved.project, savedAt: saved.savedAt }, currentProject())) return false;
+    // The newest slot whose content differs from what is loaded: this tab's own slot after a reload, or another tab's/older work.
+    const saved = autosave.loadDetailed(state.settings, { current: currentProject() });
+    if (!saved.ok) return false;
     notices.show({
       kind: "restore",
       text: `이전 작업이 있습니다 (${describeSavedAt(saved.savedAt)})`,
@@ -243,9 +263,8 @@ export function createProjectIO(deps) {
       notices.show({ kind: "error", text: "불러오는 동안 회로가 변경되어 공유 링크 열기를 취소했습니다.", autoHideMs: 9000 });
       return false;
     }
-    const opened = openProject(decoded.project, { fallbackTitle: "공유된 회로", fallbackSubtitle: "공유 링크에서 불러온 회로", resultText: "공유 링크에서 회로를 불러왔습니다. 해석 실행으로 계산하세요.", autosave: false });
+    const opened = openProject(decoded.project, { fallbackTitle: "공유된 회로", fallbackSubtitle: "공유 링크에서 불러온 회로", resultText: "공유 링크에서 회로를 불러왔습니다. 해석 실행으로 계산하세요.", autosave: false, startup: true });
     if (!opened) return false;
-    launch.hash = true;
     notices.show({ text: "공유 링크에서 불러왔습니다", autoHideMs: 6000 });
     setStatus("공유 링크에서 불러오기 완료", "ready");
     return true;
@@ -265,6 +284,7 @@ export function createProjectIO(deps) {
 
   function newCircuit() {
       if (!confirmDiscardDrafts()) return;
+      beginReplacement();
       mutate(() => {
       resetProjectSession();
       state.intent = "auto";
@@ -301,5 +321,5 @@ export function createProjectIO(deps) {
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushAutosave(); });
   }
 
-  return { loadExample, saveProject, loadProject, openProject, exportCSV, newCircuit, offerRestore, copyShareLink, openShareHash, noteCommitted, flushAutosave, autosaveStatus: () => autosave.getStatus(), attach };
+  return { loadExample, saveProject, loadProject, openProject, exportCSV, newCircuit, offerRestore, copyShareLink, openShareHash, registerLaunch, noteCommitted, flushAutosave, autosaveStatus: () => autosave.getStatus(), attach };
 }

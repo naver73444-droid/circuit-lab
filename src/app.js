@@ -320,6 +320,8 @@ function initialize() {
   const query = new URLSearchParams(location.search);
   const exampleId = query.get("example");
   const exampleRequested = Boolean(exampleId && examples.some((example) => example.id === exampleId));
+  // Every launch parameter is registered for cleanup (first edit or any explicit project replacement), whichever source won.
+  projectIO.registerLaunch({ example: query.has("example"), run: query.has("run"), hash: hasShareHash(location.hash) });
   if (hasShareHash(location.hash)) {
     // A share link wins over ?example and over the restore offer; a link that cannot be opened falls back to the restore offer.
     projectIO.openShareHash(location.hash).then((opened) => { if (!opened) projectIO.offerRestore(); });
