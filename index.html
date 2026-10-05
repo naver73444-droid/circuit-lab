@@ -75,6 +75,7 @@
 <button class="primary run-button" id="run-button" title="해석 실행 (Ctrl+Enter)" type="button">▶ 해석 실행</button>
 <button class="cancel-analysis hidden" disabled="" id="cancel-analysis-button" type="button">계산 취소</button>
 <label class="auto-toggle"><input checked="" id="auto-update" type="checkbox"/>자동 갱신</label>
+<label class="auto-toggle" title="배선 위에 전류 방향과 크기를 움직이는 점으로 표시 (DC 동작점 · 시간응답은 그래프 커서 시점)"><input id="flow-toggle" type="checkbox"/>전류 흐름</label><span class="flow-hint hidden" id="flow-hint" aria-live="polite"></span>
 <span aria-live="polite" class="status-dot ready" id="engine-status">해석 준비</span>
 <span class="badge stale hidden" id="stale-badge">오래된 결과</span>
 <span class="draft-notice hidden" id="draft-notice"><span id="draft-count"></span><button id="discard-drafts-button" type="button">입력 취소</button></span>
@@ -98,6 +99,7 @@
 </defs>
 <rect class="canvas-bg" fill="url(#grid-large)" height="200000" width="200000" x="-100000" y="-100000"></rect>
 <g id="wire-layer"></g>
+<g id="flow-layer" pointer-events="none" aria-hidden="true"></g>
 <g id="component-layer"></g>
 <g id="overlay-layer"></g>
 <rect class="marquee hidden" id="marquee-rect" height="0" width="0" x="0" y="0"></rect>

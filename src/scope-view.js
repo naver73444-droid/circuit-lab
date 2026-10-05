@@ -25,6 +25,8 @@ export class ScopeView {
     this.bArmed = false;
     this.activeTraceKey = null;
     this.onChange = null;
+    // Called whenever cursor A (hover, pinned or keyboard) may have moved; cheap observers only (the current-flow overlay).
+    this.onCursor = null;
     this.selectedTraceKeys = new Map();
     this.stale = false;
     this.forceFit = true;
@@ -417,6 +419,7 @@ export class ScopeView {
   }
 
   renderCursor() {
+    try { this.onCursor?.(this.cursorIndex); } catch { /* an observer must not break the plot */ }
     const target = this.svg.querySelector("#scope-cursor");
     if (!target) return;
     target.replaceChildren();

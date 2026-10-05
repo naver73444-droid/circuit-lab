@@ -179,6 +179,18 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .wire.probed, .component.probed .body, .component.probed .lead, .component.probed .symbol-line { stroke: var(--probe-color, var(--accent)); }
 .wire.selected, .component.selected .body, .component.selected .lead, .component.selected .symbol-line { stroke: var(--accent); stroke-width: 2.6; }
 .wire-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+/* Current flow overlay (전류 흐름): dots creep along the wires; one animated path per speed class, always drawn in the flow direction. */
+/* will-change gives the overlay its own compositor layer, so each animation tick re-rasters only the dots, not the grid and parts. steps(7) = a 2-unit hop per tick: fewer repaints, still reads as smooth. */
+#flow-layer { pointer-events: none; will-change: transform; }
+#flow-layer.flow-suspended { display: none; }
+.flow-dash { fill: none; stroke: var(--accent); stroke-width: 3.6; stroke-linecap: round; stroke-dasharray: 0.1 13.9; pointer-events: none; animation: flow-move 2.4s steps(7) infinite; }
+.flow-dash.flow-s2 { animation-duration: 1.2s; }
+.flow-dash.flow-s3 { animation-duration: .6s; }
+.flow-dash.flow-s4 { animation-duration: .3s; }
+.flow-arrows { fill: var(--accent); stroke: none; pointer-events: none; display: none; }
+@keyframes flow-move { to { stroke-dashoffset: -14; } }
+.flow-hint { font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .flow-dash { display: none; } .flow-arrows { display: block; } }
 .component { cursor: grab; }
 .component:active { cursor: grabbing; }
 /* Hover cue: a part lights up lightly before it is selected. */

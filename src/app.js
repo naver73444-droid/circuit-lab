@@ -16,11 +16,12 @@ import { createEditorInput, createInputState } from "./editor-input.js";
 import { createProjectIO } from "./project-io.js";
 import { createHoverReadout } from "./hover-readout.js";
 import { hasShareHash } from "./share-url.js";
+import { createFlowLayer } from "./flow-layer.js";
 import { createMeasureView } from "./measure-view.js";
 import { selectedItems, selectedKeys } from "./selection-model.js";
 
 const elements = Object.fromEntries([
-  "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "empty-hint",
+  "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "flow-layer", "flow-toggle", "flow-hint", "empty-hint",
   "tool-hint", "circuit-count", "canvas-title", "canvas-subtitle", "selection-label", "inspector-content", "analysis-settings",
   "analysis-note", "error-box", "example-select", "undo-button", "redo-button", "rotate-button", "delete-button", "new-button", "save-button",
   "load-button", "file-input", "probe-list", "result-summary", "ac-view-toggle", "wave-plot", "plot-empty", "cursor-readout", "reset-view-button", "csv-button",
@@ -74,7 +75,10 @@ const session = createEditorSession({
 });
 const renderer = createCanvasRenderer({
   state, elements, workspace, currentConnections: session.currentConnections,
+  afterCanvasRender: () => flow.refresh(),
+  onDragFrame: () => flow.suspend(),
 });
+const flow = createFlowLayer({ state, elements, scopeView, wireRoutes: renderer.wireRoutes });
 const analysis = createAnalysisRunner({
   state, elements, workspace, inputDrafts, scopeView, phasorView, renderAll, setStatus, showCanvas, phasorPanelVisible,
   mutate: session.mutate, currentConnections: session.currentConnections, bumpGeneration: session.bumpGeneration, removeProbe: session.removeProbe,
@@ -308,6 +312,8 @@ function initialize() {
     getMeasure: () => measureView.inspect(),
     getCanvasStats: () => ({ ...renderer.stats }),
     forceCanvasRender: () => renderer.renderCanvas(),
+    getFlow: () => flow.inspect(),
+    setFlow: (value) => flow.setEnabled(value),
     getLayout: () => panels.inspect(),
     getWorkspace: () => workspaceTabs.active,
     // Lazy controllers report null until loaded; await ensureWorkspace(name) first.

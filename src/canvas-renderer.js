@@ -22,7 +22,7 @@ import { isSelected, selectedKeys } from "./selection-model.js";
  * A component drag takes a cheaper path (updateDragged): move that part's <g transform> and the `d` of the wires attached to it.
  */
 export function createCanvasRenderer(deps) {
-  const { state, elements, workspace, currentConnections } = deps;
+  const { state, elements, workspace, currentConnections, afterCanvasRender, onDragFrame } = deps;
   let canvasFrame = null;
   let overlayFrame = null;
   let dragFrame = null;
@@ -259,6 +259,7 @@ export function createCanvasRenderer(deps) {
     elements["canvas-title"].textContent = state.title;
     elements["canvas-subtitle"].textContent = state.subtitle;
     stats.full += 1;
+    afterCanvasRender?.();
   }
 
   const wireGroup = (id) => elements["wire-layer"].querySelector(`[data-wire-id="${CSS.escape(id)}"]`);
@@ -300,6 +301,7 @@ export function createCanvasRenderer(deps) {
       for (const line of group.querySelectorAll("path")) line.setAttribute("d", path);
     }
     stats.drag += 1;
+    onDragFrame?.();
     return true;
   }
 
@@ -351,5 +353,17 @@ export function createCanvasRenderer(deps) {
     return a && b ? wireRoute(wire, a, b) : [];
   }
 
-  return { updateCanvasView, scheduleCanvasRender, scheduleOverlayRender, scheduleDragUpdate, updateDragged, updateMoved, setMarquee, applySelection, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId, stats };
+  /** Route points of every drawable wire, by wire id (used by the current-flow overlay). */
+  function wireRoutes() {
+    const componentById = new Map(state.circuit.components.map((component) => [component.id, component]));
+    const routes = new Map();
+    for (const wire of state.circuit.wires) {
+      const a = endpointPosition(wire.a, componentById);
+      const b = endpointPosition(wire.b, componentById);
+      if (a && b) routes.set(wire.id, wireRoute(wire, a, b));
+    }
+    return routes;
+  }
+
+  return { updateCanvasView, scheduleCanvasRender, scheduleOverlayRender, scheduleDragUpdate, updateDragged, updateMoved, setMarquee, applySelection, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId, wireRoutes, stats };
 }
