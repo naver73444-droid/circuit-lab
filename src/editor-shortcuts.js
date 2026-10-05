@@ -9,7 +9,9 @@
  *
  * typing(글자를 입력하는 칸에 포커스)이면 Ctrl+S와 Ctrl+Enter만 동작한다(브라우저 "페이지 저장" 대화상자 대신 프로젝트 저장,
  * 입력 중이던 값은 실행 전에 확정). 체크박스·버튼·슬라이더처럼 글자를 받지 않는 요소가 포커스를 쥐고 있어도 단축키는 동작한다.
- * 한글 입력기가 켜져 있어도 동작하도록 영문자는 event.key가 라틴 문자가 아니면 event.code(KeyW 등)로 판별한다.
+ * 한글 입력기가 켜져 있어도 동작하도록 영문자는 event.key가 라틴 문자가 아니면 event.code(KeyW 등)로 판별한다. IME 조합 중에는 Ctrl+S(저장)만 동작한다.
+ * 페이지에 드래그해 선택한 글자가 있으면(textSelection) Ctrl+C·X·A는 브라우저 몫이다. Ctrl+V·Ctrl+D를 꾹 누른 반복(event.repeat)은 `ignore: true`로
+ * 표시되어 호출한 쪽이 키만 막고 동작은 하지 않는다(붙여넣기·복제가 연달아 쌓이지 않도록).
  * 반환: {action, preventDefault?, …} | null
  */
 export const NUDGE_STEPS = 1;
@@ -31,14 +33,16 @@ const CURSOR_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", 
 
 /**
  * Does this focused element (and key) belong to the element rather than to the editor? Text-like inputs, textareas and
- * contenteditable always do. Range sliders, radio buttons and <select> only own the cursor keys (arrows, Home/End, Page keys);
- * checkboxes, buttons and the rest own nothing, so R / Delete / Ctrl+D … still reach the canvas while they keep focus.
+ * contenteditable always do. Range sliders and radio buttons only own the cursor keys (arrows, Home/End, Page keys); a <select> owns those
+ * too plus every single printable character without Ctrl/Meta/Alt (type-ahead, Space opens it), so R or W typed on a focused list does not
+ * turn the selection; checkboxes, buttons and the rest own nothing, so R / Delete / Ctrl+D … still reach the canvas while they keep focus.
+ * `modifier` tells that Ctrl/Meta/Alt is held (Ctrl+Z on a focused list is still the editor's undo).
  */
-export function isTypingTarget(element, key = "") {
+export function isTypingTarget(element, key = "", { modifier = false } = {}) {
   if (!element) return false;
   const tag = String(element.tagName ?? "").toUpperCase();
   if (element.isContentEditable || tag === "TEXTAREA") return true;
-  if (tag === "SELECT") return CURSOR_KEYS.has(key);
+  if (tag === "SELECT") return CURSOR_KEYS.has(key) || (!modifier && String(key).length === 1);
   if (tag !== "INPUT") return false;
   const type = String(element.type ?? "text").toLowerCase();
   if (TEXT_INPUT_TYPES.has(type)) return true;
@@ -47,19 +51,21 @@ export function isTypingTarget(element, key = "") {
 
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 
-export function shortcutFor(event, { typing = false } = {}) {
-  if (!event || event.isComposing) return null;
+export function shortcutFor(event, { typing = false, textSelection = false } = {}) {
+  if (!event) return null;
   const mod = Boolean(event.ctrlKey || event.metaKey);
   const letter = letterOf(event);
   if (mod && !event.altKey && !event.shiftKey && letter === "s") return { action: "save", preventDefault: true };
+  if (event.isComposing) return null;
   if (mod && !event.altKey && !event.shiftKey && event.key === "Enter") return { action: "run", preventDefault: true };
   if (typing) return null;
   if (mod && !event.altKey) {
-    if (!event.shiftKey && letter === "c") return { action: "copy", preventDefault: true };
-    if (!event.shiftKey && letter === "x") return { action: "cut", preventDefault: true };
-    if (!event.shiftKey && letter === "v") return { action: "paste", preventDefault: true };
-    if (!event.shiftKey && letter === "a") return { action: "selectAll", preventDefault: true };
-    if (letter === "d") return { action: "clone", preventDefault: true };
+    const again = event.repeat ? { ignore: true } : {};
+    if (!event.shiftKey && letter === "c") return textSelection ? null : { action: "copy", preventDefault: true };
+    if (!event.shiftKey && letter === "x") return textSelection ? null : { action: "cut", preventDefault: true, ...again };
+    if (!event.shiftKey && letter === "v") return { action: "paste", preventDefault: true, ...again };
+    if (!event.shiftKey && letter === "a") return textSelection ? null : { action: "selectAll", preventDefault: true };
+    if (letter === "d") return { action: "clone", preventDefault: true, ...again };
     if (letter === "z") return { action: event.shiftKey ? "redo" : "undo", preventDefault: true };
     if (letter === "y") return { action: "redo", preventDefault: true };
     return null;

@@ -1,16 +1,15 @@
 import { GRID_SIZE } from "./circuit-geometry.js";
 import { cloneComponentSet, deleteSelectionFromCircuit } from "./circuit-edit.js";
-import { serializeCircuit } from "./circuit-engine.js";
 import { allItems, clearSelection, selectedItems, setSelectionItems, setSingleSelection } from "./selection-model.js";
 import { moveGroup, movableItems, rotateGroup } from "./group-edit.js";
-import { buildClipboard, parseClipboardText, pasteClipboard, serializeClipboard } from "./clipboard-model.js";
+import { CLIPBOARD_FORMAT, buildClipboard, clipboardLimitReason, controlsNeedingTarget, parseClipboardText, pasteClipboard, pasteRejection, serializeClipboard } from "./clipboard-model.js";
 
 /**
  * Whole-selection commands (delete, duplicate, rotate, nudge, select all, copy/cut/paste). Every command that changes the circuit goes
  * through session.mutate()/mutateGrouped(), so each is ONE history entry no matter how many items it touches. editor-input wires them
  * to keys, buttons and the inspector's group actions.
  */
-export function createSelectionCommands({ state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive }) {
+export function createSelectionCommands({ state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive, notify = () => {} }) {
   /** Delete every selected part, wire and junction as ONE history entry. */
   function deleteSelection() {
     commitActiveDrag();
@@ -94,39 +93,56 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
     return true;
   }
 
-  // ---- clipboard: an internal clipboard (paste always uses it) mirrored best-effort to the system clipboard as JSON
+  // ---- clipboard: an internal clipboard mirrored to the system clipboard as JSON. A paste prefers what the browser's own paste event carries
+  // (the latest system clipboard, no permission prompt); the internal clipboard is only the fallback when that holds no Circuit Lab payload.
 
-  let clipboard = null;
+  let clipboard = null; // the last fragment that was copied here or pasted successfully (never a rejected one)
+  let clipboardText = ""; // its JSON, to recognise "the same clipboard again" (cascading offsets) versus a new one
   let pasteIndex = 1;
 
   function writeSystemClipboard(text) {
     try { navigator.clipboard?.writeText(text)?.catch(() => {}); } catch { /* insecure context or no permission */ }
   }
 
-  function copySelection({ cut = false } = {}) {
+  /**
+   * Copy (or cut) the selection. With `clipboardData` (the native copy/cut event) the JSON goes into that event's data; otherwise it is
+   * written with navigator.clipboard. Returns true when the key press was handled (even if a size limit stopped the copy).
+   */
+  function copySelection({ cut = false, clipboardData = null } = {}) {
     commitActiveDrag();
-    const clip = buildClipboard(state.circuit, selectedItems(state));
+    const clip = buildClipboard(state.circuit, selectedItems(state), state.projectId);
     if (!clip) return false;
+    const limit = clipboardLimitReason(clip);
+    if (limit) { setStatus(limit, "error"); notify(limit, "error"); return true; }
+    const text = serializeClipboard(clip);
     clipboard = clip;
+    clipboardText = text;
     pasteIndex = 1;
-    writeSystemClipboard(serializeClipboard(clip));
+    let written = false;
+    if (clipboardData) { try { clipboardData.setData("text/plain", text); written = true; } catch { /* fall back below */ } }
+    if (!written) writeSystemClipboard(text);
     const count = clip.components.length + clip.junctions.length;
     if (cut) { deleteSelection(); setStatus(`${count}개 잘라냄 · Ctrl+V로 붙여넣기`, "ready"); }
     else setStatus(`${count}개 복사 · Ctrl+V로 붙여넣기`, "ready");
     return true;
   }
 
-  function pasteInto(clip, { validate = false } = {}) {
-    const pasted = pasteClipboard(state.circuit, clip, pasteIndex);
-    if (validate) {
-      try {
-        serializeCircuit({ ...state.circuit, components: [...state.circuit.components, ...pasted.components], wires: [...state.circuit.wires, ...pasted.wires], junctions: [...(state.circuit.junctions ?? []), ...pasted.junctions] });
-      } catch (error) {
-        setStatus(`붙여넣기 거부 · ${error.message}`, "error");
-        return false;
-      }
+  /**
+   * Paste one fragment. Only the pasted part is validated (plus the size limits of the whole circuit), so unrelated errors elsewhere never block it.
+   * The fragment becomes the internal clipboard only after it was pasted: a rejected one is never remembered. Returns whether it was pasted.
+   */
+  function pasteFragment(clip, text) {
+    const index = text === clipboardText ? pasteIndex : 1;
+    const pasted = pasteClipboard(state.circuit, clip, index, { sameProject: Boolean(clip.source) && clip.source === state.projectId });
+    const reason = pasteRejection(state.circuit, pasted);
+    if (reason) {
+      setStatus(`붙여넣기 거부 · ${reason}`, "error");
+      notify(`붙여넣기 거부 · ${reason}`, "error");
+      return false;
     }
-    pasteIndex += 1;
+    clipboard = clip;
+    clipboardText = text;
+    pasteIndex = index + 1;
     mutate(() => {
       state.circuit.components.push(...pasted.components);
       state.circuit.junctions = [...(state.circuit.junctions ?? []), ...pasted.junctions];
@@ -137,22 +153,42 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
         ...pasted.junctions.map((junction) => ({ kind: "junction", id: junction.id })),
       ]);
     });
-    setStatus(`${pasted.components.length + pasted.junctions.length}개 붙여넣기`, "ready");
+    const needing = controlsNeedingTarget(pasted);
+    setStatus(`${pasted.components.length + pasted.junctions.length}개 붙여넣기${needing ? " · 제어 대상을 다시 선택하세요" : ""}`, "ready");
+    if (needing) notify(`제어 대상을 다시 선택하세요 · 붙여넣은 종속원 ${needing}개의 제어 대상이 다른 회로이거나 없어 지웠습니다`, "info");
     return true;
   }
 
-  /** Ctrl+V: the internal clipboard wins; only when it is empty is the system clipboard consulted (another tab or window). */
-  function pasteSelection() {
+  /** Text from the system clipboard: a validated clip, or null after telling the user why nothing was pasted. */
+  function clipFromText(text) {
+    const clip = parseClipboardText(text);
+    if (clip) return clip;
+    if (typeof text === "string" && text.includes(CLIPBOARD_FORMAT)) setStatus("붙여넣기 거부 · 클립보드 내용이 올바른 Circuit Lab 형식이 아닙니다", "error");
+    return null;
+  }
+
+  /**
+   * Ctrl+V. With `clipboardData` (the native paste event): a Circuit Lab payload in it wins, else the internal clipboard. Without it (key
+   * fallback): the internal clipboard, and only when that is empty the async system clipboard. Returns true (the key press was handled).
+   */
+  function pasteSelection({ clipboardData = null } = {}) {
     commitActiveDrag();
-    if (clipboard) { pasteInto(clipboard); return true; }
+    if (clipboardData) {
+      let text = "";
+      try { text = clipboardData.getData("text/plain"); } catch { /* unreadable */ }
+      const clip = clipFromText(text);
+      if (clip) { pasteFragment(clip, text); return true; }
+      if (text.includes(CLIPBOARD_FORMAT)) return true; // rejected above, with its own message
+    }
+    if (clipboard) { pasteFragment(clipboard, clipboardText); return true; }
+    if (clipboardData) { setStatus("붙여넣을 회로 항목이 없습니다", "ready"); return true; }
     (async () => {
       try {
-        const clip = parseClipboardText(await navigator.clipboard.readText());
-        if (!clip) { setStatus("붙여넣을 회로 항목이 없습니다", "ready"); return; }
+        const text = await navigator.clipboard.readText();
+        const clip = clipFromText(text);
+        if (!clip) { if (!text.includes(CLIPBOARD_FORMAT)) setStatus("붙여넣을 회로 항목이 없습니다", "ready"); return; }
         if (!isCircuitUiActive()) return;
-        clipboard = clip;
-        pasteIndex = 1;
-        pasteInto(clip, { validate: true });
+        pasteFragment(clip, text);
       } catch { setStatus("붙여넣을 회로 항목이 없습니다", "ready"); }
     })();
     return true;

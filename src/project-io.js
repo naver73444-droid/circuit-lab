@@ -4,7 +4,7 @@ import { deserializeProject, serializeProject } from "./project-format.js";
 import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geometry.js";
 import { currentProbeLabel } from "./current-direction.js";
 import { escapeHtml } from "./safe-dom.js";
-import { PROBE_COLORS } from "./editor-session.js";
+import { PROBE_COLORS, newProjectId } from "./editor-session.js";
 import { createAutosave, describeSavedAt, isEmptyProject } from "./persistence.js";
 import { buildShareUrl, decodeProjectFromHash, encodeProjectToHash } from "./share-url.js";
 import { createCanvasNotices } from "./canvas-notices.js";
@@ -95,6 +95,7 @@ export function createProjectIO(deps) {
     };
     mutate(() => {
       resetProjectSession();
+      state.projectId = newProjectId();
       state.intent = "manual";
       state.circuit = { ...example.circuit, junctions: example.circuit.junctions ?? [] };
       state.settings = { ...state.settings, ...example.settings, ...manualSettings };
@@ -148,6 +149,7 @@ export function createProjectIO(deps) {
     beginReplacement({ startup });
     mutate(() => {
       resetProjectSession();
+      state.projectId = newProjectId();
       state.intent = "manual";
       state.circuit = { ...project.circuit, junctions: project.circuit.junctions ?? [] };
       state.circuit.components.forEach((component, index) => {
@@ -288,6 +290,7 @@ export function createProjectIO(deps) {
       beginReplacement();
       mutate(() => {
       resetProjectSession();
+      state.projectId = newProjectId();
       state.intent = "auto";
       state.manualSettingKeys.clear();
       state.circuit = { version: 1, geometryVersion: CURRENT_GEOMETRY_VERSION, components: [], wires: [], junctions: [] };

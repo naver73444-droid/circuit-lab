@@ -1432,7 +1432,9 @@ describe("browser smoke", { timeout: 600000 }, () => {
   test("clipboard: Ctrl+C then Ctrl+V twice pastes unique copies at +40/+80 with only their internal wires; Ctrl+X then Ctrl+V restores the count", async () => {
     await navigate("/?example=divider");
     await autoUpdateOff();
-    await ev(`Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { window.__clip = text; }, readText: async () => window.__clip ?? "" } })`);
+    // The browser raises native copy/cut/paste events for these keys (also in headless Edge over CDP); the app reads and writes
+    // event.clipboardData, so no navigator.clipboard permission is involved. A window-level bubble listener (it runs after the app's) records what was copied.
+    await ev(`window.addEventListener("copy", (event) => { window.__clip = event.clipboardData.getData("text/plain"); })`);
     const original = await state();
     const originals = Object.fromEntries(original.circuit.components.map((item) => [item.id, item]));
     await selectPart("R1");
@@ -1440,6 +1442,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await ctrlKey("c", "KeyC", 67);
     const clip = JSON.parse(await until(`window.__clip`, "the system clipboard to receive the copy"));
     assert.deepEqual(clip.components.map((item) => item.id).sort(), ["R1", "R2"]);
+    assert.equal(clip.source, (await state()).projectId, "the clipboard carries the id of the project it came from");
     assert.deepEqual(clip.wires.map((item) => item.id), ["W2"], "only the wire between the two copied parts is copied");
     assert.equal((await state()).historyDepth, original.historyDepth, "copy is not an edit");
 
@@ -1452,9 +1455,12 @@ describe("browser smoke", { timeout: 600000 }, () => {
       const added = now.circuit.components.filter((item) => !known.has(item.id));
       assert.equal(added.length, 2, `paste (+${offset}) added two parts`);
       assert.equal(new Set(now.circuit.components.map((item) => item.id)).size, now.circuit.components.length, "every id is unique");
-      for (const copy of added) {
-        const source = Object.values(originals).find((item) => item.type === copy.type && item.props.ref === copy.props.ref);
-        assert.ok(source, `${copy.id} copies a clipboard part`);
+      assert.equal(new Set(now.circuit.components.map((item) => item.props.ref)).size, now.circuit.components.length, "every reference label is unique");
+      for (const [index, copy] of added.entries()) {
+        const source = [originals.R1, originals.R2][index];
+        assert.equal(copy.type, source.type, `${copy.id} copies ${source.id}`);
+        assert.notEqual(copy.props.ref, source.props.ref, "a copy never repeats its original's reference label");
+        assert.equal(copy.props.ref, copy.id, "it gets the next free label, like a newly placed part");
         assert.deepEqual([copy.x - source.x, copy.y - source.y], [offset, offset], `${copy.id} sits ${offset} away from its source`);
         known.add(copy.id);
       }
@@ -1644,5 +1650,214 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.ok(!(await ev(`location.href`)).includes("example"), "no example parameter after the reload");
     assert.equal(await ev(`document.getElementById("empty-hint").classList.contains("hidden")`), false, "the empty-canvas hint is shown");
     assert.deepEqual(await noticeTexts(), [], "nothing is offered for restore (the example was never autosaved)");
+  });
+
+  // ---- review follow-up: clipboard validation/ownership, pending wire cleanup, key ownership, touch group drag, pin-drag edge cases -----------------------------
+
+  const statusText = () => ev(`document.getElementById("engine-status").textContent`);
+  const rawMouse = (type, x, y, extra = {}) => ctx.cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra });
+  /** A paste the browser did not raise itself: a synthetic ClipboardEvent whose clipboardData holds `text` (empty = "the clipboard holds no text"). */
+  const syntheticPaste = (text) => ev(`(() => { const data = new DataTransfer(); if (${JSON.stringify(text)}) data.setData("text/plain", ${JSON.stringify(text)}); const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }); document.body.dispatchEvent(event); return event.defaultPrevented; })()`).then(settle);
+  /** The keydown only (no native clipboard event follows an untrusted key), which exercises the key-path fallback. */
+  const syntheticCtrlV = () => ev(`document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "v", code: "KeyV", ctrlKey: true, bubbles: true, cancelable: true }))`).then(() => sleep(150)).then(settle);
+  const clipPayload = (parts, extra = {}) => JSON.stringify({ format: "circuit-lab-clipboard", version: 1, components: parts, junctions: [], wires: [], ...extra });
+  const resistor = (id, extra = {}) => ({ id, type: "R", x: 300, y: 300, rotation: 0, props: { ref: "R1", value: "2k" }, ...extra });
+  const counts = async () => { const now = await state(); return { components: now.circuit.components.length, wires: now.circuit.wires.length, history: now.historyDepth }; };
+
+  test("clipboard: a rejected system-clipboard payload is never remembered; a valid one is pasted (refs relabelled) and then remembered for the next paste", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    const base = await counts();
+    const toNothing = JSON.parse(clipPayload([resistor("R1"), resistor("R2", { x: 400 })]));
+    toNothing.wires = [{ id: "W9", a: { componentId: "R1", pin: 99 }, b: { componentId: "R2", pin: 0 } }];
+    const bad = JSON.stringify(toNothing);
+    // Native paste path: rejected, nothing changes, and the empty internal clipboard is NOT replaced by the rejected content.
+    await syntheticPaste(bad);
+    assert.deepEqual(await counts(), base, "the payload with a wire to pin 99 changed nothing");
+    assert.match(await statusText(), /거부/);
+    await syntheticPaste("");
+    assert.deepEqual(await counts(), base, "a second paste (empty system clipboard) does not bring the rejected payload in through the internal clipboard");
+    assert.match(await statusText(), /붙여넣을 회로 항목이 없습니다/);
+    // Key fallback path (no native event): the async system clipboard is rejected both times.
+    await ev(`Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => {}, readText: async () => ${JSON.stringify(bad)} } })`);
+    await syntheticCtrlV();
+    await syntheticCtrlV();
+    assert.deepEqual(await counts(), base, "the key path rejects it every time instead of pasting the remembered payload the second time");
+    assert.match(await statusText(), /거부/);
+    // A valid payload pastes; its copy gets the next free label, not the original's "R1".
+    await syntheticPaste(clipPayload([resistor("R1")]));
+    let now = await state();
+    assert.equal(now.circuit.components.length, base.components + 1);
+    const pasted = now.circuit.components.at(-1);
+    assert.equal(pasted.id, "R3");
+    assert.equal(pasted.props.ref, "R3", "the copy of R1 is labelled R3, not R1");
+    assert.equal(pasted.props.value, "2k");
+    assert.deepEqual(now.selection, ["component:R3"]);
+    // ... and a later paste with nothing on the system clipboard pastes the (validated) remembered one, further along the cascade.
+    await syntheticPaste("");
+    now = await state();
+    assert.equal(now.circuit.components.length, base.components + 2);
+    assert.deepEqual([now.circuit.components.at(-1).x - pasted.x, now.circuit.components.at(-1).y - pasted.y], [40, 40], "the cascade continues");
+    assert.equal(now.circuit.components.at(-1).props.ref, "R4");
+  });
+
+  test("clipboard: a controlled source pasted into another project loses its control target (notice + inspector error); the same project keeps a target that still exists", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    const projectId = (await state()).projectId;
+    assert.ok(projectId, "the app exposes the project id");
+    const dependent = (elementId, source) => clipPayload([{ id: "F1", type: "CCCS", x: 300, y: 300, rotation: 0, props: { ref: "F1", beta: "2" }, control: { kind: "branchCurrent", elementId, direction: 1 } }], source ? { source } : {});
+    // Another project: V1 exists here, but it is just a same-named stranger.
+    await syntheticPaste(dependent("V1", "somewhere-else-1"));
+    let now = await state();
+    const crossed = now.circuit.components.at(-1);
+    assert.equal(crossed.type, "CCCS");
+    assert.equal(crossed.control, undefined, "the reference to a same-named V1 of another project is cleared, not bound");
+    assert.ok((await noticeTexts()).some((text) => text.includes("제어 대상을 다시 선택하세요")), "the user is told to pick the target again");
+    assert.match(await ev(`document.getElementById("inspector-content").textContent`), /제어 대상 오류/, "the inspector shows the missing-control state");
+    // Same project, target present: kept. Same project, target gone: cleared.
+    await syntheticPaste(dependent("V1", projectId));
+    assert.equal((await state()).circuit.components.at(-1).control.elementId, "V1");
+    await syntheticPaste(dependent("S9", projectId));
+    assert.equal((await state()).circuit.components.at(-1).control, undefined, "a target that no longer exists is cleared");
+    // Without a source (a payload from elsewhere) it is a different project too.
+    await syntheticPaste(dependent("V1", ""));
+    assert.equal((await state()).circuit.components.at(-1).control, undefined);
+    // A new circuit is a new project.
+    await click("#new-button");
+    assert.notEqual((await state()).projectId, projectId, "새 회로 starts a new project id");
+  });
+
+  test("deleting or cutting the start part of a half-drawn wire cancels it (no wire to a deleted pin)", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await selectPart("R1");
+    let tip = await pinTip("R1", 0);
+    await clickAt(tip.x, tip.y); await settle();
+    assert.deepEqual((await state()).pendingPin, { componentId: "R1", pin: 0 }, "the pin click starts a wire");
+    assert.match(await ev(`document.getElementById("tool-hint").textContent`), /배선 중/);
+    await press("Delete", "Delete", 46);
+    let now = await state();
+    assert.equal(now.circuit.components.some((item) => item.id === "R1"), false, "R1 is deleted");
+    assert.equal(now.pendingPin, null, "the pending wire is gone with its part");
+    assert.doesNotMatch(await ev(`document.getElementById("tool-hint").textContent`), /배선 중/, "the hint text is restored");
+    tip = await pinTip("R2", 0);
+    await clickAt(tip.x, tip.y); await settle();
+    now = await state();
+    assert.deepEqual(now.pendingPin, { componentId: "R2", pin: 0 }, "a new wire starts normally");
+    assert.ok(now.circuit.wires.every((wire) => [wire.a, wire.b].every((end) => end.junctionId !== undefined || now.circuit.components.some((item) => item.id === end.componentId))), "no wire points at a deleted part");
+    // Cut does the same.
+    await selectPart("R2");
+    await ctrlKey("x", "KeyX", 88);
+    now = await state();
+    assert.equal(now.circuit.components.some((item) => item.id === "R2"), false);
+    assert.equal(now.pendingPin, null, "cutting the start part cancels the pending wire");
+  });
+
+  test("copies and duplicates get their own reference labels; a held Ctrl+V does not stack pastes", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await selectPart("R1");
+    await ctrlKey("d", "KeyD", 68);
+    let now = await state();
+    assert.equal(now.circuit.components.at(-1).props.ref, "R3", "Ctrl+D copy of R1 is R3");
+    await selectPart("R2");
+    await ctrlKey("c", "KeyC", 67);
+    await ctrlKey("v", "KeyV", 86);
+    const afterOne = await counts();
+    assert.equal(afterOne.components, 6);
+    for (let n = 0; n < 3; n += 1) await ctx.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, modifiers: MOD.ctrl, autoRepeat: true });
+    await settle();
+    assert.deepEqual(await counts(), afterOne, "auto-repeated Ctrl+V keydowns are ignored");
+    now = await state();
+    const refs = now.circuit.components.map((item) => item.props.ref);
+    assert.equal(new Set(refs).size, refs.length, `every label is unique: ${refs.join(",")}`);
+  });
+
+  test("key ownership: a focused <select> keeps letter keys; a selected stretch of page text keeps Ctrl+A/Ctrl+C", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await selectPart("R1");
+    const before = await component("R1");
+    await ev(`document.getElementById("example-select").focus()`);
+    assert.equal(await ev(`document.activeElement.id`), "example-select");
+    await press("r", "KeyR", 82);
+    assert.equal((await component("R1")).rotation, before.rotation, "R on a focused list is type-ahead, not a rotation");
+    await ev(`document.activeElement.blur()`);
+    await press("r", "KeyR", 82);
+    assert.equal((await component("R1")).rotation, ((before.rotation ?? 0) + 90) % 360, "with the focus released the same key rotates");
+    // Page text selection.
+    await ev(`window.__copyPrevented = []; window.addEventListener("copy", (event) => window.__copyPrevented.push(event.defaultPrevented))`);
+    await ev(`(() => { const range = document.createRange(); range.selectNodeContents(document.getElementById("tool-hint")); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); return String(selection).length; })()`);
+    assert.ok(await ev(`String(getSelection()).length > 0`), "a stretch of page text is selected");
+    await ctrlKey("a", "KeyA", 65);
+    assert.deepEqual((await state()).selection, ["component:R1"], "Ctrl+A with selected text is the browser's select-all, not the circuit's");
+    await ev(`getSelection().removeAllRanges(); getSelection().selectAllChildren(document.getElementById("tool-hint"))`);
+    await ctrlKey("c", "KeyC", 67);
+    assert.deepEqual(await ev(`window.__copyPrevented`), [false], "Ctrl+C with selected text is left to the browser (the copy event is not taken over)");
+    await ev(`getSelection().removeAllRanges()`);
+    await ctrlKey("a", "KeyA", 65);
+    assert.ok((await state()).selection.length > 1, "with no text selected Ctrl+A selects the circuit");
+  });
+
+  test("Shift pressed on the press but released before the click keeps the multi-selection", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await selectPart("R1");
+    const point = await partPoint("R2");
+    await rawMouse("mouseMoved", point.x, point.y, { modifiers: MOD.shift });
+    await rawMouse("mousePressed", point.x, point.y, { button: "left", buttons: 1, clickCount: 1, modifiers: MOD.shift });
+    await rawMouse("mouseReleased", point.x, point.y, { button: "left", buttons: 0, clickCount: 1, modifiers: 0 });
+    await settle();
+    assert.deepEqual((await state()).selection.sort(), ["component:R1", "component:R2"], "Shift at the press adds R2 and the click does not collapse it");
+  });
+
+  test("touch: one finger on a selected part of a multi-selection drags the whole group", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await click("#fit-button");
+    await selectPart("R1");
+    await shiftClickPart("R2");
+    const before = await positionsOf(["R1", "R2", "V1"]);
+    const depth = (await state()).historyDepth;
+    const from = await partPoint("R2");
+    await touchDrag(from, { x: from.x + 70, y: from.y + 40 });
+    const after = await positionsOf(["R1", "R2", "V1"]);
+    const dx = after.R2.x - before.R2.x, dy = after.R2.y - before.R2.y;
+    assert.ok(dx !== 0 || dy !== 0, "the touched part moved");
+    assert.deepEqual([after.R1.x - before.R1.x, after.R1.y - before.R1.y], [dx, dy], "the other selected part moved by the same amount");
+    assert.deepEqual(after.V1, before.V1, "an unselected part stays");
+    assert.equal((await state()).historyDepth, depth + 1, "one history step for the group drag");
+  });
+
+  test("pin-drag wire: a pointercancel anywhere ends it, and releasing outside the canvas abandons it", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await click("#fit-button");
+    const base = await counts();
+    const from = await pinTip("R1", 0);
+    await rawMouse("mouseMoved", from.x, from.y);
+    await rawMouse("mousePressed", from.x, from.y, { button: "left", buttons: 1, clickCount: 1 });
+    const bg = await bgPoint();
+    for (let step = 1; step <= 4; step += 1) await rawMouse("mouseMoved", from.x + ((bg.x - from.x) * step) / 4, from.y + ((bg.y - from.y) * step) / 4, { buttons: 1 });
+    await settle();
+    let now = await state();
+    assert.deepEqual(now.pendingPin, { componentId: "R1", pin: 0 }, "the drag started a wire");
+    const owner = now.pointerOwnerId;
+    assert.notEqual(owner, null);
+    await ev(`window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: ${owner}, pointerType: "mouse", bubbles: true }))`);
+    await settle();
+    now = await state();
+    assert.equal(now.pendingPin, null, "the cancelled pointer cancelled the pending wire");
+    assert.equal(now.pointerOwnerId, null, "and released the pointer owner");
+    await rawMouse("mouseReleased", bg.x, bg.y, { button: "left", buttons: 0, clickCount: 1 });
+    await settle();
+    assert.deepEqual(await counts(), base, "no wire was made");
+    // Released outside the canvas area (over the top bar): abandoned, even though a pin is geometrically near nothing there.
+    const bar = await ev(`(() => { const rect = document.querySelector(".topbar").getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; })()`);
+    await dragBetween(await pinTip("R2", 0), bar);
+    now = await state();
+    assert.equal(now.pendingPin, null, "releasing outside the canvas cancels the wire (empty canvas would keep it pending)");
+    assert.deepEqual(await counts(), base);
   });
 });

@@ -5,7 +5,7 @@ export const CANVAS_VIEW_MAX_WIDTH = 3040;
 
 export function passedDragSlop(start, point, pointerType = "mouse") {
   if (![start?.x, start?.y, point?.x, point?.y].every(Number.isFinite)) return false;
-  return Math.hypot(point.x - start.x, point.y - start.y) >= (pointerType === "touch" ? 8 : 4);
+  return Math.hypot(point.x - start.x, point.y - start.y) >= (pointerType === "touch" || pointerType === "pen" ? 8 : 4);
 }
 
 export function nearestScreenTarget(point, targets) {

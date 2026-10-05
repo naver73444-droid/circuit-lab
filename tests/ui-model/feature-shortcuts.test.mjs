@@ -99,7 +99,11 @@ test("isTypingTarget: 글자를 받는 칸만 일반 키를 가져간다 (체크
     assert.equal(isTypingTarget(el("INPUT", { type: "range" }), k), true, "range " + k);
     assert.equal(isTypingTarget(el("SELECT"), k), true, "select " + k);
   }
-  assert.equal(isTypingTarget(el("SELECT"), "r"), false, "select: 글자 키는 편집기");
+  assert.equal(isTypingTarget(el("SELECT"), "r"), true, "select: 글자 키(타입어헤드)는 목록 몫");
+  assert.equal(isTypingTarget(el("SELECT"), " "), true, "select: 스페이스는 목록을 연다");
+  assert.equal(isTypingTarget(el("SELECT"), "z", { modifier: true }), false, "select에 포커스가 있어도 Ctrl+Z는 편집기 되돌리기");
+  assert.equal(isTypingTarget(el("SELECT"), "Delete"), false, "select: Delete는 편집기");
+  assert.equal(isTypingTarget(el("INPUT", { type: "range" }), "r"), false, "슬라이더는 여전히 글자 키를 편집기에 넘긴다");
   assert.equal(isTypingTarget(el("DIV"), "ArrowLeft"), false);
   assert.equal(isTypingTarget(null, "r"), false);
   assert.equal(isTypingTarget(undefined, "ArrowLeft"), false);

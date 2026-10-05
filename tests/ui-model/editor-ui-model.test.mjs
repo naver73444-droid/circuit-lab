@@ -184,7 +184,7 @@ test("inline units, draft classification and clone props are type-specific", () 
   assert.equal(controlledSourceInputModel("VCCS", "20µS").status, "valid");
   assert.equal(controlledSourceInputModel("VCCS", "20s").status, "invalid");
   const clone = cloneSelectedComponent(project.circuit, "E1");
-  assert.equal(clone.type, "VCVS"); assert.deepEqual(clone.props, { ref: "E1", g: "4" }); assert.notEqual(clone.id, "E1");
+  assert.equal(clone.type, "VCVS"); assert.deepEqual(clone.props, { ref: "E2", g: "4" }); assert.notEqual(clone.id, "E1");
 });
 
 test("connection status never joins control pins to output pins", () => {

@@ -1,4 +1,4 @@
-import { parseValue } from "./circuit-engine.js";
+import { componentDefaults, parseValue, pinCount } from "./circuit-engine.js";
 import { circuitGeometryVersion, projectSplitPoint, snapPoint, splitRouteWaypoints } from "./circuit-geometry.js";
 
 export function endpointKey(endpoint) {
@@ -9,6 +9,14 @@ export function endpointKey(endpoint) {
 
 export function endpointsEqual(first, second) {
   return endpointKey(first) === endpointKey(second);
+}
+
+/** Does this wire endpoint still point at something that exists (a junction, or an in-range pin of a part)? */
+export function endpointExists(circuit, endpoint) {
+  if (!endpoint || typeof endpoint !== "object") return false;
+  if (endpoint.junctionId !== undefined) return (circuit.junctions ?? []).some((junction) => junction.id === endpoint.junctionId);
+  const component = circuit.components?.find((item) => item.id === endpoint.componentId);
+  return Boolean(component) && Number.isInteger(endpoint.pin) && endpoint.pin >= 0 && endpoint.pin < pinCount(component.type);
 }
 
 export function nextEntityId(items, prefix) {
@@ -85,6 +93,29 @@ function componentIdPrefix(type) {
   return { VCVS: "E", VCCS: "G", CURRENT_SENSOR: "S", CCCS: "F", CCVS: "H" }[type] ?? type;
 }
 
+/** The reference prefix a new part of this type gets ("R", "C", "U" …); null for parts whose reference carries no number (GND). */
+function referencePrefix(type) {
+  try {
+    const ref = componentDefaults(type, 1).ref;
+    return type === "GND" ? null : ref.slice(0, -1);
+  } catch { return null; }
+}
+
+/**
+ * The reference label a copy gets: the original's label when no other part uses it (cutting and pasting back keeps "R1"), otherwise the
+ * next free one for the type, counted from the new id's number exactly like placing a new part (R3, R4 …). `used` is updated.
+ */
+export function referenceForCopy(type, originalRef, newId, used) {
+  const prefix = referencePrefix(type);
+  if (prefix === null || typeof originalRef !== "string") return originalRef;
+  if (originalRef && !used.has(originalRef)) { used.add(originalRef); return originalRef; }
+  let index = Number(/\d+/.exec(newId)?.[0] ?? 1) || 1;
+  while (used.has(`${prefix}${index}`)) index += 1;
+  const ref = `${prefix}${index}`;
+  used.add(ref);
+  return ref;
+}
+
 const endpointInSet = (end, componentIds, junctionIds) => end?.junctionId !== undefined ? junctionIds.has(end.junctionId) : componentIds.has(end?.componentId);
 
 /**
@@ -103,10 +134,13 @@ export function extractFragment(circuit, componentIds, junctionIds = []) {
 /**
  * Instantiate a fragment into `circuit` (which is not modified): fresh ids that cannot collide with the circuit or each other,
  * every position/waypoint shifted by `offset`, wire endpoints and controlled-source references that point inside the fragment remapped.
- * A reference to an element that is not part of the fragment keeps its (external) id.
+ * A reference to an element that is not part of the fragment keeps its (external) id, unless `resolveControl(elementId, component)` is given and
+ * says no: then the reference is removed (the part's id is listed in `clearedControls`) instead of silently binding to whatever shares the id.
+ * Copies get a free reference label (R3 …) instead of repeating the original's.
  */
-export function remapFragment(circuit, fragment, offset = 40) {
+export function remapFragment(circuit, fragment, offset = 40, { resolveControl = null } = {}) {
   const reserved = [...circuit.components];
+  const usedRefs = new Set(circuit.components.map((component) => component.props?.ref).filter((ref) => typeof ref === "string"));
   const idMap = new Map();
   for (const original of fragment.components) {
     const id = nextEntityId(reserved, componentIdPrefix(original.type));
@@ -120,9 +154,12 @@ export function remapFragment(circuit, fragment, offset = 40) {
     junctionMap.set(original.id, id);
     reservedJunctions.push({ id });
   }
+  const clearedControls = [];
   const components = fragment.components.map((original) => {
     const component = { ...structuredClone(original), id: idMap.get(original.id), ...snapPoint({ x: original.x + offset, y: original.y + offset }) };
+    if (component.props && typeof component.props.ref === "string") component.props.ref = referenceForCopy(component.type, component.props.ref, component.id, usedRefs);
     if (component.control?.elementId && idMap.has(component.control.elementId)) component.control.elementId = idMap.get(component.control.elementId);
+    else if (component.control && resolveControl && !resolveControl(component.control.elementId, component)) { delete component.control; clearedControls.push(component.id); }
     return component;
   });
   const junctions = (fragment.junctions ?? []).map((original) => ({ ...structuredClone(original), id: junctionMap.get(original.id), ...snapPoint({ x: original.x + offset, y: original.y + offset }) }));
@@ -143,7 +180,7 @@ export function remapFragment(circuit, fragment, offset = 40) {
     if (Array.isArray(wire.waypoints)) wire.waypoints = wire.waypoints.map((point) => snapPoint({ x: point.x + offset, y: point.y + offset }));
     wires.push(wire);
   }
-  return { components, wires, junctions, idMap, junctionMap };
+  return { components, wires, junctions, idMap, junctionMap, clearedControls };
 }
 
 export function cloneComponentSet(circuit, componentIds, offset = 40, { junctionIds = [] } = {}) {

@@ -85,8 +85,13 @@ export function componentDefaults(type, index = 1) {
 }
 
 export function pinCount(type) {
-  return TYPE_PINS[type] ?? 0;
+  return Object.hasOwn(TYPE_PINS, type) ? TYPE_PINS[type] : 0;
 }
+
+export const isKnownComponentType = (type) => typeof type === "string" && Object.hasOwn(TYPE_PINS, type);
+
+/** Editing limits of one circuit; validateCircuitStructure() enforces them and paste checks them before it mutates anything. */
+export const CIRCUIT_LIMITS = Object.freeze({ components: 256, wires: 2048, junctions: 1024 });
 
 // Successful string parses only (failures embed the caller's label in their
 // message, so they are never cached). Bounded; cleared wholesale when full.
@@ -260,7 +265,7 @@ export function validateCircuitStructure(circuit) {
   if (circuit.geometryVersion !== undefined && ![1, 2].includes(circuit.geometryVersion)) {
     throw new CircuitError("INVALID_FILE", `지원하지 않는 geometry version입니다: ${circuit.geometryVersion}`);
   }
-  if (circuit.components.length > 256 || circuit.wires.length > 2048 || (circuit.junctions?.length ?? 0) > 1024) {
+  if (circuit.components.length > CIRCUIT_LIMITS.components || circuit.wires.length > CIRCUIT_LIMITS.wires || (circuit.junctions?.length ?? 0) > CIRCUIT_LIMITS.junctions) {
     throw new CircuitError("CIRCUIT_TOO_LARGE", "교육용 편집 한도(부품 256, 배선 2048, 접속점 1024)를 초과했습니다.", "회로를 작은 실험 단위로 나누세요. 데이터를 임의로 잘라 계산하지 않습니다.");
   }
   const componentsById = new Map();

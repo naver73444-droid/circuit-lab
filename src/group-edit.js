@@ -24,14 +24,18 @@ export function captureGroupOrigins(circuit, items) {
   };
 }
 
-/** Put every captured item at origin + (dx, dy). Idempotent, so a drag can call it every frame. */
-export function applyGroupOffset(circuit, origins, dx, dy) {
+/**
+ * Put every captured item at origin + (dx, dy). Idempotent, so a drag can call it every frame. With `snap` each item (and each waypoint) lands
+ * on the grid by itself, so a group that contained an off-grid item does not drag the others off the grid; restoring uses the exact origins.
+ */
+export function applyGroupOffset(circuit, origins, dx, dy, { snap = false } = {}) {
+  const place = (origin) => snap ? snapPoint({ x: origin.x + dx, y: origin.y + dy }) : { x: origin.x + dx, y: origin.y + dy };
   const components = new Map(circuit.components.map((component) => [component.id, component]));
   const junctions = new Map((circuit.junctions ?? []).map((junction) => [junction.id, junction]));
   const wires = new Map(circuit.wires.map((wire) => [wire.id, wire]));
-  for (const origin of origins.components) { const item = components.get(origin.id); if (item) { item.x = origin.x + dx; item.y = origin.y + dy; } }
-  for (const origin of origins.junctions) { const item = junctions.get(origin.id); if (item) { item.x = origin.x + dx; item.y = origin.y + dy; } }
-  for (const origin of origins.wires) { const wire = wires.get(origin.id); if (wire) wire.waypoints = origin.waypoints.map((point) => ({ x: point.x + dx, y: point.y + dy })); }
+  for (const origin of origins.components) { const item = components.get(origin.id); if (item) Object.assign(item, place(origin)); }
+  for (const origin of origins.junctions) { const item = junctions.get(origin.id); if (item) Object.assign(item, place(origin)); }
+  for (const origin of origins.wires) { const wire = wires.get(origin.id); if (wire) wire.waypoints = origin.waypoints.map(place); }
 }
 
 export const restoreGroupOrigins = (circuit, origins) => applyGroupOffset(circuit, origins, 0, 0);
@@ -46,17 +50,30 @@ export function moveGroup(circuit, items, dx, dy) {
   const origins = captureGroupOrigins(circuit, items);
   const base = origins.components[0] ?? origins.junctions[0];
   if (!base) return 0;
-  // The first item is snapped to the grid; everyone else moves by the same delta so the group stays rigid.
+  // The first item is snapped to the grid and sets the delta; every item (and waypoint) is then snapped itself, so nothing ends up off-grid.
   const target = snapPoint({ x: base.x + dx, y: base.y + dy });
-  applyGroupOffset(circuit, origins, target.x - base.x, target.y - base.y);
+  applyGroupOffset(circuit, origins, target.x - base.x, target.y - base.y, { snap: true });
   return origins.components.length + origins.junctions.length;
 }
 
 /**
+ * The point a group turns around. It is `pivot` ({kind, id}, normally the primary selection) when that is a movable item of the group; otherwise (e.g. the primary is
+ * a wire) the last part of `items` (the one clicked last); with no part at all, the centre of the group's bounds snapped to the grid.
+ */
+export function rotationPivot(origins, items, pivot = null) {
+  const inGroup = pivot?.kind === "junction" ? origins.junctions.find((origin) => origin.id === pivot.id) : pivot?.kind === "component" ? origins.components.find((origin) => origin.id === pivot.id) : null;
+  if (inGroup) return { x: inGroup.x, y: inGroup.y };
+  const lastComponent = [...items].reverse().find((item) => item.kind === "component" && origins.components.some((origin) => origin.id === item.id));
+  if (lastComponent) { const origin = origins.components.find((entry) => entry.id === lastComponent.id); return { x: origin.x, y: origin.y }; }
+  const points = [...origins.components, ...origins.junctions];
+  const xs = points.map((point) => point.x), ys = points.map((point) => point.y);
+  return snapPoint({ x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 });
+}
+
+/**
  * Rotate by 90° steps (direction +1 clockwise on screen, −1 counter-clockwise).
- * One part: in place. Several parts/junctions: rigidly around a pivot item (default: the first one) that stays where it is, so every
- * position stays on the grid and a turn followed by the opposite turn restores the layout exactly.
- * `pivot` is {kind, id} of one of the items.
+ * One part: in place. Several parts/junctions: rigidly around rotationPivot() — which stays where it is, so every position stays on the grid
+ * and a turn followed by the opposite turn restores the layout exactly. Part angles are always normalised to 0..270.
  */
 export function rotateGroup(circuit, items, direction = 1, pivot = null) {
   const origins = captureGroupOrigins(circuit, items);
@@ -68,11 +85,10 @@ export function rotateGroup(circuit, items, direction = 1, pivot = null) {
     component.rotation = ((((component.rotation ?? 0) + direction * 90) % 360) + 360) % 360;
     return 1;
   }
-  const pivotOrigin = (pivot?.kind === "junction" ? origins.junctions : origins.components).find((origin) => origin.id === pivot?.id) ?? origins.components[0] ?? origins.junctions[0];
-  const center = { x: pivotOrigin.x, y: pivotOrigin.y };
+  const center = rotationPivot(origins, items, pivot);
   const rotate = (point) => {
     const x = point.x - center.x, y = point.y - center.y;
-    return direction >= 0 ? { x: center.x - y, y: center.y + x } : { x: center.x + y, y: center.y - x };
+    return snapPoint(direction >= 0 ? { x: center.x - y, y: center.y + x } : { x: center.x + y, y: center.y - x });
   };
   const components = new Map(circuit.components.map((component) => [component.id, component]));
   const junctions = new Map((circuit.junctions ?? []).map((junction) => [junction.id, junction]));
@@ -80,7 +96,7 @@ export function rotateGroup(circuit, items, direction = 1, pivot = null) {
   for (const origin of origins.components) {
     const component = components.get(origin.id);
     Object.assign(component, rotate(origin));
-    component.rotation = (origin.rotation + turn) % 360;
+    component.rotation = (((origin.rotation + turn) % 360) + 360) % 360;
   }
   for (const origin of origins.junctions) Object.assign(junctions.get(origin.id), rotate(origin));
   for (const origin of origins.wires) wires.get(origin.id).waypoints = origin.waypoints.map(rotate);

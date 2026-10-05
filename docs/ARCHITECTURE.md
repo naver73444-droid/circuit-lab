@@ -22,7 +22,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 - `circuit-engine.js` — 값 파싱, 구조 검증·한도, 토폴로지(MNA), DC/과도/AC 해석, LU(실수·복소 typed array, 선형 과도는 dt별 LU 재사용), 직렬화.
 - `union-find.js` — 토폴로지·진단용 서로소 집합. `port-analysis.js` — DC 테브난·노턴 포트.
 - `analysis-policy.js` — 회로 값에서 해석 종류·범위 제안. `analysis-diagnostics.js` — 오류를 사용자 진단 문구로.
-- `circuit-geometry.js`(핀 위치·격자·배선 경로) · `circuit-edit.js`(삭제·분할·세대 검사 `acceptsRunGeneration`) · `circuit-status.js`(연결 상태 분류) · `current-direction.js`(전류 기준 방향·라벨).
+- `circuit-geometry.js`(핀 위치·격자·배선 경로) · `circuit-edit.js`(삭제·분할·세대 검사 `acceptsRunGeneration`) · `circuit-status.js`(연결 상태 분류) · `current-direction.js`(전류 기준 방향·라벨) · `wire-current-model.js`(배선별 전류: 부품 전류를 넷의 배선 그래프에 KCL로 나눔, 고리·불균형은 미정, 흐름 속도 등급·표본 선택).
 - `project-format.js`(JSON 직렬화·검증, version 1~3) · `csv-format.js` · `persistence.js`(탭별 자동저장 슬롯) · `share-url.js`(`#p=` 인코딩·압축·한도).
 - `scope-model.js`(눈금·표본 선택) · `plot-format.js` · `measurement-format.js`(dB·위상) · `phasor-format.js` · `cursor-label-model.js` · `cursor-delta-model.js`(A/B 차이) · `measure-model.js`·`wave-measure-model.js`(자동 측정) · `node-readout-model.js`(호버 판독) · `sweep-model.js`(스윕 계획·병합).
 - `selection-model.js`(다중 선택 모델·상자 선택 적중 판정) · `group-edit.js`(선택 전체 이동·회전, 드래그 origin) · `clipboard-model.js`(복사·붙여넣기 조각, 시스템 클립보드 JSON 검사) · `editor-shortcuts.js`(키 → 동작, `isTypingTarget`) · `value-series.js`(E12) · `input-drafts.js`(미확정 입력) · `ui-model.js`(편집 UI 모델) · `interaction-math.js`·`touch-targets.js`·`pointer-session.js`(제스처 계산) · `port-ui-state.js` · `color-model.js` · `phasor-practice-model.js` · `examples.js`.
@@ -35,7 +35,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 - `inspector.js` — 속성·해석 설정·화면 값 편집·draft 확정. `sweep-panel.js`(스윕 UI).
 - `project-io.js` — 예제·새 회로·JSON 저장/열기·CSV·자동저장·복원 배너·링크 공유. 모든 프로젝트 교체는 `openProject()` 한 길.
 - `hover-readout.js` — 판독 말풍선. `canvas-notices.js` — 캔버스 위 알림. `responsive-editor.js` — 폰 폭에서 머리줄 요소 재배치(이동만, 재생성 없음). `panel-controller.js` — 고정 레이아웃(폰 하단 탭, `파형 크게`). `theme.js`.
-- 표시: `scope-view.js`(파형 SVG, 커서 A/B), `measure-view.js`(측정 요약), `phasor-view.js`·`phasor-practice.js`, `trace-color.js`, `safe-dom.js`(escape).
+- 표시: `flow-layer.js`("전류 흐름" 보기: 배선 위로 전류 방향 점선이 흐르는 별도 SVG 레이어 `#flow-layer`, `wire-current-model`이 계산한 배선 전류를 속도 등급별 path로 그림, 끌기 중에는 숨김), `scope-view.js`(파형 SVG, 커서 A/B), `measure-view.js`(측정 요약), `phasor-view.js`·`phasor-practice.js`, `trace-color.js`, `safe-dom.js`(escape).
 
 ### 학습 작업공간 (지연 로딩, 회로 편집기와 독립)
 - 전자기학: `em-controller.js`(자유실험실·기본 모델·3D, 진입점) · `em-physics.js`/`em-state.js`/`em-view.js`(WebGL)/`em-format.js` · `em-playground-{physics,state,interaction,calculus,project}.js` · 문제 풀이 `em-course-controller.js` + `em-course-registry.js`가 모으는 `em-course-{electrostatics,coaxial,magnetostatics,boundaries,integrals,induction,waves,transmission}.js`(+ `constants`, `view`).
@@ -50,9 +50,13 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 - 읽는 쪽은 `selection-model.js`의 `selectedKeys(state)`/`selectedItems`/`isSelected`를 씁니다. 다른 모듈이 `state.selected`만 직접 바꿔도(그 키가 `selection`에 없으면) 단일 선택으로 해석되므로 깨지지 않습니다. 쓰는 쪽은 `setSingleSelection`·`toggleSelection`·`setSelectionItems`·`clearSelection`을 씁니다. 프로젝트 교체·undo/redo(`restore`)는 선택을 비웁니다.
 - 입력: `Shift`+클릭은 `pointerdown`에서 토글(드래그 없음, 뒤따르는 click은 무시), `Shift`+빈 곳 끌기(마우스·펜, 선택 도구)는 `kind: "marquee"` 포인터 세션으로 `marqueeHits`(부품: 경계 상자가 닿으면, 접속점: 점이 안, 배선: 기본 경로 전체가 안)를 실시간 반영하고 `canvas-renderer.setMarquee`가 `#marquee-rect`를 그립니다. 다중 선택된 부품을 끌면 `captureGroupOrigins`로 기준 위치를 기록해 프레임마다 `applyGroupOffset`(주 항목의 격자 오프셋 그대로)으로 움직이고, 끝에 `commitMove(before)` **한 번**이 이력 한 단계입니다(양 끝이 함께 움직이는 배선의 꺾임점도 이동). 움직임 없이 놓으면 그 항목 하나로 좁혀집니다.
 - 렌더: `applySelection`이 클래스만 토글합니다(둘 이상이면 부품 삭제 배지는 없음). 부분 갱신은 `scheduleDragUpdate("group", {components, junctions})` → `updateMoved`가 움직인 항목과 닿은 배선만 고칩니다(≤50 부품에서 전체 렌더로 떨어지지 않음).
-- 명령(`selection-commands.js`): 삭제(`deleteSelectionFromCircuit`), 복제·붙여넣기(`circuit-edit.js`의 `extractFragment`/`remapFragment` — 새 ID, 내부 배선·제어원 참조 재매핑, 밖으로 나가는 배선 제외), 회전(`rotateGroup`, 기준 부품 고정), 방향키(`moveGroup` + `mutateGrouped`) 모두 `mutate`/`mutateGrouped` 한 번 = 이력 한 단계이고, 먼저 `commitActiveDrag()`로 진행 중 드래그를 확정합니다. 클립보드는 앱 안 변수(붙여넣을 때마다 2칸씩 비켜 놓임)이며 복사 때 JSON을 시스템 클립보드에도 최선 노력으로 씁니다. 앱 안 클립보드가 비었을 때만 `navigator.clipboard.readText()`로 읽어 `parseClipboardText`(형식 검사) 후 `serializeCircuit` 검증을 거쳐 붙여넣습니다.
-- 핀에서 끌어 배선: 핀 `pointerdown`(선택·배선 도구, 마우스·펜)이 `kind: "wire"` 세션을 열고(포인터 캡처 없음), 슬롭을 넘으면 `pendingPin`을 세워 기존 미리보기를 재사용합니다. 놓은 곳이 다른 핀·접속점이면 완성, 배선이면 접속점을 만들어 연결, 빈 곳이나 출발 핀이면 배선이 **그대로 대기**(클릭-클릭 흐름 계속, `Esc` 취소). 터치는 배선 도구에서만(한 손가락 끌기 = 화면 이동 계약 유지).
-- 포커스: `isTypingTarget(element, key)`가 글자를 받는 칸만 단축키를 막습니다(체크박스·버튼은 아님, 슬라이더·`<select>`는 방향키만). 캔버스에서 `preventDefault`하는 눌림은 `releaseStaleFocus()`로 글자 칸이 아닌 포커스를 풀어 줍니다. 파형 그래프가 키를 처리했으면(`defaultPrevented`) 편집기 `keydown`은 건너뜁니다.
+- 명령(`selection-commands.js`): 삭제(`deleteSelectionFromCircuit`), 복제·붙여넣기(`circuit-edit.js`의 `extractFragment`/`remapFragment` — 새 ID, 내부 배선·제어원 참조 재매핑, 밖으로 나가는 배선 제외), 회전(`rotateGroup`, 기준 부품 고정), 방향키(`moveGroup` + `mutateGrouped`) 모두 `mutate`/`mutateGrouped` 한 번 = 이력 한 단계이고, 먼저 `commitActiveDrag()`로 진행 중 드래그를 확정합니다. 클립보드는 앱 안 변수(붙여넣을 때마다 2칸씩 비켜 놓임)이며 JSON을 시스템 클립보드에도 씁니다. **브라우저의 네이티브 `copy`/`cut`/`paste` 이벤트(`clipboardData`)를 우선**합니다: Ctrl+C/X/V `keydown`은 막지 않고 두며, 같은 눌림에서 네이티브 이벤트가 오면 그것이 처리하고(권한 창 없이 최신 시스템 클립보드를 읽음), 오지 않으면(일부 임베더·자동화) `setTimeout(0)` 뒤 키 경로가 `navigator.clipboard`로 대신 처리합니다. 붙여넣기는 `clipboardData`에 Circuit Lab JSON이 있으면 그것을, 없을 때만 앱 안 클립보드를 씁니다. 글자 칸에 포커스가 있거나 페이지에 드래그해 선택한 글자가 있으면 복사·잘라내기·모두 선택은 브라우저 몫입니다(`getSelection`). Ctrl+V·D·X를 꾹 누른 반복은 무시합니다.
+- 붙여넣기 검증: 시스템 클립보드 텍스트는 `parseClipboardText`가 알려진 필드만 남긴 새 객체로 정규화합니다(좌표 유한·±1e6, 회전 0/90/180/270, props는 문자열·숫자·불리언만, 자기 루프·중복 배선 제거, 없는 핀 거부, 부품+접속점 500·배선 1000 한도 — 복사도 같은 한도라 넘으면 알림). 붙일 때마다 `pasteRejection`이 **붙이는 조각만**(제어 대상은 대역 부품으로 대체) 검증하고 합친 회로의 크기 한도를 봅니다(회로의 다른 기존 오류는 막지 않음). 앱 안 클립보드는 붙여넣기에 **성공한 뒤에만** 교체되므로 거부된 조각이 다음 Ctrl+V에서 검증 없이 들어가지 않습니다.
+- 제어원 외부 참조: 조각에는 복사한 프로젝트의 id(`source`, `state.projectId` — 새 회로·열기·예제·링크·복원마다 새로 만들고 undo/redo 때 함께 되돌림)가 들어 있습니다. 조각 밖을 가리키는 CCCS/CCVS의 제어 참조는 같은 프로젝트이고 대상(V 또는 전류 센서)이 아직 있을 때만 유지하고, 다른 프로젝트·대상 없음이면 지우고 "제어 대상을 다시 선택하세요" 알림을 냅니다(인스펙터는 "제어 대상과 방향을 선택하세요" 오류 상태). 조각 안 참조는 항상 새 id로 이어집니다. 복제·붙여넣기 부품의 참조 라벨(`props.ref`)은 원본과 겹치면 다음 빈 라벨(R3…)을 받습니다.
+- 그룹 편집 세부: 그룹 이동은 항목(과 꺾임점)마다 격자에 맞춥니다. 회전 각도는 0..270으로 정규화하고, 회전 축은 기본 항목이 부품·접속점이면 그것, 배선이면 선택에서 마지막 부품, 부품이 없으면 선택 범위 중심(격자)입니다. 터치로 다중 선택 부품을 끌면 마우스처럼 그룹이 같이 움직입니다. 배선 대기 중 그 시작 부품·접속점이 삭제되면 `mutate()`가 대기 배선을 취소합니다.
+- 다중 선택 중 **부하 제외**(포트 패널)·페이저 보기는 기본(primary) 항목 하나만 기준으로 합니다(의도된 동작: 여러 항목에 대한 포트·페이저 의미가 없음). 인스펙터 값 편집도 한 부품씩입니다.
+- 핀에서 끌어 배선: 핀 `pointerdown`(선택·배선 도구, 마우스·펜)이 `kind: "wire"` 세션을 열고(포인터 캡처 없음), 슬롭을 넘으면 `pendingPin`을 세워 기존 미리보기를 재사용합니다. 놓은 곳이 다른 핀·접속점이면 완성, 배선이면 접속점을 만들어 연결, 빈 캔버스나 출발 핀이면 배선이 **그대로 대기**(클릭-클릭 흐름 계속, `Esc` 취소), 캔버스 밖(툴바·인스펙터 위)에서 놓으면 취소합니다. 포인터 캡처가 없으므로 `window`의 `pointercancel`도 제스처를 끝냅니다. 펜의 끌기 슬롭은 터치와 같은 8px입니다. 터치는 배선 도구에서만(한 손가락 끌기 = 화면 이동 계약 유지).
+- 포커스: `isTypingTarget(element, key, {modifier})`가 글자를 받는 칸만 단축키를 막습니다(체크박스·버튼은 아님, 슬라이더는 방향키만, `<select>`는 방향키와 수식키 없는 글자 한 자(타입어헤드)). 캔버스에서 `preventDefault`하는 눌림은 `releaseStaleFocus()`로 글자 칸이 아닌 포커스를 풀어 줍니다. 파형 그래프가 키를 처리했으면(`defaultPrevented`) 편집기 `keydown`은 건너뜁니다.
 
 ## 해석 실행 데이터 흐름
 
@@ -79,7 +83,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 
 **새 측정·판독**: `measure-model.js`(계산, note에 보간·기준 명시) → `wave-measure-model.js`(어느 항목을 보일지) → `measure-view.js`.
 
-**새 단축키**: `editor-shortcuts.js`에 동작 이름을 추가하고 `editor-input.js`의 `handled` 표에 연결합니다(이력을 쓰거나 되돌리는 동작은 `DRAG_COMMITTING`에 넣어 진행 중 드래그를 먼저 확정). 글자 입력 칸 안에서도 동작해야 하는 키는 `shortcutFor`의 `typing` 검사 앞에 둡니다(현재 Ctrl+S, Ctrl+Enter).
+**새 단축키**: `editor-shortcuts.js`에 동작 이름을 추가하고 `editor-input.js`의 `handled` 표에 연결합니다(이력을 쓰거나 되돌리는 동작은 `DRAG_COMMITTING`에 넣어 진행 중 드래그를 먼저 확정). 글자 입력 칸 안에서도 동작해야 하는 키는 `shortcutFor`의 `typing` 검사 앞에 둡니다(현재 Ctrl+S, Ctrl+Enter; Ctrl+S는 IME 조합 중에도 동작해 브라우저 저장 대화상자를 막음).
 
 **새 학습 실험**: EM은 해당 `em-course-*.js`의 `EXPERIMENTS`에 추가(레지스트리가 모음), 회로 과정은 `circuit-course-registry.js`, 신호는 `signals-course-model.js`의 `SIGNALS_LESSONS`.
 

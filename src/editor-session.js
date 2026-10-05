@@ -1,4 +1,5 @@
 import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geometry.js";
+import { endpointExists } from "./circuit-edit.js";
 import { classifyCircuitConnections, connectionFrequency } from "./circuit-status.js";
 import { currentProbeLabel } from "./current-direction.js";
 import { nextAvailableProbeColor, removeProbeByKey } from "./ui-model.js";
@@ -6,9 +7,15 @@ import { nextAvailableProbeColor, removeProbeByKey } from "./ui-model.js";
 const HISTORY_LIMIT = 100;
 export const PROBE_COLORS = ["#80bfff", "#f5bc79", "#c5a2f2", "#8ed4ad", "#ff969e", "#d7d783", "#83d2db", "#eea7d0"];
 
+const pageToken = Math.random().toString(36).slice(2, 10);
+let projectCounter = 0;
+/** An id for "this project in this page": clipboard fragments carry it so a paste can tell a different project (or tab) from the same one. */
+export const newProjectId = () => `${pageToken}-${(projectCounter += 1).toString(36)}`;
+
 /** Editable project state. The shared state object also carries run results and pointer state owned by other modules. */
 export function createEditorState() {
   return {
+    projectId: newProjectId(),
     circuit: { version: 1, geometryVersion: CURRENT_GEOMETRY_VERSION, components: [], wires: [], junctions: [] },
     settings: { analysis: "dc", start: "0", end: "5m", step: "10u", startFrequency: "10", endFrequency: "100k", pointsPerDecade: "30", phasorFrequency: "159.155" },
     title: "새 회로",
@@ -30,7 +37,7 @@ export function createEditorState() {
  * re-renders; restore()/undo()/redo() replay snapshots. Everything that reacts to a change is injected.
  */
 export function createEditorSession(deps) {
-  const { state, inputDrafts, synchronizeIntent, markStale, scheduleAutoRun, renderAll, resetProjectSession, refreshProbeViews, closeProbeContextMenu, confirmDiscardDrafts, onCommitted } = deps;
+  const { state, inputDrafts, synchronizeIntent, markStale, scheduleAutoRun, renderAll, resetProjectSession, refreshProbeViews, closeProbeContextMenu, confirmDiscardDrafts, onCommitted, onPendingWireDropped } = deps;
   let connectionCache = null;
   // Open coalescing group (wheel ticks, held arrow keys): { key, generation, timer }.
   let editGroup = null;
@@ -65,13 +72,14 @@ export function createEditorSession(deps) {
   }
 
   function snapshot() {
-    return JSON.stringify({ circuit: state.circuit, settings: state.settings, title: state.title, subtitle: state.subtitle, probes: state.probes, learningId: state.learningId, intent: state.intent, manualSettingKeys: [...state.manualSettingKeys] });
+    return JSON.stringify({ projectId: state.projectId, circuit: state.circuit, settings: state.settings, title: state.title, subtitle: state.subtitle, probes: state.probes, learningId: state.learningId, intent: state.intent, manualSettingKeys: [...state.manualSettingKeys] });
   }
 
   function restore(serialized) {
     const saved = JSON.parse(serialized);
     closeEditGroup();
     resetProjectSession();
+    if (saved.projectId) state.projectId = saved.projectId;
     state.circuit = { ...saved.circuit, junctions: saved.circuit.junctions ?? [] };
     state.settings = saved.settings;
     state.title = saved.title;
@@ -92,9 +100,19 @@ export function createEditorSession(deps) {
     committed();
   }
 
+  /** A half-drawn wire whose start part or junction was just deleted must not survive: finishing it would wire a pin that no longer exists. */
+  function dropDanglingPendingWire() {
+    if (!state.pendingPin || endpointExists(state.circuit, state.pendingPin)) return;
+    state.pendingPin = null;
+    state.pendingWaypoints = [];
+    state.pointer = null;
+    try { onPendingWireDropped?.(); } catch { /* the hint text is cosmetic */ }
+  }
+
   function mutate(change, { history = true, auto = true, autosave = true } = {}) {
     if (history) recordHistory(snapshot());
     change();
+    dropDanglingPendingWire();
     inputDrafts.retainComponents(new Set(state.circuit.components.map((item) => item.id)));
     synchronizeIntent();
     bumpGeneration();

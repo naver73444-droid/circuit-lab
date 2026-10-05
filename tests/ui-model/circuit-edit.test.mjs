@@ -47,7 +47,8 @@ describe("basic analyses", () => {
     const { circuit } = cloneExample("divider");
     const clone = cloneSelectedComponent(circuit, "R1");
     assert.equal(clone.id, "R3");
-    assert.deepEqual(clone.props, circuit.components.find((component) => component.id === "R1").props);
+    assert.deepEqual({ ...clone.props, ref: "R1" }, circuit.components.find((component) => component.id === "R1").props, "값은 그대로, 참조 라벨만 새로 받는다");
+    assert.equal(clone.props.ref, "R3", "복제본은 원본 라벨(R1)이 아니라 다음 빈 라벨 R3");
     assert.equal(clone.rotation, 90);
     clone.props.value = "9k";
     assert.equal(circuit.components.find((component) => component.id === "R1").props.value, "1k");

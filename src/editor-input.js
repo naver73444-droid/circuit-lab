@@ -1,10 +1,11 @@
 import { componentDefaults, pinCount } from "./circuit-engine.js";
-import { endpointsEqual, retargetWireProbes, splitWireAtJunction } from "./circuit-edit.js";
+import { endpointExists, endpointsEqual, retargetWireProbes, splitWireAtJunction } from "./circuit-edit.js";
 import { appendFixedWaypoint, snapPoint } from "./circuit-geometry.js";
 import { commitsActiveDrag, isTypingTarget, shortcutFor } from "./editor-shortcuts.js";
 import { clearSelection, isSelected, marqueeHits, normalizeRect, selectedItems, selectedKeys, setSelectionItems, setSingleSelection, toggleSelection } from "./selection-model.js";
 import { applyGroupOffset, captureGroupOrigins, groupFootprint, restoreGroupOrigins } from "./group-edit.js";
 import { createSelectionCommands } from "./selection-commands.js";
+import { createCanvasNotices } from "./canvas-notices.js";
 import { stepSeriesText } from "./value-series.js";
 import { probeKeysForTarget } from "./ui-model.js";
 import { beginPointerSession, finishPointerSession, ownsPointer } from "./pointer-session.js";
@@ -43,6 +44,7 @@ export function createEditorInput(deps) {
     renderCanvas, renderOverlay, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
     renderAll, renderSelection, applySelection, setMarquee, scheduleDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
   let canvasTouch = null;
+  const notices = createCanvasNotices(elements["canvas-notices"]);
 
   // ---- plot pointer session (the scope plot shares pointerOwnerId with the canvas)
 
@@ -183,6 +185,7 @@ export function createEditorInput(deps) {
         return;
       }
       if (endpointsEqual(state.pendingPin, target)) { cancelPendingWire(); return; }
+      if (!endpointExists(state.circuit, state.pendingPin) || !endpointExists(state.circuit, target)) { cancelPendingWire(); return; }
       const duplicate = state.circuit.wires.some((wire) => {
         return (endpointsEqual(wire.a, state.pendingPin) && endpointsEqual(wire.b, target))
           || (endpointsEqual(wire.b, state.pendingPin) && endpointsEqual(wire.a, target));
@@ -363,6 +366,7 @@ export function createEditorInput(deps) {
     const start = structuredClone(state.pendingPin);
     const waypoints = structuredClone(state.pendingWaypoints);
     const routePoints = routeForWireId(wireId);
+    if (!endpointExists(state.circuit, start)) { cancelPendingWire(); return; }
     state.pendingPin = null;
     state.pendingWaypoints = [];
     state.pointer = null;
@@ -419,6 +423,7 @@ export function createEditorInput(deps) {
 
   const { deleteSelection, cloneSelection, rotateSelection, nudgeSelection, selectAll, copySelection, pasteSelection } = createSelectionCommands({
     state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive,
+    notify: (text, kind = "info") => notices.show({ text, kind, autoHideMs: kind === "error" ? 9000 : 8000 }),
   });
 
   /**
@@ -519,6 +524,8 @@ export function createEditorInput(deps) {
    * (preventDefault) drops it, unless the focused element takes typed text (an inspector value being edited keeps its draft).
    */
   function releaseStaleFocus() {
+    // A press on the canvas ends any page text selection (a stale one would make Ctrl+C / Ctrl+A belong to the browser instead of the circuit).
+    try { const selection = window.getSelection?.(); if (selection && !selection.isCollapsed && !isTypingTarget(document.activeElement, "a")) selection.removeAllRanges(); } catch { /* no selection API */ }
     const active = document.activeElement;
     if (!active || active === document.body || active === document.documentElement || isTypingTarget(active, "a")) return;
     active.blur?.();
@@ -532,6 +539,8 @@ export function createEditorInput(deps) {
   function beginItemDrag(event, item, entity) {
     if (event.shiftKey) {
       toggleSelection(state, item);
+      // The click that follows this press must not collapse the selection to one item, even if Shift is released before it fires.
+      state.ignoreClickUntil = performance.now() + 400;
       renderSelection();
       return;
     }
@@ -564,8 +573,11 @@ export function createEditorInput(deps) {
    */
   function completeWireDrag(drag) {
     const client = drag.lastClient;
-    const target = client ? pickTouchTarget(client) : null;
-    if (!target || !state.pendingPin) return;
+    if (!state.pendingPin) return;
+    // Released outside the canvas area (toolbar, inspector, another window's edge): the gesture is abandoned, not completed on whatever pin is geometrically near.
+    if (!client || !document.elementFromPoint(client.x, client.y)?.closest?.("#canvas-wrap")) { cancelPendingWire(); return; }
+    const target = pickTouchTarget(client);
+    if (!target) return;
     if (target.kind === "wire") {
       const point = svgPoint({ clientX: client.x, clientY: client.y });
       if (point) createJunctionAndConnect(target.id, point);
@@ -667,8 +679,8 @@ export function createEditorInput(deps) {
     if (!item) return;
     const target = snapPoint({ x: drag.origin.x + point.x - drag.start.x, y: drag.origin.y + point.y - drag.start.y });
     if (drag.group) {
-      // The whole selection moves by the primary item's snapped offset, so the group stays rigid.
-      applyGroupOffset(state.circuit, drag.group, target.x - drag.origin.x, target.y - drag.origin.y);
+      // The whole selection moves by the primary item's snapped offset (so the group stays rigid) and every item lands on the grid itself.
+      applyGroupOffset(state.circuit, drag.group, target.x - drag.origin.x, target.y - drag.origin.y, { snap: true });
       scheduleDragUpdate("group", groupFootprint(drag.group));
       return;
     }
@@ -742,9 +754,13 @@ export function createEditorInput(deps) {
         }
         if (!["select","pan"].includes(state.tool) || state.pendingPin || state.port.mode || !target) return;
         const point = svgPoint(event); if (!point) return;
-        if (["component","junction"].includes(target.kind) && state.selected?.kind === target.kind && state.selected?.id === target.id && state.tool === "select") {
+        if (["component","junction"].includes(target.kind) && isSelected(state, target.kind, target.id) && state.tool === "select") {
           const item = target.kind === "component" ? state.circuit.components.find(c=>c.id===target.id) : (state.circuit.junctions??[]).find(j=>j.id===target.id);
-          if (item) beginCanvasPointer(event,{kind:target.kind,id:item.id,start:point,origin:{x:item.x,y:item.y},before:snapshot(),moved:false});
+          if (!item) return;
+          // A selected part of a multi-selection drags the whole group, like the mouse path.
+          const multi = selectedKeys(state).size > 1;
+          const group = multi ? captureGroupOrigins(state.circuit, selectedItems(state)) : null;
+          if (beginCanvasPointer(event,{kind:target.kind,id:item.id,start:point,origin:{x:item.x,y:item.y},before:snapshot(),moved:false,group,wasMulti:multi}) && multi) state.selected = { kind: target.kind, id: target.id };
         } else if (["background","component","junction","wire"].includes(target.kind)) {
           // First swipe navigates. Only an already selected object can be dragged.
           const scale = svg.getScreenCTM()?.a;
@@ -797,6 +813,38 @@ export function createEditorInput(deps) {
     cancelPointerSessions();
   }
 
+  // ---- clipboard keys: the native copy/cut/paste events are preferred, the key press itself is only the fallback
+
+  const CLIPBOARD_ACTIONS = new Set(["copy", "cut", "paste"]);
+  let clipboardFallbackTimer = null;
+  const cancelClipboardFallback = () => { if (clipboardFallbackTimer !== null) { clearTimeout(clipboardFallbackTimer); clipboardFallbackTimer = null; } };
+  function armClipboardFallback(action) {
+    cancelClipboardFallback();
+    clipboardFallbackTimer = setTimeout(() => {
+      clipboardFallbackTimer = null;
+      if (!isCircuitUiActive()) return;
+      if (action === "copy") copySelection();
+      else if (action === "cut") copySelection({ cut: true });
+      else pasteSelection();
+    }, 0);
+  }
+
+  /** Does the page have a selected stretch of text (inspector text, notices, labels)? Then Ctrl+C / Ctrl+A belong to the browser. */
+  function hasTextSelection() {
+    try { const selection = window.getSelection?.(); return Boolean(selection && !selection.isCollapsed && String(selection).length > 0); } catch { return false; }
+  }
+
+  function nativeClipboardEvent(event, kind) {
+    if (!isCircuitUiActive() || event.defaultPrevented) return;
+    cancelClipboardFallback();
+    // Text fields, a selected stretch of text, or another workspace's focus: the browser's own copy/paste is what the user means.
+    if (isTypingTarget(document.activeElement, "c", { modifier: true }) || (kind !== "paste" && hasTextSelection())) return;
+    const clipboardData = event.clipboardData;
+    if (!clipboardData) return;
+    const handled = kind === "paste" ? pasteSelection({ clipboardData }) : copySelection({ cut: kind === "cut", clipboardData });
+    if (handled) event.preventDefault();
+  }
+
   /** Register every canvas, plot, toolbar and keyboard listener owned by this module. */
   function attach() {
     bindCanvasItems();
@@ -835,6 +883,8 @@ export function createEditorInput(deps) {
       updateCanvasPointer(event);
     });
     window.addEventListener("pointerup", (event) => { if (workspace.circuitActive) finishCanvasPointer(event.pointerId, "commit"); });
+    // A pin-drag wire has no pointer capture, so a cancelled pointer (system gesture, pen leaving range) arrives wherever it is: end the gesture from the window.
+    window.addEventListener("pointercancel", (event) => finishCanvasPointer(event.pointerId, "cancel"));
     elements["circuit-canvas"].addEventListener("pointercancel", (event) => finishCanvasPointer(event.pointerId, "cancel"));
     elements["circuit-canvas"].addEventListener("lostpointercapture", (event) => {
       if (!recaptureWhilePressed(elements["circuit-canvas"], event, state.drag)) finishCanvasPointer(event.pointerId, "lost-capture");
@@ -913,7 +963,7 @@ export function createEditorInput(deps) {
       if (!isCircuitUiActive()) return;
       // The scope plot handles its own keys (cursor A/B, Esc releases a cursor): once it consumed the key, the editor must not act on it too.
       if (event.defaultPrevented && event.target.closest?.("#wave-plot")) return;
-      const typing = isTypingTarget(document.activeElement, event.key);
+      const typing = isTypingTarget(document.activeElement, event.key, { modifier: event.ctrlKey || event.metaKey || event.altKey });
       if (event.key === "Escape") {
         if (!elements["probe-context-menu"].classList.contains("hidden")) closeProbeContextMenu();
         else if (state.inlineEdit) closeInlineEditor();
@@ -925,19 +975,23 @@ export function createEditorInput(deps) {
           else if (state.selected && state.pointerOwnerId === null) { clearSelection(state); renderSelection(); }
         }
       }
-      const shortcut = shortcutFor(event, { typing });
+      const shortcut = shortcutFor(event, { typing, textSelection: hasTextSelection() });
       if (!shortcut) return;
+      if (shortcut.ignore) { event.preventDefault(); return; } // a held Ctrl+V / Ctrl+D / Ctrl+X must not pile up copies
       if (shortcut.action === "nudge" && (!arrowKeysBelongToCanvas() || event.target.closest?.("#wave-plot"))) return;
       if (commitsActiveDrag(shortcut.action)) commitActiveDrag();
+      if (CLIPBOARD_ACTIONS.has(shortcut.action)) {
+        // Leave the key to the browser: its native copy/cut/paste event (below) carries the system clipboard without a permission prompt.
+        // If no such event follows (some embedders/automation never raise one), run the key path ourselves.
+        armClipboardFallback(shortcut.action);
+        return;
+      }
       const handled = {
         save: () => { saveProject(); return true; },
         run: () => { runAnalysis(); return true; },
         delete: () => { deleteSelection(); return false; },
         rotate: () => { rotateSelection(shortcut.direction); return false; },
         clone: () => { cloneSelection(); return true; },
-        copy: () => copySelection(),
-        cut: () => copySelection({ cut: true }),
-        paste: () => pasteSelection(),
         selectAll: () => selectAll(),
         undo: () => { undoEdit(); return true; },
         redo: () => { redoEdit(); return true; },
@@ -947,7 +1001,8 @@ export function createEditorInput(deps) {
       if (handled && (shortcut.preventDefault || shortcut.action === "nudge")) event.preventDefault();
     });
     setupCanvasTouch();
+    for (const kind of ["copy", "cut", "paste"]) document.addEventListener(kind, (event) => nativeClipboardEvent(event, kind));
   }
 
-  return { setTool, renderPalette, openProbeContextMenu, closeProbeContextMenu, fitCanvas, cancelPointerSessions, cancelInteractions, attach };
+  return { setTool, restoreToolHint, renderPalette, openProbeContextMenu, closeProbeContextMenu, fitCanvas, cancelPointerSessions, cancelInteractions, attach };
 }

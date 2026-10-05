@@ -222,9 +222,8 @@ export function createInspector(deps) {
       // Several items: only the actions that make sense for all of them. Values are edited one part at a time.
       const summary = describeSelection(items);
       const parts = [summary.components && `부품 ${summary.components}`, summary.wires && `배선 ${summary.wires}`, summary.junctions && `접속점 ${summary.junctions}`].filter(Boolean).join(" · ");
-      const movable = summary.components + summary.junctions;
       elements["selection-label"].textContent = `${items.length}개 선택`;
-      elements["inspector-content"].innerHTML = `<div class="multi-selection"><p class="field-help">${parts}</p><div class="multi-actions"><button type="button" data-multi-action="clone"${summary.components ? "" : " disabled"} title="복제 (Ctrl+D)">복제</button><button type="button" data-multi-action="rotate"${movable ? "" : " disabled"} title="함께 회전 (R)">회전</button><button type="button" class="danger" data-multi-action="delete" title="삭제 (Delete)">삭제</button></div><p class="field-help">끌면 함께 이동 · 방향키로 이동 · Ctrl+C/X/V 복사·붙여넣기 · 빈 곳을 누르면 선택 해제</p></div>`;
+      elements["inspector-content"].innerHTML = `<div class="multi-selection"><p class="field-help">${parts}</p><div class="multi-actions"><button type="button" data-multi-action="clone"${summary.components ? "" : " disabled"} title="복제 (Ctrl+D)">복제</button><button type="button" data-multi-action="rotate"${summary.components ? "" : " disabled"} title="함께 회전 (R)">회전</button><button type="button" class="danger" data-multi-action="delete" title="삭제 (Delete)">삭제</button></div><p class="field-help">끌면 함께 이동 · 방향키로 이동 · Ctrl+C/X/V 복사·붙여넣기 · 빈 곳을 누르면 선택 해제</p></div>`;
       return;
     }
     if (!selected) {

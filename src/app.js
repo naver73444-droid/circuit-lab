@@ -72,6 +72,7 @@ const session = createEditorSession({
   closeProbeContextMenu: () => input.closeProbeContextMenu(),
   confirmDiscardDrafts: () => inspector.confirmDiscardDrafts(),
   onCommitted: () => projectIO.noteCommitted(),
+  onPendingWireDropped: () => input.restoreToolHint(),
 });
 const renderer = createCanvasRenderer({
   state, elements, workspace, currentConnections: session.currentConnections,
@@ -131,6 +132,7 @@ function resetProjectSession() {
   state.pendingPin = null;
   state.pendingWaypoints = [];
   state.pointer = null;
+  input.restoreToolHint();
   state.result = null;
   state.phasorResult = null;
   state.stale = false;
@@ -301,7 +303,7 @@ function initialize() {
   renderAll();
   setStatus("해석 준비", "ready");
   window.__CIRCUIT_LAB__ = {
-    getState: () => structuredClone({ selected: state.selected, selection: [...selectedKeys(state)], tool: state.tool, pendingPin: state.pendingPin, historyDepth: state.history.length, circuit: state.circuit, settings: state.settings, probes: state.probes, stale: state.stale, result: state.result, phasorResult: state.phasorResult, port: state.port, learningId: state.learningId, generation: state.generation, lastRunMs: state.lastRunMs, runState: state.runState, pointerOwnerId: state.pointerOwnerId, drag: state.drag, canvasView: state.canvasView, intent: state.intent, autoUpdate: state.autoUpdate, scope: scopeView.inspect(), drafts: inputDrafts.entries() }),
+    getState: () => structuredClone({ projectId: state.projectId, selected: state.selected, selection: [...selectedKeys(state)], tool: state.tool, pendingPin: state.pendingPin, historyDepth: state.history.length, circuit: state.circuit, settings: state.settings, probes: state.probes, stale: state.stale, result: state.result, phasorResult: state.phasorResult, port: state.port, learningId: state.learningId, generation: state.generation, lastRunMs: state.lastRunMs, runState: state.runState, pointerOwnerId: state.pointerOwnerId, drag: state.drag, canvasView: state.canvasView, intent: state.intent, autoUpdate: state.autoUpdate, scope: scopeView.inspect(), drafts: inputDrafts.entries() }),
     loadExample: projectIO.loadExample,
     runAnalysis: analysis.runAnalysis,
     runPortAnalysis: analysis.runPortAnalysis,
