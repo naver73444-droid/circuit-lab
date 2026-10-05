@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';import{problemSymbolHint as hint}from '../../../src/circuit-course-view.js';
+test('renamed complex voltage uses magnitude and argument, not complex value as scalar',()=>{const p={solutionMode:'numeric',symbolVoltage:'V_s'};assert.equal(hint(p,'voltage'),'|V_s|');assert.equal(hint(p,'sourceAngle'),'arg(V_s)');});
+test('three-phase complex impedance maps real and imaginary input correctly',()=>{const p={solutionMode:'numeric',problemKind:'three',symbolZ:'Z_load'};assert.equal(hint(p,'r'),'Re(Z_load)');assert.equal(hint(p,'x'),'Im(Z_load)');});
+test('angular frequency mapping preserves Hz input meaning',()=>assert.equal(hint({solutionMode:'numeric',symbolOmega:'omega_s'},'frequencyHz'),'omega_s=2πf'));
+test('defaults stay compact and symbolic mode needs no numeric hint',()=>{assert.equal(hint({solutionMode:'numeric',symbolVoltage:'V'},'voltage'),'');assert.equal(hint({solutionMode:'symbolic',symbolVoltage:'V_s'},'voltage'),'');});

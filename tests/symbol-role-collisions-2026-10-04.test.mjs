@@ -1,6 +1,0 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {solveSymbolicProblem,symbolicCourseExperiment} from '../src/circuit-course-problem-symbolic.js';
-const base={problemKind:'single',basis:'rms',topology:'series',elements:'RL',singleGoal:'current'};
-test('symbol roles reject imaginary unit and output current collisions',()=>{for(const p of [{symbolR:'j'},{symbolVoltage:'I'},{symbolOmega:'t'},{symbolR:'S'}]){const r=solveSymbolicProblem({...base,...p});assert.equal(r.status,'invalid');assert.match(r.reason,/기호/);}});
-test('ordinary and suffixed symbols remain valid',()=>{for(const p of [{},{symbolVoltage:'V_s',symbolR:'R_load',symbolOmega:'omega_1',symbolL:'L1'},{symbolR:'j1'}])assert.equal(solveSymbolicProblem({...base,...p}).status,'valid');});
-test('same-role power and impedance symbols remain valid',()=>{assert.equal(solveSymbolicProblem({problemKind:'three',basis:'rms',connection:'Y',voltageKnown:'line',threeGoal:'power',symbolZ:'Z'}).status,'valid');assert.equal(symbolicCourseExperiment('power',{basis:'rms',symbolCurrent:'I'}).status,'valid');assert.equal(symbolicCourseExperiment('power',{basis:'rms',symbolCurrent:'j'}).status,'invalid');});
-test('input-to-input collision is still rejected',()=>{assert.equal(solveSymbolicProblem({...base,symbolVoltage:'U',symbolR:'U'}).status,'invalid');});

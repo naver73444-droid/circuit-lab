@@ -99,9 +99,9 @@ node .\server.mjs 4173
 
 - 상세 기능·수치 의미: [README.md](README.md)
 - 공통 계약: [docs/COMMON-CONTRACTS.md](docs/COMMON-CONTRACTS.md)
-- 기본 UI 관련 시험: `npm run test:ui`
+- 시험: `npm test`(엔진·UI 모델), `npm run test:browser`(헤드리스 Edge 스모크), `npm run test:all`
 - 경계검사: `npm run check`
-- 전체 요약: `npm run test:all-summary` — 알려진 7실패 때문에 종료값 1이 정상적으로 보존됩니다.
+- 요약 보고: `npm run test:summary`
 
 저장소 루트 기준 결과:
 

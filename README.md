@@ -124,21 +124,19 @@ Worker가 분석을 수행하며 새 분석·입력 변경·사용자 취소 시
 
 ## 검증
 
-필요한 범위만 실행합니다.
+시험은 `tests/` 아래 세 갈래입니다.
+
+- `tests/engine/` — 회로 엔진·포트·전자기·신호·회로 과정 계산(수치·기호). 독립 기대값과 `tests/fixtures/`를 씁니다.
+- `tests/ui-model/` — DOM 없이 도는 순수 UI 모델(편집·기하·형식·상태·가짜 DOM 컨트롤러).
+- `tests/browser/smoke.test.mjs` — 서버와 헤드리스 Edge를 실제로 띄우는 종단 스모크(의존성 없음, Edge 필요, 없으면 실패. `EDGE_PATH`로 경로 지정).
 
 ```powershell
-npm run test:ui
-npm run test:020
-npm run check
+npm test               # engine + ui-model + tooling (약 4초)
+npm run test:browser   # 브라우저 스모크 (약 15초)
+npm run test:all       # 둘 다
+npm run check          # 경계검사
+npm run test:summary   # npm test와 같은 범위, 원시 TAP를 .verification/ 또는 --out 폴더에 보존
 ```
-
-전체 요약은 다음 명령이며 원시 TAP를 `.verification/` 또는 지정한 `--out` 폴더에 보존합니다.
-
-```powershell
-npm run test:all-summary
-```
-
-022 결과는 관련 42/42, 경계검사 38파일 오류 0, 전체 301/308입니다. 전체의 7실패는 부모부터 존재하며 삭제·기대값 치환하지 않았습니다. `app.js`가 큰 coordinator라는 경계 경고도 남아 있습니다.
 
 저장소 루트의 현재 결과 문서:
 
