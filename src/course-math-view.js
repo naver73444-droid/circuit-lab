@@ -9,7 +9,7 @@ const token = text => node(/^\d+(?:\.\d*)?$/.test(text) ? 'mn' : 'mi', [], text)
 const functions = new Set(['sin','cos','tan','ln','log','exp','sinh','cosh','tanh','Re','Im','max','min','abs','sgn']);
 const identifier = /^[A-Za-zΑ-Ωα-ωϕϵℰℓℝℂ∞∂∇Δ]+/u;
 const comparison = new Set(Array.from('=<>≤≥≠≈≡→⇒↔∝∈∉:,'));
-const productOperator = new Set(['·','×','*','⋅']);
+const productOperator = new Set(['·','×','*','⋅','∠']);
 
 class NotationParser {
   constructor(source) {
@@ -106,7 +106,7 @@ export function parseCourseMath(source) {
   try {const parser=new NotationParser(source);const result=parser.expression();return parser.peek()?null:result;}catch{return null;}
 }
 
-export const COURSE_MATH_CSS = `.course-math{min-width:0;max-width:100%;margin:10px 0;font:18px/1.5 system-ui,sans-serif;white-space:normal;overflow-wrap:normal}.course-math-line{max-width:100%;overflow-x:auto;overflow-y:hidden;padding:10px 3px;overscroll-behavior-x:contain}.course-math math{font-family:"Cambria Math","STIX Two Math",math;display:block;width:max-content;min-width:0;margin:0;white-space:nowrap;text-align:left}.course-math-fallback{font:15px/1.65 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0}.course-math-note{display:block;font:11px/1.4 system-ui,sans-serif;color:#aebed0}.course-math-original{font:12px/1.5 system-ui,sans-serif;border:0!important;padding:0!important;margin:5px 0}.course-math-original summary{font-weight:400!important;min-height:0!important;color:#aebed0}.course-math-original pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,monospace!important}.course-symbolic details.course-derivation{border:1px solid #536478;border-radius:8px;padding:10px;margin:16px 0}.course-symbolic .course-derivation>summary{cursor:pointer;font-weight:600}.em-course-formula-label{display:block;font:13px/1.5 system-ui,sans-serif;color:#bacbdb;margin-top:10px}#em-course-active-branch{white-space:normal;min-width:0}#em-course-active-branch .course-math{font-size:23px}#em-course-active-branch p{font:14px/1.6 system-ui,sans-serif;margin:8px 0}@media(max-width:520px){.course-math{font-size:17px}#em-course-active-branch .course-math{font-size:20px}}`;
+export const COURSE_MATH_CSS = `.course-math{min-width:0;max-width:100%;margin:10px 0;font:18px/1.5 system-ui,sans-serif;white-space:normal;overflow-wrap:normal}.course-math-line{max-width:100%;overflow-x:auto;overflow-y:hidden;padding:10px 3px;overscroll-behavior-x:contain}.course-math math{font-family:"Cambria Math","STIX Two Math",math;display:block;width:max-content;min-width:0;margin:0;white-space:nowrap;text-align:left}.course-math-fallback{font:15px/1.65 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0}.course-math-fallback.course-math-prose{font-family:system-ui,sans-serif}.course-math-original{font:12px/1.5 system-ui,sans-serif;border:0!important;padding:0!important;margin:5px 0}.course-math-original summary{font-weight:400!important;min-height:0!important;color:#aebed0}.course-math-original pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,monospace!important}.course-symbolic details.course-derivation{border:1px solid #536478;border-radius:8px;padding:10px;margin:16px 0}.course-symbolic .course-derivation>summary{cursor:pointer;font-weight:600}.em-course-formula-label{display:block;font:13px/1.5 system-ui,sans-serif;color:#bacbdb;margin-top:10px}#em-course-active-branch{white-space:normal;min-width:0}#em-course-active-branch .course-math{font-size:23px}#em-course-active-branch p{font:14px/1.6 system-ui,sans-serif;margin:8px 0}@media(max-width:520px){.course-math{font-size:17px}#em-course-active-branch .course-math{font-size:20px}}`;
 
 function materialize(doc,ast) {
   const element=doc.createElementNS(NS,ast.tag);
@@ -121,13 +121,11 @@ export function appendCourseMath(parent, source, {showOriginal=false}={}) {
   box.className='course-math';box.dataset.mathSource=original;parent.append(box);
   // Style is local to a host document, including independent same-origin previews.
   if(!doc.querySelector('style[data-course-math-style]')){const style=doc.createElement('style');style.dataset.courseMathStyle='';style.textContent=COURSE_MATH_CSS;(doc.head||box).append(style);}
-  let fallback=false;
   for(const part of original.split(/[;\n]/u).map(s=>s.trim()).filter(Boolean)) {
     const ast=parseCourseMath(part);
     if(ast){const line=doc.createElement('div');line.className='course-math-line';const math=doc.createElementNS(NS,'math');math.setAttribute('display','block');math.setAttribute('aria-label',part);math.append(materialize(doc,ast));line.append(math);box.append(line);}
-    else {fallback=true;const text=doc.createElement('p');text.className='course-math-fallback';text.textContent=part;box.append(text);}
+    else {const text=doc.createElement('p');text.className=/[가-힣]/u.test(part)?'course-math-fallback course-math-prose':'course-math-fallback';text.textContent=part;box.append(text);}
   }
-  if(fallback){const note=doc.createElement('small');note.className='course-math-note';note.textContent='일부 표기는 원문으로 표시합니다.';box.append(note);}
   if(showOriginal){const details=doc.createElement('details');details.className='course-math-original';const summary=doc.createElement('summary');summary.textContent='원문 표기';const pre=doc.createElement('pre');pre.textContent=original;details.append(summary,pre);box.append(details);}
   return box;
 }

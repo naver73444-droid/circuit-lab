@@ -68,6 +68,6 @@ test("CIRCUIT-014 connection status never joins control pins to output pins", ()
 
 test("CIRCUIT-014 app adds only bounded palette/symbol/inspector/probe paths", () => {
   const source = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-  for (const expected of ["전압 제어 전압원", "전압 제어 전류원", "전압 이득 g (V/V)", "상호컨덕턴스 gm (S)", "p→n (pin 1→2)"]) assert.ok(source.includes(expected));
+  for (const expected of ["전압 제어 전압원", "전압 제어 전류원", "전압 이득 g (V/V)", "상호컨덕턴스 gm (S)", "pin 1→2 출력 전류"]) assert.ok(source.includes(expected));
   assert.match(source, /component\.type === "VCVS" \|\| component\.type === "VCCS"/);
 });

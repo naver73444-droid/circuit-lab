@@ -33,11 +33,11 @@ def case(name,fn,width=1440,height=900):
  finally:ctx.close()
 
 def oneclick(p):
- p.locator('[data-learning-example="rc-lowpass"]').click();wait_success(p)
+ p.locator('#example-select').select_option('rc-lowpass');wait_success(p)
  assert not p.locator('#advanced-analysis').evaluate('(e)=>e.open')
  assert p.locator('#wave-plot').is_visible()
  assert state(p)['result']['analysis']=='ac'
- p.locator('#phasor-details > summary').click();assert p.locator('#voltage-phasor-plot').is_visible()
+ p.locator('#results-tab').click();assert p.locator('#voltage-phasor-plot').is_visible()
  return {'analysis':'ac','advancedRequired':False}
 def warning(p):
  p.locator('[data-type="R"]').click();point_click(p,'#circuit-canvas',280,240)

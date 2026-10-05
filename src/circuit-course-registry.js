@@ -28,7 +28,7 @@ export const EXPERIMENTS = [
       { ...num('im', '허수부 b', 'V', 0, -1e6, 1e6), showIf: p => p.coordinate === 'rect' },
       { ...num('amplitude', '크기 |V|', 'V', 100, 0, 1e6), showIf: p => p.coordinate === 'polar' },
       { ...num('angleDeg', '위상 θ', '°', 30, -36000, 36000), showIf: p => p.coordinate === 'polar' }],
-    assumptions: common, formulas: ['V=a+jb=|V|∠θ, θ=atan2(b,a)', 'ω=2πf (rad/s), T=1/f (s)', 'v(t)=√2 |V_RMS| cos(ωt+θ)', '|V_peak|=√2 |V_RMS| · 0벡터의 위상은 미정'],
+    assumptions: [...common, '0벡터(크기 0)의 위상은 미정입니다.'], formulas: ['V=a+jb=|V|∠θ, θ=atan2(b,a)', 'ω=2πf (rad/s), T=1/f (s)', 'v(t)=√2 |V_RMS| cos(ωt+θ)', '|V_peak|=√2 |V_RMS|'],
     examples: [{ label: '100+j100 V RMS', values: { coordinate: 'rect', basis: 'rms', re: 100, im: 100 } }, { label: '141.421 V peak = 100 V RMS', values: { coordinate: 'polar', basis: 'peak', amplitude: 100 * Math.SQRT2, angleDeg: 0 } }],
     evaluate(p) {
       const V = rmsPhasor(p.coordinate === 'rect' ? { re: p.re, im: p.im } : polar(p.amplitude, p.angleDeg), p.basis);

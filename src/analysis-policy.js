@@ -14,8 +14,8 @@ export function suggestAnalysis(circuit, previous, intent = "auto") {
   const timeSources = sources.filter((component) => ["SIN", "PULSE"].includes(component.props?.mode));
   const analysis = intent === "auto" ? (timeSources.length || capacitors.length || inductors.length ? "transient" : "dc") : intent;
   const settings = { ...previous, analysis };
-  if (analysis === "dc") return { settings, reason: `${intent === "auto" ? "자동: " : ""}회로 상태 · DC bias 사용, C 개방 / L 단락` };
-  if (analysis === "ac") return { settings, reason: "주파수 응답 · AC peak/cos 사용 (SIN 파형과 별도). 세부 범위는 고급 설정" };
+  if (analysis === "dc") return { settings, reason: `${intent === "auto" ? "자동: " : ""}DC 동작점 · DC bias 사용, C 개방 / L 단락` };
+  if (analysis === "ac") return { settings, reason: "AC 주파수 응답 · AC peak/cos 사용 (SIN 파형과 별도). 범위는 해석 설정에서 조정" };
   const fastScales = [];
   const slowScales = [];
   const warnings = [];
@@ -60,6 +60,6 @@ export function suggestAnalysis(circuit, previous, intent = "auto") {
   settings.end = String(Number(end.toPrecision(10)));
   // Round upward to avoid creating 20,002 points through decimal conversion.
   settings.step = String(step * (1 + 1e-10));
-  const limited = warnings.length ? " · 빠른 변화가 표본 제한을 넘음: 고급 설정에서 구간을 줄이세요" : "";
-  return { settings, reason: `${intent === "auto" ? "자동: " : ""}시간 변화${focusedStep ? " · 첫 계단응답 중심" : ""} · 회로값 기반 시작 범위 (복잡한 회로는 dt 수렴 확인)${limited}` };
+  const limited = warnings.length ? " · 빠른 변화가 표본 제한을 넘음: 해석 설정에서 구간을 줄이세요" : "";
+  return { settings, reason: `${intent === "auto" ? "자동: " : ""}시간응답${focusedStep ? " · 첫 계단응답 중심" : ""} · 회로값 기반 시작 범위 (복잡한 회로는 dt 수렴 확인)${limited}` };
 }

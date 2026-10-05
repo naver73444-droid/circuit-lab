@@ -352,7 +352,7 @@ export class ScopeView {
     target.replaceChildren();
     const index = this.cursorIndex;
     if (index === null || !this.result || index >= this.result.xValues.length) {
-      this.readout.textContent = "휠: 시간/주파수 · 왼쪽 눈금 또는 Shift+휠: 전압 · 오른쪽 눈금 또는 Alt+휠: 전류";
+      this.readout.textContent = "그래프를 눌러 값을 읽습니다.";
       return;
     }
     const isDC = this.result.analysis === "dc";

@@ -118,11 +118,6 @@ export function loopCurrentField(model, point) {
   return { status: 'approximate-unconverged', B, samples: 1024, difference, converged: false };
 }
 
-export function loopAxisField({ current, radius }, z) {
-  const I = finite(current, '전류'), R = finite(radius, '고리 반지름');
-  return MU0 * I * R * R / (2 * (R * R + z * z) ** 1.5);
-}
-
 export function planeWaveField({ amplitude, frequency, phase = 0, direction = [0, 0, 1], polarization = [1, 0, 0] }, point, time) {
   const E0 = finite(amplitude, 'E peak'), f = finite(frequency, '주파수'), t = finite(time, '시간');
   if (E0 < 0 || E0 > 1000) throw new EMInputError('E peak는 0…1000 V/m 범위여야 합니다.', 'OUT_OF_RANGE');

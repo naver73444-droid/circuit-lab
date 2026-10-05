@@ -162,25 +162,36 @@ export function createPhasorView(elements, state, parseNumeric, hasPendingInputs
   }
   comparisonA?.addEventListener("change", renderComparison);
   comparisonB?.addEventListener("change", renderComparison);
+  /** One short line. Cheap enough to run on every keystroke, in any analysis mode. */
+  function renderNotice() {
+    const notice = elements["phasor-validity"];
+    if (!notice) return;
+    const ac = state.settings.analysis === "ac", usable = ac && Boolean(state.phasorResult);
+    const status = hasPendingInputs() ? "pending" : state.runState?.status === "error" ? "error" : state.stale ? "stale" : usable ? "ready" : "empty";
+    const text = status === "pending" ? "미확정 입력이 있습니다. 아래는 마지막 확정값의 결과입니다. 입력을 확정하거나 취소하세요."
+      : status === "error" ? `해석 실패: ${state.runState.error?.message ?? "진단을 확인하세요"}`
+      : status === "stale" ? "이전 결과입니다. 회로나 설정이 바뀌었으니 다시 해석하세요."
+      : usable ? `f=${engineering(state.phasorResult.frequency, "Hz")} · V와 A는 각각 독립 눈금`
+      : "AC 해석 후 표시됩니다.";
+    if (notice.dataset.status !== status) notice.dataset.status = status;
+    if (notice.textContent !== text) notice.textContent = text;
+  }
+
   function render() {
     const ac = state.settings.analysis === "ac", usable = ac && Boolean(state.phasorResult);
     const items = phasorItems();
-    const notice = document.getElementById("phasor-validity");
-    if (notice) {
-      notice.dataset.status = hasPendingInputs() ? "pending" : state.runState?.status === "error" ? "error" : state.stale ? "stale" : usable ? "ready" : "empty";
-      notice.textContent = hasPendingInputs() ? "미확정 입력이 있습니다. 아래는 마지막 확정값의 결과이며 현재 입력의 정답이 아닙니다. 입력을 확정하거나 버리세요." : state.runState?.status === "error" ? `해석 실패: ${state.runState.error?.message ?? "진단을 확인하세요"}. AC 설정 열기에서 오류를 확인하세요.` : !ac ? "현재 DC 또는 시간응답 설정입니다. AC 설정으로 전환해 해석하거나 복소수 연습 탭을 사용하세요."
-        : state.stale ? "이전 해석 결과입니다. 회로나 설정이 변경되어 아래 벡터를 현재 정답으로 해석하면 안 됩니다. 다시 해석하세요."
-        : usable ? `f=${engineering(state.phasorResult.frequency,"Hz")} · AC peak·cos 기준. V와 A는 각각 독립 눈금입니다.`
-        : "AC 해석 전입니다. AC 크기와 페이저 주파수를 지정하고 해석하세요. SIN 진폭 설정과 별개입니다.";
-    }
+    renderNotice();
+    // Small-signal caveat only matters for nonlinear / op-amp circuits.
+    const note = elements["small-signal-note"];
+    if (note) note.hidden = !state.circuit.components.some((component) => ["D", "OPAMP", "OPAMP_IDEAL"].includes(component.type));
     renderComplexPlane(items.filter((item) => item.baseUnit === "V"), "V", elements["voltage-phasor-plot"], elements["voltage-phasor-values"], elements["voltage-plane-unit"]);
     renderComplexPlane(items.filter((item) => item.baseUnit === "A"), "A", elements["current-phasor-plot"], elements["current-phasor-values"], elements["current-plane-unit"]);
     renderPhasorTime(items);
     if (ac) renderImpedanceLearning();
     else elements["impedance-learning"].textContent = "AC 해석을 실행한 뒤 회로에서 R, L 또는 C를 선택하세요.";
     elements["phasor-summary"].textContent = usable
-      ? `${engineering(state.phasorResult.frequency, "Hz")} 정확 계산 · ${items.length}개 trace · AC peak 복소 진폭`
-      : "AC 해석을 실행하면 정확한 지정 주파수의 페이저를 계산합니다.";
+      ? `${engineering(state.phasorResult.frequency, "Hz")} · 프로브 ${items.length}개`
+      : "";
     for (const [index, select] of [comparisonA, comparisonB].entries()) {
       if (!select) continue;
       const previous = select.value;
@@ -199,5 +210,5 @@ export function createPhasorView(elements, state, parseNumeric, hasPendingInputs
     renderComparison();
   }
 
-  return { render };
+  return { render, renderNotice };
 }

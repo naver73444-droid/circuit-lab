@@ -98,7 +98,7 @@ export const examples = [
   {
     id: "rlc",
     name: "직렬 RLC 응답",
-    description: "100 Ω·10 mH·1 µF 직렬 회로의 감쇠 진동 step response입니다.",
+    description: "100 Ω·10 mH·1 µF 직렬 회로의 감쇠 진동 계단 응답입니다.",
     settings: { analysis: "transient", start: "0", end: "1m", step: "1u" },
     circuit: circuit(
       [

@@ -66,7 +66,7 @@ export function createLazyController({ host, load, create }) {
 
 export function createWorkspaceTabs({ onBeforeChange = () => {}, onChange = () => {}, onIntent = () => {} } = {}) {
   const tabs = [...document.querySelectorAll('[data-workspace-tab]')];
-  const circuitRoots = [...document.querySelectorAll('.toolbar, #panel-shelf, #workbench, .top-status, .draft-notice, .cancel-analysis, .run-button')];
+  const circuitRoots = [document.getElementById('workbench')];
   let active = tabs.find(tab => tab.getAttribute('aria-selected') === 'true')?.dataset.workspaceTab ?? 'circuit';
   let prepared = null;
   function activate(name, focus = true) {
@@ -84,7 +84,7 @@ export function createWorkspaceTabs({ onBeforeChange = () => {}, onChange = () =
       const panel = document.getElementById(field + '-workspace');
       panel.hidden = name !== field; panel.inert = name !== field;
     }
-    circuitRoots.forEach(root => { root.inert = name !== 'circuit'; });
+    circuitRoots.forEach(root => { root.inert = name !== 'circuit'; root.hidden = name !== 'circuit'; });
     onChange(name);
     document.dispatchEvent(new CustomEvent('workspacechange', { detail: { active: name } }));
     return true;

@@ -134,7 +134,7 @@ export function symbolicCourseExperiment(id,p) {
     return{status:'valid',symbolic:true,displayKind:'symbolic',phasors:[],traces:[],checks:[],frequencyHz:null,
       solution:{symbolic:true,inputOrigin:'symbolic-template',asked:'phasor',statement:'',
         givens:[V+'=a+jb=|'+V+'|e^(jθ)',V+'는 '+(p.basis==='peak'?'peak':'RMS')+' 페이저'],
-        answers:[A('직교형 → 극형','|'+V+'|=√(a²+b²), θ=atan2(b,a)'),A('RMS 페이저',rms,'V'),A('시간파형','v(t)=√2 |'+rms+'| cos('+w+'t+arg('+rms+'))','V')],
+        answers:[A('직교형 → 극형','|'+V+'|=√(a²+b²), θ=atan2(b,a)'),A('RMS 페이저','V_RMS='+(p.basis==='peak'?V+'/√2':V),'V'),A('시간파형','v(t)=√2 |'+rms+'| cos('+w+'t+arg('+rms+'))','V')],
         steps:[step('복소수 직교형','V=a+jb','a=Re('+V+'), b=Im('+V+')','크기=√(a²+b²)'),
           step('위상각과 극형','θ=atan2(b,a)','사분면을 보존하는 atan2 사용',V+'=√(a²+b²)e^(jθ)'),
           step('RMS/peak','V_peak=√2 V_RMS','V_RMS='+rms,'peak 전력식에는 ½, RMS 전력식에는 추가 ½ 없음'),

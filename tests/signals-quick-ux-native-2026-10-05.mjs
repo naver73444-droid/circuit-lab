@@ -10,7 +10,7 @@ const scenario=String.raw`
  const write=async(k,text)=>{await click('[data-signals-key="'+k+'"]');await key('a','KeyA',65,2);await send('Input.insertText',{text});};
  const family=async value=>{const selector='[data-signals-control=family]',index=await evaluate('Array.from(document.querySelector('+JSON.stringify(selector)+').options).findIndex(o=>o.value==='+JSON.stringify(value)+')');await click(selector);await key('Home','Home',36);for(let i=0;i<index;i++)await key('ArrowDown','ArrowDown',40);await key('Enter','Enter',13);};
  const badge=()=>evaluate('document.querySelector("[data-signals-input-status]").textContent');
- await navigate('/');await click('#signals-workspace-tab');await ensureWs('signals');await click('[data-signals-lesson=convolution]');await write('xExpression','u(t)-u(t-3)');await family('sequence');
+ await navigate('/');await click('#signals-workspace-tab');await ensureWs('signals');await click('[data-signals-lesson=convolution]');await family('custom');await write('xExpression','u(t)-u(t-3)');await family('sequence');
  for(const preset of ['basic','average','difference']){await click('[data-signals-sequence-example='+preset+']');check(preset+' preset is unapplied',(await state()).numericStatus,'draft');}
  check('preset no old graph',await evaluate('document.querySelectorAll("[data-signals-projection] svg").length'),0);check('draft badge',(await badge()).startsWith('미적용'));check('draft graph link disabled',await evaluate('document.querySelector("[data-signals-show-graph]").disabled'));
  await click('[data-signals-calculate]');check('difference output',(await state()).numeric.output,{start:0,values:[1,1,-1,-1]});check('applied badge',(await badge()).startsWith('적용됨'));

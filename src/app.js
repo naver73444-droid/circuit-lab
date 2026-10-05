@@ -38,7 +38,7 @@ import {
 import { classifyCircuitConnections, connectionFrequency } from "./circuit-status.js";
 import { controlReferenceModel, controlledSourceInputModel, formatPortResult, nextAvailableProbeColor, passiveSliderModel, probeKeysForTarget, removeProbeByKey, sourceInlineDescriptor } from "./ui-model.js";
 import { AnalysisCancelledError, AnalysisWorkerClient } from "./analysis-worker-client.js";
-import { describeCircuitFailure, resultAvailabilityText, runStateLabel } from "./analysis-diagnostics.js";
+import { describeCircuitFailure, resultAvailabilityText } from "./analysis-diagnostics.js";
 import { beginPointerSession, finishPointerSession, ownsPointer } from "./pointer-session.js";
 import { ScopeView } from "./scope-view.js";
 import { engineering } from "./scope-model.js";
@@ -57,22 +57,23 @@ import { currentArrowGeometry, currentDirectionDescriptor, currentDirectionGuide
 import { createLazyController, createWorkspaceTabs } from "./workspace-tabs.js";
 
 const COLORS = ["#80bfff", "#f5bc79", "#c5a2f2", "#8ed4ad", "#ff969e", "#d7d783", "#83d2db", "#eea7d0"];
+// [type, symbol, label, basic]: non-basic parts (dependent sources, sensors) sit under "더보기".
 const PALETTE = [
-  ["R", "R", "저항"], ["C", "C", "커패시터"], ["L", "L", "인덕터"], ["GND", "⏚", "접지"],
-  ["V", "V±", "전압원"], ["I", "I↑", "전류원"], ["D", "▷|", "다이오드"], ["OPAMP", "▷", "간략 OP AMP"], ["OPAMP_IDEAL", "▷∞", "이상 OP AMP"],
-  ["VCVS", "◇V", "전압 제어 전압원"], ["VCCS", "◇I", "전압 제어 전류원"],
-  ["CURRENT_SENSOR", "S→", "0 V 전류 센서"], ["CCCS", "◇β", "전류 제어 전류원"], ["CCVS", "◇R", "전류 제어 전압원"],
+  ["R", "R", "저항", true], ["C", "C", "커패시터", true], ["L", "L", "인덕터", true], ["GND", "⏚", "접지", true],
+  ["V", "V±", "전압원", true], ["I", "I↑", "전류원", true], ["D", "▷|", "다이오드", true], ["OPAMP", "▷", "간략 OP AMP", true], ["OPAMP_IDEAL", "▷∞", "이상 OP AMP", true],
+  ["VCVS", "◇V", "전압 제어 전압원", false], ["VCCS", "◇I", "전압 제어 전류원", false],
+  ["CURRENT_SENSOR", "S→", "0 V 전류 센서", false], ["CCCS", "◇β", "전류 제어 전류원", false], ["CCVS", "◇R", "전류 제어 전압원", false],
 ];
 
 const elements = Object.fromEntries([
   "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "empty-hint",
-  "tool-hint", "circuit-count", "canvas-title", "canvas-subtitle", "selection-label", "inspector-content", "analysis-type", "analysis-settings",
+  "tool-hint", "circuit-count", "canvas-title", "canvas-subtitle", "selection-label", "inspector-content", "analysis-settings",
   "analysis-note", "error-box", "example-select", "undo-button", "redo-button", "rotate-button", "delete-button", "new-button", "save-button",
   "load-button", "file-input", "probe-list", "result-summary", "ac-view-toggle", "wave-plot", "plot-empty", "cursor-readout", "reset-view-button", "csv-button",
   "phasor-panel", "phasor-summary", "voltage-plane-unit", "current-plane-unit", "voltage-phasor-plot", "current-phasor-plot",
   "voltage-phasor-values", "current-phasor-values", "phasor-time-plot", "phasor-time-units", "impedance-learning",
-  "clone-button", "zoom-out-button", "zoom-in-button", "fit-button", "inline-value-editor", "palette-toggle", "inspector-toggle",
-  "auto-update-status", "connection-summary", "probe-context-menu",
+  "clone-button", "zoom-out-button", "zoom-in-button", "fit-button", "inline-value-editor",
+  "connection-summary", "probe-context-menu", "phasor-validity", "small-signal-note",
   "scope-controls", "analysis-intent", "analysis-recommendation", "auto-update", "advanced-analysis",
   "port-panel", "port-p-button", "port-n-button", "port-load-button", "port-clear-button", "port-run-button", "port-selection", "port-loads", "port-result", "port-status",
 ].map((id) => [id, document.getElementById(id)]));
@@ -192,10 +193,10 @@ function synchronizeIntent() {
   const plan = suggestAnalysis(state.circuit, state.settings, state.intent);
   state.settings = plan.settings;
   state.recommendation = plan.reason;
-  elements["analysis-intent"].value = state.intent;
+  // Manual (edited parameters) keeps the chosen analysis type visible in the single selector.
+  elements["analysis-intent"].value = state.intent === "manual" ? state.settings.analysis : state.intent;
   elements["auto-update"].checked = state.autoUpdate;
   elements["analysis-recommendation"].textContent = plan.reason;
-  elements["analysis-recommendation"].title = plan.reason;
 }
 
 function cancelScheduledRun() {
@@ -250,10 +251,10 @@ function updateDraftNotice(updatePhasor = true) {
   const notice = document.getElementById("draft-notice");
   notice.classList.toggle("hidden", inputDrafts.size === 0);
   document.getElementById("draft-count").textContent = `입력 대기 ${inputDrafts.size}`;
-  // Per-keystroke path: only AC results are shown live; other analyses refresh on the next full render.
+  // Per-keystroke path: only AC results are redrawn live; the one-line validity notice is always current.
   if (updatePhasor) {
     if (state.settings.analysis === "ac") renderPhasorLearning();
-    else phasorDirty = true;
+    else { phasorView.renderNotice(); phasorDirty = true; }
   }
 }
 
@@ -301,11 +302,11 @@ function commitPendingInputs() {
       elements["advanced-analysis"].open = true;
       // A draft can belong to a currently hidden analysis. Make it visible before correction.
       const expected = ["start", "end", "step"].includes(update.key) ? "transient" : "ac";
-      if (!elements["analysis-settings"].querySelector(`[data-setting="${update.key}"]`)) { state.settings.analysis = expected; state.intent = "manual"; renderAnalysisSettings(); }
+      if (!elements["analysis-settings"].querySelector(`[data-setting="${update.key}"]`)) { state.settings.analysis = expected; state.intent = "manual"; synchronizeIntent(); renderAnalysisSettings(); }
       update.control = elements["analysis-settings"].querySelector(`[data-setting="${update.key}"]`);
     } else if (!update.control?.isConnected) {
       state.selected = { kind: "component", id: update.id };
-      setInspectorCollapsed(false);
+      showInspector();
       renderInspector();
       update.control = elements["inspector-content"].querySelector(`[data-prop="${update.key}"]`);
     }
@@ -397,13 +398,23 @@ function markInputDirty() {
   if (state.result || ["success", "error", "running"].includes(state.runState.status)) markStale();
   else markPortStale();
   elements["csv-button"].disabled = true;
-  elements["auto-update-status"].textContent = "입력 완료 대기";
+  setAutoHint("입력 완료 대기");
   updateDraftNotice();
 }
 
 function setStatus(text, kind = "ready") {
   elements["engine-status"].textContent = text;
   elements["engine-status"].className = `status-dot ${kind}`;
+}
+
+// One status chip is shown. Auto-refresh detail goes to the checkbox tooltip; a waiting reason replaces the chip text.
+function setAutoHint(text, { show = false } = {}) {
+  elements["auto-update"].parentElement.title = text;
+  if (show) setStatus(text, "ready");
+}
+
+function showInspector() {
+  panels?.show("inspector");
 }
 
 function setTool(tool) {
@@ -415,19 +426,21 @@ function setTool(tool) {
   document.querySelectorAll("[data-tool]").forEach((button) => button.classList.toggle("active", button.dataset.tool === tool));
   document.querySelectorAll(".palette-item").forEach((button) => button.classList.toggle("active", tool === `place:${button.dataset.type}`));
   const hints = {
-    select: "터치: 탭 선택 · 선택한 부품 끌기 이동 · 나머지 끌기 화면 이동 · 배선은 배선 도구",
-    pan: "화면 이동 — 부품 위에서도 회로를 바꾸지 않고 화면만 이동합니다.",
-    wire: "배선 도구 — 핀/접속점에서 시작하고 빈 격자점으로 꺾임을 고정한 뒤 핀/배선/접속점에서 끝냅니다.",
-    "voltage-probe": "전압 프로브 — 선 또는 핀을 클릭하면 접지 기준 전압이 추가됩니다.",
-    "current-probe": "전류 프로브 — 부품을 클릭하면 화살표와 범례의 양의 기준 방향 전류가 추가됩니다.",
+    select: "클릭 선택 · 끌어서 이동 · 빈 곳 끌기로 화면 이동",
+    pan: "화면 이동 — 부품은 움직이지 않습니다.",
+    wire: "배선 — 핀을 누르고, 빈 격자점으로 꺾은 뒤 다른 핀·배선에서 끝냅니다.",
+    "voltage-probe": "V 프로브 — 핀이나 배선을 누르면 접지 기준 전압이 추가됩니다.",
+    "current-probe": "I 프로브 — 부품을 누르면 기준 방향 전류가 추가됩니다.",
   };
-  elements["tool-hint"].textContent = tool.startsWith("place:") ? "연속 배치 — 같은 부품을 계속 놓습니다. Esc로 종료" : hints[tool];
+  elements["tool-hint"].textContent = tool.startsWith("place:") ? "캔버스를 눌러 배치 · 계속 놓을 수 있습니다 · Esc로 종료" : hints[tool];
   renderCanvas();
 }
 
 function renderPalette() {
-  elements["palette-list"].innerHTML = PALETTE.map(([type, symbol, label]) => `<button class="palette-item" data-type="${type}" type="button"><b>${symbol}</b><span>${label}</span></button>`).join("");
-  elements["palette-list"].querySelectorAll("button").forEach((button) => button.addEventListener("click", () => { setTool(`place:${button.dataset.type}`); panels?.closeMobile(); }));
+  const item = ([type, symbol, label]) => `<button class="palette-item" data-type="${type}" type="button"><b>${symbol}</b><span>${label}</span></button>`;
+  elements["palette-list"].innerHTML = PALETTE.filter((entry) => entry[3]).map(item).join("");
+  document.getElementById("palette-more-list").innerHTML = PALETTE.filter((entry) => !entry[3]).map(item).join("");
+  document.getElementById("palette-panel").querySelectorAll("button.palette-item").forEach((button) => button.addEventListener("click", () => { setTool(`place:${button.dataset.type}`); panels?.showCanvas(); }));
 }
 
 function localPin(type, pin) {
@@ -579,15 +592,15 @@ function renderCanvas() {
   renderOverlay(componentById);
   elements["circuit-canvas"].setAttribute("viewBox", `${state.canvasView.x} ${state.canvasView.y} ${state.canvasView.width} ${state.canvasView.height}`);
   elements["empty-hint"].classList.toggle("hidden", state.circuit.components.length > 0);
-  elements["circuit-count"].textContent = `부품 ${state.circuit.components.length} · 배선 ${state.circuit.wires.length} · 접속점 ${(state.circuit.junctions ?? []).length}`;
+  elements["circuit-count"].textContent = `부품 ${state.circuit.components.length} · 배선 ${state.circuit.wires.length}`;
   const warningCount = (connection.counts.unwired ?? 0) + (connection.counts["no-ground"] ?? 0) + (connection.counts["analysis-floating"] ?? 0) + (connection.counts["solver-check"] ?? 0);
-  const solverLabel = runStateLabel(state.runState, state.settings.analysis, state.generation);
+  // Connection state only; the run state lives in the single status chip and never shows another analysis type.
   elements["connection-summary"].textContent = state.circuit.components.length === 0
-    ? `접속 상태 없음 · ${solverLabel}`
-    : connectionError ? `연결 검사 실패 · 제어 참조와 회로 입력을 확인하세요`
+    ? ""
+    : connectionError ? "연결 검사 실패 · 제어 참조와 회로 입력을 확인하세요"
     : warningCount
-      ? `접속 주의 ${warningCount} · ${solverLabel}`
-      : `✓ GND 기준 경로 · ${solverLabel}`;
+      ? `접속 주의 ${warningCount}`
+      : "✓ GND 기준 경로";
   elements["connection-summary"].classList.toggle("has-warning", warningCount > 0 || connectionError);
   elements["connection-summary"].classList.toggle("has-error", state.runState.status === "error");
   elements["connection-summary"].classList.toggle("has-stale", state.runState.status === "stale");
@@ -695,7 +708,7 @@ function bindCanvasItems() {
       const id = button.dataset.deleteComponent ?? button.dataset.showConnection;
       state.selected = { kind: "component", id };
       if (button.dataset.deleteComponent) deleteSelection();
-      else { setInspectorCollapsed(false); renderAll(); }
+      else { showInspector(); renderAll(); }
     };
     button.addEventListener("pointerdown", (event) => event.stopPropagation());
     button.addEventListener("click", activate);
@@ -967,27 +980,38 @@ function selectedConnectionStatus(componentId) {
 }
 
 // Inspector re-renders rebuild innerHTML, which would drop keyboard focus (Tab lands on BODY).
-// Remember the focused control (and any in-flight Tab direction) and re-focus its successor.
+// Remember the focused control (and any in-flight Tab direction) by a stable key, then re-focus it or its successor.
 let inspectorTabIntent = 0;
 let inspectorLastFocused = null;
 const INSPECTOR_FOCUSABLE = "input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])";
+/** Stable identity of an inspector control: survives re-renders that add or remove other fields. */
+function inspectorKey(control) {
+  const { prop, propSlider, controlTarget, controlDirection } = control.dataset;
+  if (prop !== undefined) return `prop:${prop}`;
+  if (propSlider !== undefined) return `slider:${propSlider}`;
+  if (controlTarget !== undefined) return "control-target";
+  if (controlDirection !== undefined) return "control-direction";
+  return control.id ? `id:${control.id}` : null;
+}
 function captureInspectorFocus() {
   const root = elements["inspector-content"];
   // During a Tab-triggered change event the browser has already cleared activeElement.
   let active = document.activeElement;
   if ((!active || !root.contains(active)) && inspectorTabIntent !== 0 && inspectorLastFocused?.isConnected) active = inspectorLastFocused;
   if (!active || active === root || !root.contains(active)) return null;
-  const index = [...root.querySelectorAll(INSPECTOR_FOCUSABLE)].indexOf(active);
-  if (index < 0) return null;
+  const key = inspectorKey(active);
+  if (key === null) return null;
   const caret = typeof active.selectionStart === "number" ? { start: active.selectionStart, end: active.selectionEnd } : null;
-  return { index, caret, direction: inspectorTabIntent };
+  return { key, caret, direction: inspectorTabIntent };
 }
 function restoreInspectorFocus(saved) {
   if (!saved) return;
   const root = elements["inspector-content"];
   if (document.activeElement && document.activeElement !== document.body && root.contains(document.activeElement)) return;
   const items = [...root.querySelectorAll(INSPECTOR_FOCUSABLE)];
-  const target = items[saved.index + saved.direction];
+  const at = items.findIndex((item) => inspectorKey(item) === saved.key);
+  if (at < 0) return;
+  const target = items[at + saved.direction];
   if (!target) return;
   target.focus({ preventScroll: false });
   if (!saved.direction && saved.caret && typeof target.setSelectionRange === "function") {
@@ -1000,7 +1024,7 @@ function renderInspector() {
   const selected = state.selected;
   if (!selected) {
     elements["selection-label"].textContent = "선택 없음";
-    elements["inspector-content"].innerHTML = `<div class="inspector-empty"><span>⌁</span><p>부품을 선택하면 이름, 값, 파형과 초기조건을 수정할 수 있습니다.</p></div>`;
+    elements["inspector-content"].innerHTML = `<div class="inspector-empty"><p>부품을 선택하면 이름, 값, 파형과 초기조건을 수정할 수 있습니다.</p></div>`;
     return;
   }
   if (selected.kind === "wire") {
@@ -1058,7 +1082,7 @@ function renderInspector() {
     html += `</fieldset>`;
   }
   if (component.type === "D") html += field("포화전류 Is", "is", p.is ?? "1e-12") + field("방출계수 n", "n", p.n ?? "1");
-  if (component.type === "OPAMP") html += field("개방루프 이득 A", "gain", p.gain ?? "100k", "현재는 유한 이득 간략 모델입니다. 이상형/실제형 선택, 전원·포화·slew rate·대역폭은 미구현입니다.");
+  if (component.type === "OPAMP") html += field("개방루프 이득 A", "gain", p.gain ?? "100k") + `<p class="model-note">유한 개방루프 이득 모델입니다. 전원·포화·대역폭이 없고 안정성을 판정하지 않습니다.</p>`;
   if (component.type === "OPAMP_IDEAL") html += `<div class="connection-detail status-referenced"><strong>이상 OP AMP</strong><span>pin 1: 비반전(+), pin 2: 반전(−), pin 3: 출력</span><small>입력전류 0, 출력저항 0, 유효한 선형 해에서 V+=V−인 MNA 제약입니다. rail·포화·대역폭·slew 제한이 없고 안정성을 판정하지 않습니다. 출력 전류의 양수는 출력→내부 기준 GND입니다.</small></div>`;
   if (component.type === "VCVS") html += field("전압 이득 g (V/V)", "g", p.g ?? "1", "pin 1/2=p/n 출력, pin 3/4=cp/cn 제어. V(p)-V(n)=g·(V(cp)-V(cn)); g는 무차원이며 0과 음수도 허용됩니다.");
   if (component.type === "VCCS") html += field("상호컨덕턴스 gm (S)", "gm", p.gm ?? "1mS", "pin 1→2 출력 전류가 gm·(V(cp)-V(cn))입니다. S/mS/µS 또는 단위 생략 SI를 사용하며 소문자 s는 허용하지 않습니다.");
@@ -1148,16 +1172,16 @@ function settingField(label, key, value) {
 
 function renderAnalysisSettings() {
   if (!circuitWorkspaceActive) { circuitRenderDeferred = true; return; }
-  elements["analysis-type"].value = state.settings.analysis;
+  // Only the fields of the chosen analysis are shown; DC has none.
   if (state.settings.analysis === "dc") {
     elements["analysis-settings"].innerHTML = "";
-    elements["analysis-note"].textContent = "현재 DC 동작점 · source DC bias 사용 · C 개방/L 단락. SIN/PULSE/AC 값은 보존됩니다.";
+    elements["analysis-note"].textContent = "DC는 추가 설정이 없습니다. SIN/PULSE/AC 값은 보존됩니다.";
   } else if (state.settings.analysis === "transient") {
     elements["analysis-settings"].innerHTML = settingField("시작", "start", state.settings.start) + settingField("끝", "end", state.settings.end) + settingField("간격", "step", state.settings.step);
-    elements["analysis-note"].textContent = "현재 시간영역 · DC/SIN/PULSE 사용 · SIN 주파수는 AC 설정과 독립 · C 전압/L 전류 IC 지원";
+    elements["analysis-note"].textContent = "";
   } else {
     elements["analysis-settings"].innerHTML = settingField("시작 Hz", "startFrequency", state.settings.startFrequency) + settingField("끝 Hz", "endFrequency", state.settings.endFrequency) + settingField("점/dec", "pointsPerDecade", state.settings.pointsPerDecade) + settingField("페이저 Hz", "phasorFrequency", state.settings.phasorFrequency ?? "159.155");
-    elements["analysis-note"].textContent = "현재 AC 소신호 · source AC peak/cos 사용 · SIN 주파수와 독립 · RMS=peak/√2";
+    elements["analysis-note"].textContent = "";
   }
   if (state.learningId === "parallel-sine") {
     const learningNotes = {
@@ -1253,6 +1277,7 @@ function displayNumber(value, unit) {
 let phasorDirty = false;
 function phasorPanelVisible() { return !panels || panels.isOpen("phasor"); }
 function renderPhasorLearning() {
+  phasorView.renderNotice();
   if (!phasorPanelVisible()) { phasorDirty = true; return; }
   phasorDirty = false;
   phasorView.render();
@@ -1325,9 +1350,11 @@ function renderPlot() {
     const availability = resultAvailabilityText(state.runState, state.settings.analysis, state.probes.length);
     elements["plot-empty"].querySelector("span").textContent = availability
       ?? (state.result ? "표시할 프로브를 회로에 놓으세요." : "회로에 V 또는 I 프로브를 놓으세요.");
-    elements["cursor-readout"].textContent = availability ?? "프로브를 추가하면 눈금이 자동으로 맞춰집니다.";
+    elements["cursor-readout"].textContent = CURSOR_HINT;
   }
 }
+
+const CURSOR_HINT = "그래프를 눌러 값을 읽습니다.";
 
 function portEndpointLabel(endpoint) {
   if (!endpoint) return "미선택";
@@ -1339,9 +1366,10 @@ function portEndpointLabel(endpoint) {
 function beginPortPick(which) {
   setTool("select");
   state.port.mode = which === "p" ? "pick-p" : "pick-n";
-  elements["tool-hint"].textContent = `DC 포트 ${which}로 사용할 핀 또는 명시적 접속점을 클릭하세요.`;
+  elements["tool-hint"].textContent = `DC 포트 ${which}로 사용할 핀 또는 접속점을 클릭하세요.`;
   renderPortPanel();
   renderCanvas();
+  panels?.showCanvas();
 }
 
 function toggleSelectedPortLoad() {
@@ -1446,27 +1474,26 @@ function renderAll() {
   elements["clone-button"].disabled = state.selected?.kind !== "component";
   elements["delete-button"].disabled = !state.selected;
   elements["stale-badge"].classList.toggle("hidden", !(state.stale || state.runState.status === "stale"));
-  document.querySelectorAll("[data-learning-example]").forEach((button) => button.classList.toggle("active", button.dataset.learningExample === state.learningId));
   updateAnalysisControls();
 }
 
 function scheduleAutoRun() {
   cancelScheduledRun();
-  if (!state.autoUpdate) { elements["auto-update-status"].textContent = "수동 실행"; return; }
-  if (!state.circuit.components.length) { elements["auto-update-status"].textContent = "회로 작성 중"; return; }
+  if (!state.autoUpdate) { setAutoHint("수동 실행"); return; }
+  if (!state.circuit.components.length) { setAutoHint("회로 작성 중"); return; }
   if (inputDrafts.size || state.inlineEdit || document.querySelector(".input-invalid, .input-editing")) {
-    elements["auto-update-status"].textContent = "입력 완료 후 자동 갱신"; return;
+    setAutoHint("입력 완료 후 자동 갱신", { show: true }); return;
   }
   try {
     const status = currentConnections();
     if ((status.counts.unwired ?? 0) || (status.counts["no-ground"] ?? 0)) {
-      elements["auto-update-status"].textContent = "연결 완료 후 자동 갱신"; return;
+      setAutoHint("연결 완료 후 자동 갱신", { show: true }); return;
     }
   } catch { return; }
   const generation = state.generation;
   state.autoRequestedAt = performance.now();
   const requestedAt = state.autoRequestedAt;
-  elements["auto-update-status"].textContent = "자동 갱신 대기";
+  setAutoHint("자동 갱신 대기");
   state.autoTimer = setTimeout(() => runAnalysis({ automatic: true, generation, requestedAt }), 250);
 }
 
@@ -1501,7 +1528,6 @@ async function runAnalysis({ automatic = false, generation = null, requestedAt =
   const startedAt = requestedAt;
   state.runState = { status: "running", analysis: state.settings.analysis, generation, error: null };
   setStatus(automatic ? "자동 계산 중…" : "계산 중…", "running");
-  if (automatic) elements["auto-update-status"].textContent = "자동 계산 중";
   elements["error-box"].classList.add("hidden");
   await new Promise((resolve) => { requestAnimationFrame(resolve); setTimeout(resolve, 50); });
   if (serial !== state.runSerial || !acceptsRunGeneration(generation, state.generation)) return;
@@ -1520,8 +1546,8 @@ async function runAnalysis({ automatic = false, generation = null, requestedAt =
     const points = state.result.points.length;
     elements["result-summary"].textContent = `${state.settings.analysis === "dc" ? "DC 동작점" : state.settings.analysis === "transient" ? "시간응답" : "AC 주파수"} · ${points.toLocaleString()}개 점 · 현재 회로 결과`;
     state.lastRunMs = performance.now() - startedAt;
-    setStatus(automatic ? "최신 결과 · 자동" : "해석 완료", "ready");
-    elements["auto-update-status"].textContent = `완료 · ${state.lastRunMs.toFixed(1)} ms${state.autoUpdate ? " · 자동 갱신" : ""}`;
+    setStatus(`${automatic ? "최신 결과 · 자동" : "해석 완료"} · ${state.lastRunMs.toFixed(0)} ms`, "ready");
+    setAutoHint(`완료 · ${state.lastRunMs.toFixed(1)} ms${state.autoUpdate ? " · 자동 갱신" : ""}`);
     renderAll();
   } catch (error) {
     if (error instanceof AnalysisCancelledError) return;
@@ -1534,10 +1560,8 @@ async function runAnalysis({ automatic = false, generation = null, requestedAt =
     state.lastRunMs = null;
     state.runState = { status: "error", analysis: state.settings.analysis, generation: state.generation, error: known ? { code: error.code, message: error.message } : { code: "UNKNOWN", message: String(error) } };
     renderFailureDiagnostic(error);
-    if (!automatic) panels?.set("analysis", false);
     elements["result-summary"].textContent = resultAvailabilityText(state.runState, state.settings.analysis, state.probes.length);
     setStatus("해석 실패", "error");
-    if (state.learningId) elements["auto-update-status"].textContent = "학습 결과 없음 · 입력을 확인하세요";
     renderAll();
   } finally {
     if (serial === state.runSerial && activeAnalysisJob?.requestId === workerRequest.requestId) {
@@ -1631,10 +1655,6 @@ function fitCanvas() {
     else state.canvasView = { x: (minX + maxX) / 2 - height * aspect / 2, y: minY, width: height * aspect, height };
   }
   renderCanvas();
-}
-
-function setInspectorCollapsed(collapsed) {
-  panels?.set("inspector", collapsed);
 }
 
 function loadExample(id) {
@@ -1903,7 +1923,7 @@ function setupCanvasTouch() {
     tap: (event, target) => {
       const point = svgPoint(event); if(!target || !point || state.tool === "pan")return;
       if(target.kind === "delete") { if(state.selected?.kind === "component" && state.selected.id === target.id) deleteSelection(); return; }
-      if(target.kind === "properties") { state.selected={kind:"component",id:target.id}; renderAll(); setInspectorCollapsed(false); return; }
+      if(target.kind === "properties") { state.selected={kind:"component",id:target.id}; renderAll(); showInspector(); return; }
       if(target.kind === "pin") { handlePinClick(target.id,target.pin); return; }
       if(target.kind === "junction") {
         if(state.tool === "voltage-probe") addVoltageProbeEndpoint({junctionId:target.id});
@@ -1931,7 +1951,7 @@ function setupCanvasTouch() {
 }
 
 function updateCircuitCourseTop(){
-  document.getElementById('circuit-course-shell').style.setProperty('--circuit-course-top',document.querySelector('.workspace-tabs').getBoundingClientRect().bottom+'px');
+  document.getElementById('circuit-course-shell').style.setProperty('--circuit-course-top',document.querySelector('.topbar').getBoundingClientRect().bottom+'px');
 }
 function activateCircuitCourse(){
   const seq=++workspaceSeq;
@@ -1945,8 +1965,8 @@ function showCircuitCourse(value){
   workspaceSwitching=true;
   canvasTouch?.cancel();if(state.drag)finishCanvasPointer(state.drag.pointerId,'cancel');cancelPlotSession();panels.cancelInteractions();
   circuitCourseActive=value;circuitWorkspaceActive=!value;document.body.dataset.circuitExperience=value?'course':'editor';
-  const workbench=document.getElementById('workbench'),shelf=document.getElementById('panel-shelf'),shell=document.getElementById('circuit-course-shell');
-  workbench.hidden=value;workbench.inert=value;shelf.hidden=value;shell.hidden=!value;shell.inert=!value;
+  const workbench=document.getElementById('workbench'),shell=document.getElementById('circuit-course-shell');
+  workbench.hidden=value;workbench.inert=value;shell.hidden=!value;shell.inert=!value;
   workspaceSeq++;
   if(value){updateCircuitCourseTop();activateCircuitCourse();}
   else{circuitCourseLazy.controller?.deactivate();panels.synchronize();if(circuitRenderDeferred)renderAll();else{updateCanvasView();scopeView.render();renderPhasorLearning();}}
@@ -1958,16 +1978,10 @@ function setupEvents() {
   for(const type of ['pointerenter','focus'])document.getElementById('circuit-course-open').addEventListener(type,()=>circuitCourseLazy.prefetch());
   document.getElementById('circuit-course-back').addEventListener('click',()=>showCircuitCourse(false));
   window.addEventListener('resize',()=>{if(circuitCourseActive&&workspaceTabs.active==='circuit')updateCircuitCourseTop();});
-  const chooseAC = () => {
-    if (state.settings.analysis !== "ac") {
-      elements["analysis-intent"].value = "ac";
-      elements["analysis-intent"].dispatchEvent(new Event("change"));
-    }
-  };
-  document.getElementById("phasor-ac-settings").addEventListener("click", () => {
-    chooseAC(); elements["advanced-analysis"].open = true; panels.set("analysis", false);
-  });
-  document.getElementById("phasor-run").addEventListener("click", () => { chooseAC(); runAnalysis(); });
+  // The help card is a popover: Escape or an outside click closes it.
+  const help = document.getElementById("interaction-help");
+  document.addEventListener("click", (event) => { if (help.open && !help.contains(event.target)) help.open = false; });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && help.open) { help.open = false; help.querySelector("summary").focus(); } });
   // Keep focus on the draft until click discards it; native blur would commit first.
   document.getElementById("discard-drafts-button").addEventListener("pointerdown", (event) => {
     if (event.button === 0) event.preventDefault();
@@ -2026,12 +2040,10 @@ function setupEvents() {
     const point = svgPoint(event);
     if (point) zoomCanvas(event.deltaY > 0 ? 1.18 : .84, point);
   }, { passive: false });
-  elements["analysis-type"].addEventListener("change", () => mutate(() => { state.settings.analysis = elements["analysis-type"].value; state.intent = "manual"; }));
   elements["analysis-intent"].addEventListener("change", () => {
     const requestedIntent = elements["analysis-intent"].value;
     if (!commitPendingInputs()) { elements["analysis-intent"].value = state.intent; return; }
     mutate(() => { state.intent = requestedIntent; });
-    if (state.intent === "manual") elements["advanced-analysis"].open = true;
   });
   elements["auto-update"].addEventListener("change", () => {
     state.autoUpdate = elements["auto-update"].checked;
@@ -2092,7 +2104,6 @@ function setupEvents() {
     });
   });
   elements["example-select"].addEventListener("change", () => loadExample(elements["example-select"].value));
-  document.querySelectorAll("[data-learning-example]").forEach((button) => button.addEventListener("click", () => loadExample(button.dataset.learningExample)));
   elements["save-button"].addEventListener("click", saveProject);
   elements["load-button"].addEventListener("click", () => elements["file-input"].click());
   elements["file-input"].addEventListener("change", () => { if (elements["file-input"].files[0]) loadProject(elements["file-input"].files[0]); elements["file-input"].value = ""; });
@@ -2240,7 +2251,7 @@ function initialize() {
       else if (name === "signals") activateLazyWorkspace(signalsLazy, "signals");
       else if(circuitCourseActive){
         circuitWorkspaceActive=false;const workbench=document.getElementById('workbench'),shell=document.getElementById('circuit-course-shell');
-        workbench.hidden=true;workbench.inert=true;document.getElementById('panel-shelf').hidden=true;shell.hidden=false;shell.inert=false;
+        workbench.hidden=true;workbench.inert=true;shell.hidden=false;shell.inert=false;
         updateCircuitCourseTop();activateCircuitCourse();
       } else {
         workspaceSeq++;
@@ -2255,9 +2266,6 @@ function initialize() {
   setupEvents();
   setupCanvasTouch();
   setTool("select");
-  if (matchMedia("(max-width: 760px)").matches) {
-    setInspectorCollapsed(true);
-  }
   synchronizeIntent();
   renderAll();
   setStatus("해석 준비", "ready");

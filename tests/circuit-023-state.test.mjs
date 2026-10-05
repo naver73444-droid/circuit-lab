@@ -10,7 +10,12 @@ test('CIRCUIT-023 EM session is separate, preserves last valid snapshot, and nev
   em.setDraft('q','-');assert.equal(em.state.models.charge.q,1e-9);assert.ok(em.inspect().revision>revision);
   assert.equal(em.apply({q:2e-6}),null);assert.equal(em.state.models.charge.q,1e-9);assert.equal(em.state.draft.q,'-');assert.equal(em.state.previous,true);assert.equal(em.state.lastValid.result.status,'valid');assert.match(em.state.error,/범위/);
   assert.throws(()=>parseEMNumber(''),/빈값/);assert.throws(()=>parseEMNumber('   '),/빈값/);assert.equal(parseEMNumber('0'),0);
-  assert.equal(em.setPoint([21,0,0]),null);assert.deepEqual(em.state.point,[1,0,0]);assert.equal(em.setPoint([0,0,0]).result.status,'excluded');assert.deepEqual(em.state.point,[0,0,0]);assert.equal(em.setPoint([2,0,0]).result.status,'valid');
+  // While a model draft is pending the shared point is not moved either (see circuit-023-residual-state).
+  assert.equal(em.setPoint([2,0,0]),null);assert.deepEqual(em.state.point,[1,0,0]);assert.equal(em.state.draft.q,'-');
+  // A valid apply clears the draft; measurement-point moves are then evaluated: out of range is rejected, the excluded zone is reported.
+  assert.ok(em.apply({q:2e-9}));assert.deepEqual(em.state.draft,{});assert.equal(em.state.previous,false);
+  assert.equal(em.setPoint([21,0,0]),null);assert.deepEqual(em.state.point,[1,0,0]);assert.equal(em.state.previous,true);
+  assert.equal(em.setPoint([0,0,0]).result.status,'excluded');assert.deepEqual(em.state.point,[0,0,0]);assert.equal(em.setPoint([2,0,0]).result.status,'valid');assert.equal(em.state.previous,false);
   em.state.playing=true;em.setActive(false);assert.equal(em.state.playing,false);em.setActive(true);assert.equal(em.state.playing,false);
   em.setScene('wave');assert.equal(em.state.sceneName,'wave');assert.equal(em.state.playing,false);em.setTime(1.25);assert.equal(em.state.timeCycles,1.25);
   em.destroy();assert.equal(em.inspect().destroyed,true);
@@ -30,7 +35,7 @@ test('CIRCUIT-023 actual product wiring guards inactive circuit state and uses n
   const controller=readFileSync(new URL('../src/em-controller.js',import.meta.url),'utf8');
   const view=readFileSync(new URL('../src/em-view.js',import.meta.url),'utf8');
   assert.match(app,/isCircuitUiActive/);assert.match(app,/finishCanvasPointer\(state\.drag\.pointerId, "cancel"\)/);assert.match(app,/cancelPlotSession\(\)/);assert.match(app,/getEMState/);
-  assert.match(tabs,/\.inert = name !== 'circuit'/);assert.match(panels,/if \(!isActive\(\) \|\| !Object\.hasOwn/);assert.match(panels,/panel\.inert = !open \|\| !active/);
+  assert.match(tabs,/\.inert = name !== 'circuit'/);assert.match(panels,/if \(!isActive\(\) \|\| !\(name in/);assert.match(panels,/\.inert = !open \|\| !active/);
   assert.match(view,/getContext\('webgl'/);assert.doesNotMatch(view,/THREE|cdn|vendor/i);assert.match(view,/deleteBuffer/);assert.match(view,/deleteProgram/);assert.match(view,/deleteShader/);
   assert.match(controller,/%32===0\|\|performance\.now\(\)-sliceStarted>=8/);assert.match(controller,/token!==lineTask/);assert.match(controller,/token!==sliceTask/);assert.match(controller,/snapshot!==s\.lastValid/);assert.match(controller,/cachedLines/);assert.match(controller,/cachedSlice/);assert.match(controller,/kind==='loop'\?16:32/);assert.match(controller,/loopFieldAtN\(model,p,64\)/);
   assert.match(controller,/if\(!valid\)throw new Error\(s\.error\)/);assert.match(controller,/em-error'\)\.hidden=false/);assert.doesNotMatch(controller,/result\.frequency/);assert.match(controller,/snapshot\.model\.frequency/);assert.match(controller,/data-em-wave-point/);
