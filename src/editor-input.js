@@ -1,7 +1,8 @@
 import { componentDefaults, pinCount } from "./circuit-engine.js";
-import { endpointExists, endpointsEqual, retargetWireProbes, splitWireAtJunction } from "./circuit-edit.js";
+import { componentIdPrefix, endpointExists, endpointsEqual, retargetWireProbes, splitWireAtJunction } from "./circuit-edit.js";
+import { allocatorFor } from "./id-allocator.js";
 import { appendFixedWaypoint, snapPoint } from "./circuit-geometry.js";
-import { commitsActiveDrag, isTypingTarget, shortcutFor } from "./editor-shortcuts.js";
+import { commitsActiveDrag, createClipboardShortcutGate, isTypingTarget, shortcutFor } from "./editor-shortcuts.js";
 import { clearSelection, isSelected, marqueeHits, normalizeRect, selectedItems, selectedKeys, setSelectionItems, setSingleSelection, toggleSelection } from "./selection-model.js";
 import { applyGroupOffset, captureGroupOrigins, groupFootprint, restoreGroupOrigins } from "./group-edit.js";
 import { createSelectionCommands } from "./selection-commands.js";
@@ -147,12 +148,9 @@ export function createEditorInput(deps) {
 
   // ---- placement and wiring
 
+  /** A new part id that was never used in this project (not even by a part deleted since), so stale references cannot bind to it. */
   function nextId(type) {
-    const prefix = type === "GND" ? "G" : ["OPAMP", "OPAMP_IDEAL"].includes(type) ? "U" : ({ VCVS: "E", VCCS: "G", CURRENT_SENSOR: "S", CCCS: "F", CCVS: "H" }[type] ?? type);
-    let index = 1;
-    const used = new Set(state.circuit.components.map((component) => component.id));
-    while (used.has(`${prefix}${index}`)) index += 1;
-    return `${prefix}${index}`;
+    return allocatorFor(state).next(componentIdPrefix(type), state.circuit.components);
   }
 
   function placeComponent(event) {
@@ -355,7 +353,7 @@ export function createEditorInput(deps) {
 
   function createJunctionOnWire(wireId, point) {
     mutate(() => {
-      const split = splitWireAtJunction(state.circuit, wireId, point, routeForWireId(wireId));
+      const split = splitWireAtJunction(state.circuit, wireId, point, routeForWireId(wireId), allocatorFor(state));
       state.circuit = split.circuit;
       state.probes = retargetWireProbes(state.probes, wireId, split.replacementWireId, split);
       setSingleSelection(state, split.endpoint.junctionId ? { kind: "junction", id: split.endpoint.junctionId } : { kind: "component", id: split.endpoint.componentId });
@@ -372,7 +370,7 @@ export function createEditorInput(deps) {
     state.pointer = null;
     restoreToolHint();
     mutate(() => {
-      const split = splitWireAtJunction(state.circuit, wireId, point, routePoints);
+      const split = splitWireAtJunction(state.circuit, wireId, point, routePoints, allocatorFor(state));
       state.circuit = split.circuit;
       state.probes = retargetWireProbes(state.probes, wireId, split.replacementWireId, split);
       const duplicate = state.circuit.wires.some((wire) => (endpointsEqual(wire.a, start) && endpointsEqual(wire.b, split.endpoint)) || (endpointsEqual(wire.b, start) && endpointsEqual(wire.a, split.endpoint)));
@@ -816,17 +814,15 @@ export function createEditorInput(deps) {
   // ---- clipboard keys: the native copy/cut/paste events are preferred, the key press itself is only the fallback
 
   const CLIPBOARD_ACTIONS = new Set(["copy", "cut", "paste"]);
-  let clipboardFallbackTimer = null;
-  const cancelClipboardFallback = () => { if (clipboardFallbackTimer !== null) { clearTimeout(clipboardFallbackTimer); clipboardFallbackTimer = null; } };
+  // One token per Ctrl+C/X/V press is shared by the native event and the 0 ms key fallback: whichever pastes/copies first claims it, the other no-ops.
+  const clipboardGate = createClipboardShortcutGate();
   function armClipboardFallback(action) {
-    cancelClipboardFallback();
-    clipboardFallbackTimer = setTimeout(() => {
-      clipboardFallbackTimer = null;
+    clipboardGate.arm(action, (armed, token) => {
       if (!isCircuitUiActive()) return;
-      if (action === "copy") copySelection();
-      else if (action === "cut") copySelection({ cut: true });
-      else pasteSelection();
-    }, 0);
+      if (armed === "copy") copySelection({ token });
+      else if (armed === "cut") copySelection({ cut: true, token });
+      else pasteSelection({ token });
+    });
   }
 
   /** Does the page have a selected stretch of text (inspector text, notices, labels)? Then Ctrl+C / Ctrl+A belong to the browser. */
@@ -836,12 +832,12 @@ export function createEditorInput(deps) {
 
   function nativeClipboardEvent(event, kind) {
     if (!isCircuitUiActive() || event.defaultPrevented) return;
-    cancelClipboardFallback();
+    const token = clipboardGate.native(kind); // also cancels the key fallback of this press
     // Text fields, a selected stretch of text, or another workspace's focus: the browser's own copy/paste is what the user means.
     if (isTypingTarget(document.activeElement, "c", { modifier: true }) || (kind !== "paste" && hasTextSelection())) return;
     const clipboardData = event.clipboardData;
     if (!clipboardData) return;
-    const handled = kind === "paste" ? pasteSelection({ clipboardData }) : copySelection({ cut: kind === "cut", clipboardData });
+    const handled = kind === "paste" ? pasteSelection({ clipboardData, token }) : copySelection({ cut: kind === "cut", clipboardData, token });
     if (handled) event.preventDefault();
   }
 

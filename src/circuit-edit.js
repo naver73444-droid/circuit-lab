@@ -26,7 +26,11 @@ export function nextEntityId(items, prefix) {
   return `${prefix}${index}`;
 }
 
-export function splitWireAtJunction(circuit, wireId, point, routePoints = null) {
+/**
+ * Split a wire with a new junction. `allocator` (see id-allocator.js) makes the new junction and wire ids never-reused ones; without it the
+ * first free ids are taken.
+ */
+export function splitWireAtJunction(circuit, wireId, point, routePoints = null, allocator = null) {
   const copy = structuredClone({ ...circuit, junctions: circuit.junctions ?? [] });
   const index = copy.wires.findIndex((wire) => wire.id === wireId);
   if (index < 0) throw new Error(`배선을 찾을 수 없습니다: ${wireId}`);
@@ -47,12 +51,12 @@ export function splitWireAtJunction(circuit, wireId, point, routePoints = null) 
   }
   const split = routePoints ? splitRouteWaypoints(routePoints, snapped) : { first: [], second: [] };
   const junction = {
-    id: nextEntityId(copy.junctions, "J"),
+    id: allocator ? allocator.next("J", copy.junctions) : nextEntityId(copy.junctions, "J"),
     x: snapped.x,
     y: snapped.y,
   };
-  const firstId = nextEntityId(copy.wires, "W");
-  const secondId = nextEntityId([...copy.wires, { id: firstId }], "W");
+  const firstId = allocator ? allocator.next("W", copy.wires) : nextEntityId(copy.wires, "W");
+  const secondId = allocator ? allocator.next("W", copy.wires) : nextEntityId([...copy.wires, { id: firstId }], "W");
   copy.junctions.push(junction);
   copy.wires.splice(index, 1,
     { id: firstId, a: original.a, b: { junctionId: junction.id }, waypoints: split.first },
@@ -87,7 +91,8 @@ export function deleteJunctionFromCircuit(circuit, junctionId, probes = []) {
   };
 }
 
-function componentIdPrefix(type) {
+/** The id prefix of a new part of this type ("R", "G" for GND and VCCS, "U" for OP AMPs ...). */
+export function componentIdPrefix(type) {
   if (type === "GND") return "G";
   if (["OPAMP", "OPAMP_IDEAL"].includes(type)) return "U";
   return { VCVS: "E", VCCS: "G", CURRENT_SENSOR: "S", CCCS: "F", CCVS: "H" }[type] ?? type;
@@ -137,20 +142,22 @@ export function extractFragment(circuit, componentIds, junctionIds = []) {
  * A reference to an element that is not part of the fragment keeps its (external) id, unless `resolveControl(elementId, component)` is given and
  * says no: then the reference is removed (the part's id is listed in `clearedControls`) instead of silently binding to whatever shares the id.
  * Copies get a free reference label (R3 …) instead of repeating the original's.
+ * `allocator` (id-allocator.js) hands out ids above everything ever issued in the project, so a copy can never take the id of a part that
+ * was deleted (and that a clipboard or another part may still point at); without it the first free ids are used.
  */
-export function remapFragment(circuit, fragment, offset = 40, { resolveControl = null } = {}) {
+export function remapFragment(circuit, fragment, offset = 40, { resolveControl = null, allocator = null } = {}) {
   const reserved = [...circuit.components];
   const usedRefs = new Set(circuit.components.map((component) => component.props?.ref).filter((ref) => typeof ref === "string"));
   const idMap = new Map();
   for (const original of fragment.components) {
-    const id = nextEntityId(reserved, componentIdPrefix(original.type));
+    const id = allocator ? allocator.next(componentIdPrefix(original.type), circuit.components) : nextEntityId(reserved, componentIdPrefix(original.type));
     idMap.set(original.id, id);
     reserved.push({ id });
   }
   const reservedJunctions = [...(circuit.junctions ?? [])];
   const junctionMap = new Map();
   for (const original of fragment.junctions ?? []) {
-    const id = nextEntityId(reservedJunctions, "J");
+    const id = allocator ? allocator.next("J", circuit.junctions) : nextEntityId(reservedJunctions, "J");
     junctionMap.set(original.id, id);
     reservedJunctions.push({ id });
   }
@@ -174,7 +181,7 @@ export function remapFragment(circuit, fragment, offset = 40, { resolveControl =
   for (const original of fragment.wires ?? []) {
     if (!inside(original.a) || !inside(original.b)) continue;
     const wire = structuredClone(original);
-    wire.id = nextEntityId([...circuit.wires, ...wires], "W");
+    wire.id = allocator ? allocator.next("W", circuit.wires) : nextEntityId([...circuit.wires, ...wires], "W");
     wire.a = remapEnd(original.a);
     wire.b = remapEnd(original.b);
     if (Array.isArray(wire.waypoints)) wire.waypoints = wire.waypoints.map((point) => snapPoint({ x: point.x + offset, y: point.y + offset }));
@@ -183,8 +190,8 @@ export function remapFragment(circuit, fragment, offset = 40, { resolveControl =
   return { components, wires, junctions, idMap, junctionMap, clearedControls };
 }
 
-export function cloneComponentSet(circuit, componentIds, offset = 40, { junctionIds = [] } = {}) {
-  return remapFragment(circuit, extractFragment(circuit, componentIds, junctionIds), offset);
+export function cloneComponentSet(circuit, componentIds, offset = 40, { junctionIds = [], allocator = null } = {}) {
+  return remapFragment(circuit, extractFragment(circuit, componentIds, junctionIds), offset, { allocator });
 }
 
 export function cloneSelectedComponent(circuit, componentId, offset = 40) {

@@ -1,5 +1,6 @@
 import { polylinePath } from "./circuit-geometry.js";
-import { flowSampleIndex, flowSpeedClass, peakComponentCurrent, wireCurrents } from "./wire-current-model.js";
+import { analyzeWireNets, flowSampleIndex, flowSpeedClass, peakComponentCurrent, wireCurrents } from "./wire-current-model.js";
+import { escapeHtml } from "./safe-dom.js";
 
 /**
  * "전류 흐름" overlay: dashes that creep along the wires in the direction of the current. Off by default, remembered per browser.
@@ -8,7 +9,9 @@ import { flowSampleIndex, flowSpeedClass, peakComponentCurrent, wireCurrents } f
  * drag renderer and the wire/component layers are untouched. Motion is pure CSS (stroke-dashoffset keyframes, no per-frame JS):
  * wires are grouped by speed class and every wire's points are written in the direction of its current, so one animated <path> per
  * speed class (at most four) serves the whole circuit and all of them move "forward". It rebuilds only when the result, the sample
- * (DC point, scope cursor time or last sample), the geometry or the toggle changes, and hides while a part is being dragged.
+ * (DC point, scope cursor time or last sample), the geometry, the stale flag or the toggle changes, and hides while a part is being dragged
+ * (also when a render arrives in the middle of the drag). The net graph and the wire routes depend on the circuit geometry only, so they are
+ * computed once per geometry (circuit object + edit generation + item counts) and every cursor move just redoes the per-sample sums.
  * With prefers-reduced-motion the dashes are replaced by one static arrow per wire (CSS switches between the two).
  */
 const STORAGE_KEY = "circuit-lab.flow-view";
@@ -23,7 +26,9 @@ export function createFlowLayer({ state, elements, scopeView, wireRoutes }) {
   let lastMarkup = "";
   let lastInfo = { enabled, status: "off", sample: null, wires: [] };
   let frame = null;
-  const stats = { builds: 0, writes: 0 };
+  let geometry = null; // { circuit, generation, counts, nets, routes }
+  let lastKey = null; // what the current picture was drawn from; an identical request is skipped
+  const stats = { builds: 0, writes: 0, graphs: 0, skipped: 0 };
 
   function readPreference() {
     try { return globalThis.localStorage?.getItem(STORAGE_KEY) === "1"; } catch { return false; }
@@ -33,6 +38,18 @@ export function createFlowLayer({ state, elements, scopeView, wireRoutes }) {
   }
 
   const isStale = () => state.stale || state.runState.status === "stale";
+  /** A part or junction is being carried: the wires change under the overlay every frame, so it must stay hidden until the drag ends. */
+  const isMoveDragging = () => Boolean(state.drag && state.drag.moved && (state.drag.kind === "component" || state.drag.kind === "junction"));
+
+  /** Net graph and routes of the current geometry, recomputed only when the circuit (object, edit generation or size) changed. */
+  function geometryOf() {
+    const circuit = state.circuit;
+    const counts = `${circuit.components.length}/${circuit.wires.length}/${circuit.junctions?.length ?? 0}`;
+    if (geometry && geometry.circuit === circuit && geometry.generation === state.generation && geometry.counts === counts) return geometry;
+    stats.graphs += 1;
+    geometry = { circuit, generation: state.generation, counts, nets: analyzeWireNets(circuit), routes: wireRoutes() };
+    return geometry;
+  }
 
   /** Point `distance` along a polyline, with the direction of the segment it falls on. */
   function pointAlong(points, distance) {
@@ -73,22 +90,28 @@ export function createFlowLayer({ state, elements, scopeView, wireRoutes }) {
 
   function build() {
     if (frame !== null) { cancelAnimationFrame(frame); frame = null; }
-    layer.classList.remove("flow-suspended");
     if (toggle) toggle.checked = enabled;
-    if (!enabled) { write(""); setHint(""); lastInfo = { enabled, status: "off", sample: null, wires: [] }; return; }
-    stats.builds += 1;
+    // Stays hidden for as long as a move drag is active, whoever asks for the rebuild (a finished analysis, a stale mark, the scope cursor).
+    if (isMoveDragging()) { suspend(); return; }
+    layer.classList.remove("flow-suspended");
+    if (!enabled) { lastKey = null; write(""); setHint(""); lastInfo = { enabled, status: "off", sample: null, wires: [] }; return; }
     const result = state.result;
-    if (!result) { write(""); setHint(""); lastInfo = { enabled, status: "no-result", sample: null, wires: [] }; return; }
-    if (result.analysis === "ac") { write(""); setHint(AC_HINT); lastInfo = { enabled, status: "ac", sample: null, wires: [] }; return; }
+    if (!result) { lastKey = null; write(""); setHint(""); lastInfo = { enabled, status: "no-result", sample: null, wires: [] }; return; }
+    if (result.analysis === "ac") { lastKey = null; write(""); setHint(AC_HINT); lastInfo = { enabled, status: "ac", sample: null, wires: [] }; return; }
     setHint("");
-    if (isStale()) { write(""); lastInfo = { enabled, status: "stale", sample: null, wires: [] }; return; }
+    // A stale result must not keep animating: the picture is cleared the moment the result becomes outdated (see markStale / markInputDirty).
+    if (isStale()) { lastKey = null; write(""); lastInfo = { enabled, status: "stale", sample: null, wires: [] }; return; }
     const index = flowSampleIndex(result, scopeView?.cursorIndex);
     const point = index === null ? null : result.points[index];
-    if (!point?.componentCurrents) { write(""); lastInfo = { enabled, status: "no-result", sample: index, wires: [] }; return; }
+    if (!point?.componentCurrents) { lastKey = null; write(""); lastInfo = { enabled, status: "no-result", sample: index, wires: [] }; return; }
 
-    const { byWire, maxAbs } = wireCurrents({ circuit: state.circuit, componentCurrents: point.componentCurrents });
+    const { nets, routes } = geometryOf();
+    // Nothing the picture depends on changed (same result, sample and geometry): keep it, and do not restart its animation.
+    if (lastKey && lastKey.result === result && lastKey.index === index && lastKey.geometry === geometry) { stats.skipped += 1; return; }
+    stats.builds += 1;
+    lastKey = { result, index, geometry };
+    const { byWire, maxAbs } = wireCurrents({ circuit: state.circuit, componentCurrents: point.componentCurrents, nets });
     const scale = Math.max(maxAbs, peakComponentCurrent(result));
-    const routes = wireRoutes();
     const groups = new Map(); // speed class -> { d: [], ids: [] }
     const arrows = [];
     const wires = [];
@@ -107,7 +130,7 @@ export function createFlowLayer({ state, elements, scopeView, wireRoutes }) {
       const arrow = arrowPath(forward);
       if (arrow) arrows.push(arrow);
     }
-    const dashes = [...groups.keys()].sort().map((speed) => `<path class="flow-dash flow-s${speed}" data-wires="${groups.get(speed).ids.join(" ")}" d="${groups.get(speed).d.join("")}"/>`).join("");
+    const dashes = [...groups.keys()].sort().map((speed) => `<path class="flow-dash flow-s${speed}" data-wires="${escapeHtml(groups.get(speed).ids.join(" "))}" d="${groups.get(speed).d.join("")}"/>`).join("");
     write(dashes ? `${dashes}<path class="flow-arrows" d="${arrows.join("")}"/>` : "");
     lastInfo = { enabled, status: dashes ? "flow" : "none", sample: index, wires };
   }

@@ -70,10 +70,18 @@ export function rotationPivot(origins, items, pivot = null) {
   return snapPoint({ x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 });
 }
 
+/** Float noise from `center + (p - center)` arithmetic (about 1e-13) is removed; a coordinate that really has more digits than that is left untouched. */
+const quiet = (value) => {
+  const rounded = Math.round(value * 1e9) / 1e9;
+  return Math.abs(rounded - value) <= 1e-10 ? rounded : value;
+};
+
 /**
  * Rotate by 90° steps (direction +1 clockwise on screen, −1 counter-clockwise).
- * One part: in place. Several parts/junctions: rigidly around rotationPivot() — which stays where it is, so every position stays on the grid
- * and a turn followed by the opposite turn restores the layout exactly. Part angles are always normalised to 0..270.
+ * One part: in place. Several parts/junctions: rigidly around rotationPivot() — which stays exactly where it is. Nothing is snapped to the grid
+ * (a per-item snap moves the effective pivot for off-grid parts, so the opposite turn would not restore the layout): a grid layout stays on the
+ * grid because the pivot is a part position or a grid point, and an off-grid layout turns and turns back to its exact coordinates.
+ * Part angles are always normalised to 0..270.
  */
 export function rotateGroup(circuit, items, direction = 1, pivot = null) {
   const origins = captureGroupOrigins(circuit, items);
@@ -88,7 +96,7 @@ export function rotateGroup(circuit, items, direction = 1, pivot = null) {
   const center = rotationPivot(origins, items, pivot);
   const rotate = (point) => {
     const x = point.x - center.x, y = point.y - center.y;
-    return snapPoint(direction >= 0 ? { x: center.x - y, y: center.y + x } : { x: center.x + y, y: center.y - x });
+    return direction >= 0 ? { x: quiet(center.x - y), y: quiet(center.y + x) } : { x: quiet(center.x + y), y: quiet(center.y - x) };
   };
   const components = new Map(circuit.components.map((component) => [component.id, component]));
   const junctions = new Map((circuit.junctions ?? []).map((junction) => [junction.id, junction]));

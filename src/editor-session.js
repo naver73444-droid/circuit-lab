@@ -3,6 +3,7 @@ import { endpointExists } from "./circuit-edit.js";
 import { classifyCircuitConnections, connectionFrequency } from "./circuit-status.js";
 import { currentProbeLabel } from "./current-direction.js";
 import { nextAvailableProbeColor, removeProbeByKey } from "./ui-model.js";
+import { allocatorFor } from "./id-allocator.js";
 
 const HISTORY_LIMIT = 100;
 export const PROBE_COLORS = ["#80bfff", "#f5bc79", "#c5a2f2", "#8ed4ad", "#ff969e", "#d7d783", "#83d2db", "#eea7d0"];
@@ -60,6 +61,15 @@ export function createEditorSession(deps) {
     return value;
   }
 
+  /**
+   * Ids already in the project count as used for good (see id-allocator.js): remembered before every edit, because the edit may delete them, and
+   * after a restore, so undo/redo can never lower what was issued.
+   */
+  function rememberIds() {
+    const circuit = state.circuit;
+    allocatorFor(state).observe(circuit.components, circuit.junctions, circuit.wires);
+  }
+
   /** Every history write goes through here: it ends the open coalescing group, so a later grouped edit (wheel, held arrow) starts its own entry. */
   function recordHistory(entry) {
     closeEditGroup();
@@ -80,7 +90,9 @@ export function createEditorSession(deps) {
     closeEditGroup();
     resetProjectSession();
     if (saved.projectId) state.projectId = saved.projectId;
+    rememberIds(); // what the state being left behind used
     state.circuit = { ...saved.circuit, junctions: saved.circuit.junctions ?? [] };
+    rememberIds();
     state.settings = saved.settings;
     state.title = saved.title;
     state.subtitle = saved.subtitle;
@@ -110,6 +122,7 @@ export function createEditorSession(deps) {
   }
 
   function mutate(change, { history = true, auto = true, autosave = true } = {}) {
+    rememberIds();
     if (history) recordHistory(snapshot());
     change();
     dropDanglingPendingWire();
@@ -200,6 +213,7 @@ export function createEditorSession(deps) {
 
   /** Commit a finished drag: the pre-drag snapshot becomes one undo step. */
   function commitMove(before) {
+    rememberIds();
     recordHistory(before);
     bumpGeneration();
     markStale();

@@ -49,6 +49,44 @@ export function isTypingTarget(element, key = "", { modifier = false } = {}) {
   return (type === "range" || type === "radio") && CURSOR_KEYS.has(key);
 }
 
+/** How long after a Ctrl+C/X/V key press a native copy/cut/paste event still counts as belonging to it. */
+export const CLIPBOARD_EVENT_WINDOW_MS = 500;
+
+/**
+ * Coordinates the two ways one Ctrl+C / Ctrl+X / Ctrl+V press can be carried out: the browser's native copy/cut/paste event (carries the system
+ * clipboard without a permission prompt) and, when no such event comes, a key fallback that runs from a 0 ms timer. Every key press gets ONE token
+ * ({done, claim()}); the command that really does the work calls claim(), so whichever path runs first wins and the other becomes a no-op — in
+ * either order, even if the native event only arrives after the fallback timer fired. A key press belongs to at most ONE native event: the event
+ * that picks up its token detaches it, so a later native event (another paste, a menu paste) gets a token of its own.
+ */
+export function createClipboardShortcutGate({ now = () => Date.now(), setTimer = (callback) => setTimeout(callback, 0), clearTimer = (handle) => clearTimeout(handle) } = {}) {
+  let current = null; // { action, token, at, timer }
+  const makeToken = () => {
+    const token = { done: false, claim() { if (token.done) return false; token.done = true; return true; } };
+    return token;
+  };
+  const cancelTimer = (entry) => { if (entry?.timer != null) { clearTimer(entry.timer); entry.timer = null; } };
+  return {
+    /** A Ctrl+C/X/V key press: arm the fallback `run(action, token)`. A native event that follows cancels it and uses the same token. */
+    arm(action, run) {
+      cancelTimer(current);
+      const entry = { action, token: makeToken(), at: now(), timer: null };
+      entry.timer = setTimer(() => { entry.timer = null; run(action, entry.token); });
+      current = entry;
+      return entry.token;
+    },
+    /** A native copy/cut/paste event: the token of the key press it belongs to (its fallback is cancelled), else a fresh one. */
+    native(action) {
+      const entry = current;
+      current = null;
+      cancelTimer(entry);
+      return entry && entry.action === action && now() - entry.at <= CLIPBOARD_EVENT_WINDOW_MS ? entry.token : makeToken();
+    },
+    /** Forget the pending fallback (workspace switch, teardown). */
+    cancel() { cancelTimer(current); current = null; },
+  };
+}
+
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 
 export function shortcutFor(event, { typing = false, textSelection = false } = {}) {

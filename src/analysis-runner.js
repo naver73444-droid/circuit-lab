@@ -42,7 +42,9 @@ export function createRunState() {
  */
 export function createAnalysisRunner(deps) {
   const { state, elements, workspace, inputDrafts, scopeView, phasorView, mutate, currentConnections, bumpGeneration, removeProbe, renderCanvas, renderAll, setStatus, setTool, showCanvas,
-    phasorPanelVisible, commitPendingInputs, updateDraftNotice, openProbeContextMenu, measureView } = deps;
+    phasorPanelVisible, commitPendingInputs, updateDraftNotice, openProbeContextMenu, measureView, onStaleChange } = deps;
+  /** Anything drawn from the result (the current-flow overlay) must go the moment the result turns stale, not on the next canvas render. */
+  const staleChanged = () => { try { onStaleChange?.(); } catch { /* a failing observer must not break the run lifecycle */ } };
   const analysisWorkerClient = new AnalysisWorkerClient();
   let activeAnalysisJob = null;
   let seriesCache = null;
@@ -88,6 +90,7 @@ export function createAnalysisRunner(deps) {
     if (job.kind === "normal" && state.runState.status === "running") {
       state.runState = { ...state.runState, status: state.result ? "stale" : "not-run", error: null };
       if (state.result) state.stale = true;
+      staleChanged();
     }
     refreshInvalidatedPortPanel(job, state.port, renderPortPanel);
     updateAnalysisControls();
@@ -126,6 +129,7 @@ export function createAnalysisRunner(deps) {
     }
     elements["stale-badge"].classList.toggle("hidden", !(state.stale || state.runState.status === "stale"));
     if (state.stale || state.runState.status === "stale") setStatus("오래된 결과", "ready");
+    staleChanged();
   }
 
   function markPortStale() {
@@ -143,6 +147,7 @@ export function createAnalysisRunner(deps) {
     elements["csv-button"].disabled = true;
     setAutoHint("입력 완료 대기");
     updateDraftNotice();
+    staleChanged();
   }
 
   // One status chip is shown. Auto-refresh detail goes to the checkbox tooltip; a waiting reason replaces the chip text.

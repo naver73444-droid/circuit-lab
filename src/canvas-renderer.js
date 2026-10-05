@@ -150,7 +150,7 @@ export function createCanvasRenderer(deps) {
       : "";
     const connectionStatus = connection?.status ?? "solver-check";
     const badgeRotation = -Number(component.rotation ?? 0);
-    const connectionMarkup = connectionStatus !== "referenced" ? `<rect class="connection-halo status-${connectionStatus}" x="-47" y="-47" width="94" height="94" rx="3"/><g class="connection-badge status-${connectionStatus}" data-show-connection="${escapeHtml(component.id)}" role="button" tabindex="0" aria-label="${ref} 연결 상태 보기" transform="translate(-35 -34) rotate(${badgeRotation})"><title>${escapeHtml(connection?.label ?? "연결 상태 보기")} · 클릭하여 설명</title><circle r="11"/><text y="4">${escapeHtml(connection?.badge ?? "?")}</text></g>` : "";
+    const connectionMarkup = connectionStatus !== "referenced" ? `<rect class="connection-halo status-${escapeHtml(connectionStatus)}" x="-47" y="-47" width="94" height="94" rx="3"/><g class="connection-badge status-${escapeHtml(connectionStatus)}" data-show-connection="${escapeHtml(component.id)}" role="button" tabindex="0" aria-label="${ref} 연결 상태 보기" transform="translate(-35 -34) rotate(${badgeRotation})"><title>${escapeHtml(connection?.label ?? "연결 상태 보기")} · 클릭하여 설명</title><circle r="11"/><text y="4">${escapeHtml(connection?.badge ?? "?")}</text></g>` : "";
     // The delete badge belongs to a single selected part; with several selected the inspector offers the group actions.
     const deleteMarkup = selected && selectedKeys(state).size === 1 ? deleteButtonMarkup(component) : "";
     const upright = -Number(component.rotation ?? 0);
@@ -160,18 +160,24 @@ export function createCanvasRenderer(deps) {
     const valueY = vertical ? 12 : 35;
     const anchor = vertical ? "start" : "middle";
     const modeMarkup = ["V", "I"].includes(component.type) && !sourceDescriptor ? `<text class="source-mode-label" x="${labelX}" y="${valueY + 16}" style="text-anchor:${anchor}">${escapeHtml(mode)}</text>` : "";
-    const labels = `<g class="upright-labels" transform="rotate(${upright})"><text class="label" x="${labelX}" y="${labelY}" style="text-anchor:${anchor}">${ref}</text>${value ? `<text class="value-label" data-edit-prop="${editProp}" x="${labelX}" y="${valueY}" style="text-anchor:${anchor}">${value}</text>` : ""}${modeMarkup}</g>`;
-    return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${connectionStatus}" aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${labels}${deleteMarkup}</g>`;
+    const labels = `<g class="upright-labels" transform="rotate(${upright})"><text class="label" x="${labelX}" y="${labelY}" style="text-anchor:${anchor}">${ref}</text>${value ? `<text class="value-label" data-edit-prop="${escapeHtml(editProp)}" x="${labelX}" y="${valueY}" style="text-anchor:${anchor}">${value}</text>` : ""}${modeMarkup}</g>`;
+    return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${escapeHtml(connectionStatus)}" aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${labels}${deleteMarkup}</g>`;
   }
 
-  function endpointPosition(endpoint, componentById = new Map(state.circuit.components.map((component) => [component.id, component]))) {
+  /**
+   * Where a wire endpoint sits. Callers that resolve many endpoints pass the id lookups they built once (`componentById`, `junctionById`);
+   * a single lookup without them scans the circuit instead of building maps for one answer.
+   */
+  function endpointPosition(endpoint, componentById = null, junctionById = null) {
     if (endpoint?.junctionId !== undefined) {
-      const junction = (state.circuit.junctions ?? []).find((item) => item.id === endpoint.junctionId);
+      const junction = junctionById ? junctionById.get(endpoint.junctionId) : (state.circuit.junctions ?? []).find((item) => item.id === endpoint.junctionId);
       return junction ? { x: junction.x, y: junction.y } : null;
     }
-    const component = componentById.get(endpoint?.componentId);
+    const component = componentById ? componentById.get(endpoint?.componentId) : state.circuit.components.find((item) => item.id === endpoint?.componentId);
     return component ? pinPosition(component, endpoint.pin) : null;
   }
+
+  const junctionLookup = () => new Map((state.circuit.junctions ?? []).map((junction) => [junction.id, junction]));
 
   function wireRoute(wire, a, b) {
     return routeWirePoints(wire, a, b, circuitGeometryVersion(state.circuit));
@@ -195,7 +201,7 @@ export function createCanvasRenderer(deps) {
       const component = componentById.get(componentId);
       if (!component) continue;
       const position = pinPosition(component, Number(pin));
-      junctions.push(`<circle class="junction" data-jp="${escapeHtml(componentId)}:${pin}" cx="${position.x}" cy="${position.y}" r="5"/>`);
+      junctions.push(`<circle class="junction" data-jp="${escapeHtml(componentId)}:${escapeHtml(pin)}" cx="${position.x}" cy="${position.y}" r="5"/>`);
     }
     for (const junction of state.circuit.junctions ?? []) {
       const selected = isSelected(state, "junction", junction.id) ? " selected" : "";
@@ -205,7 +211,7 @@ export function createCanvasRenderer(deps) {
       junctions.push(`<g data-junction-id="${escapeHtml(junction.id)}"><circle class="junction-hit" cx="${junction.x}" cy="${junction.y}" r="5"/><circle class="junction${selected}${pending}${portP}${portN}" cx="${junction.x}" cy="${junction.y}" r="6"/></g>`);
     }
     if (state.pendingPin && state.pointer) {
-      const start = endpointPosition(state.pendingPin, componentById);
+      const start = endpointPosition(state.pendingPin, componentById, junctionLookup());
       if (start) {
         const fixed = normalizePoints([start, ...state.pendingWaypoints]);
         if (fixed.length > 1) junctions.push(`<path class="wire-preview-fixed" d="${polylinePath(fixed)}"/>`);
@@ -225,9 +231,10 @@ export function createCanvasRenderer(deps) {
     let connection, connectionError = false;
     try { connection = currentConnections(); }
     catch { connectionError = true; connection = { byComponent: {}, counts: {} }; }
+    const junctionById = junctionLookup();
     elements["wire-layer"].innerHTML = state.circuit.wires.map((wire) => {
-      const a = endpointPosition(wire.a, componentById);
-      const b = endpointPosition(wire.b, componentById);
+      const a = endpointPosition(wire.a, componentById, junctionById);
+      const b = endpointPosition(wire.b, componentById, junctionById);
       if (!a || !b) return "";
       const points = wireRoute(wire, a, b);
       const path = polylinePath(points);
@@ -271,6 +278,7 @@ export function createCanvasRenderer(deps) {
   function updateMoved({ components: componentIds = [], junctions: junctionIds = [] }) {
     const movedComponents = new Set(componentIds), movedJunctions = new Set(junctionIds);
     const componentById = new Map(state.circuit.components.map((component) => [component.id, component]));
+    const junctionById = junctionLookup();
     for (const id of movedComponents) {
       const component = componentById.get(id);
       const group = elements["component-layer"].querySelector(`.component[data-id="${CSS.escape(id)}"]`);
@@ -285,7 +293,7 @@ export function createCanvasRenderer(deps) {
       }
     }
     for (const id of movedJunctions) {
-      const junction = (state.circuit.junctions ?? []).find((item) => item.id === id);
+      const junction = junctionById.get(id);
       const group = elements["overlay-layer"].querySelector(`[data-junction-id="${CSS.escape(id)}"]`);
       if (!junction || !group) return false;
       for (const circle of group.querySelectorAll("circle")) { circle.setAttribute("cx", junction.x); circle.setAttribute("cy", junction.y); }
@@ -294,8 +302,8 @@ export function createCanvasRenderer(deps) {
     for (const wire of state.circuit.wires) {
       if (!touches(wire.a) && !touches(wire.b)) continue;
       const group = wireGroup(wire.id);
-      const a = endpointPosition(wire.a, componentById);
-      const b = endpointPosition(wire.b, componentById);
+      const a = endpointPosition(wire.a, componentById, junctionById);
+      const b = endpointPosition(wire.b, componentById, junctionById);
       if (!group || !a || !b) return false;
       const path = polylinePath(wireRoute(wire, a, b));
       for (const line of group.querySelectorAll("path")) line.setAttribute("d", path);
@@ -356,10 +364,11 @@ export function createCanvasRenderer(deps) {
   /** Route points of every drawable wire, by wire id (used by the current-flow overlay). */
   function wireRoutes() {
     const componentById = new Map(state.circuit.components.map((component) => [component.id, component]));
+    const junctionById = junctionLookup();
     const routes = new Map();
     for (const wire of state.circuit.wires) {
-      const a = endpointPosition(wire.a, componentById);
-      const b = endpointPosition(wire.b, componentById);
+      const a = endpointPosition(wire.a, componentById, junctionById);
+      const b = endpointPosition(wire.b, componentById, junctionById);
       if (a && b) routes.set(wire.id, wireRoute(wire, a, b));
     }
     return routes;

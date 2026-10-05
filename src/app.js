@@ -89,6 +89,7 @@ const analysis = createAnalysisRunner({
   updateDraftNotice: (...args) => inspector.updateDraftNotice(...args),
   openProbeContextMenu: (...args) => input.openProbeContextMenu(...args),
   measureView,
+  onStaleChange: () => flow.refresh(),
 });
 const inspector = createInspector({
   state, elements, workspace, inputDrafts, phasorView, renderAll, setStatus, showInspector, isCircuitUiActive,
@@ -143,6 +144,7 @@ function resetProjectSession() {
   analysis.updateAnalysisControls();
   input.closeProbeContextMenu();
   scopeView.resetForProject();
+  flow.refresh();
   setStatus("해석 준비", "ready");
 }
 

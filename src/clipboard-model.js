@@ -87,10 +87,32 @@ function cleanEndpoint(end) {
 const endpointText = (end) => end.junctionId !== undefined ? `J:${end.junctionId}` : `P:${end.componentId}:${end.pin}`;
 
 /**
+ * The one wire normalisation every paste path goes through (the internal clipboard and text from the system clipboard): a wire from a
+ * pin to itself is dropped, and so is a wire that is an EXACT duplicate of an earlier one — the same two ends (either way round) AND the
+ * same bend points (read from the other end when the ends are swapped). Parallel wires between the same ends that take different routes
+ * are separate drawings and stay. Returns new wire objects only for what it keeps (the originals are not modified).
+ */
+export function normalizeClipboardWires(wires) {
+  const kept = [], seen = new Set();
+  for (const wire of wires ?? []) {
+    const keyA = endpointText(wire.a), keyB = endpointText(wire.b);
+    if (keyA === keyB) continue;
+    const points = Array.isArray(wire.waypoints) ? wire.waypoints : [];
+    const forward = keyA < keyB;
+    const route = (forward ? points : [...points].reverse()).map((point) => `${point.x},${point.y}`).join(";");
+    const signature = `${forward ? keyA : keyB}|${forward ? keyB : keyA}|${route}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    kept.push(wire);
+  }
+  return kept;
+}
+
+/**
  * Shape check and normalisation for text that came from the system clipboard. Returns a NEW clipboard object holding only the known
  * fields (anything else is dropped) or null (never throws). Coordinates must be finite and within COORDINATE_LIMIT, rotations are turned
  * into 0/90/180/270, props keep only string/number/boolean values, wires must connect existing pins/junctions of the fragment, and
- * self-loops and duplicate wires are removed.
+ * self-loops and exact duplicate wires (same ends AND same bend points) are removed; parallel wires on different routes are kept.
  */
 export function parseClipboardText(text) {
   if (typeof text !== "string" || text.length > MAX_CLIPBOARD_TEXT || !text.includes(CLIPBOARD_FORMAT)) return null;
@@ -118,7 +140,7 @@ export function parseClipboardText(text) {
     junctionIds.add(junction.id);
   }
   const known = (end) => end.junctionId !== undefined ? junctionIds.has(end.junctionId) : typeById.has(end.componentId) && end.pin < pinCount(typeById.get(end.componentId));
-  const seen = new Set();
+  const parsedWires = [];
   for (const wire of wires) {
     if (!plainObject(wire)) return null;
     const a = cleanEndpoint(wire.a), b = cleanEndpoint(wire.b);
@@ -128,13 +150,9 @@ export function parseClipboardText(text) {
       if (!Array.isArray(wire.waypoints) || wire.waypoints.length > MAX_WAYPOINTS || !wire.waypoints.every((point) => plainObject(point) && coordinate(point.x) && coordinate(point.y))) return null;
       waypoints = wire.waypoints.map((point) => ({ x: point.x, y: point.y }));
     }
-    const keyA = endpointText(a), keyB = endpointText(b);
-    if (keyA === keyB) continue; // a wire from a pin to itself
-    const pair = keyA < keyB ? `${keyA}|${keyB}` : `${keyB}|${keyA}`;
-    if (seen.has(pair)) continue; // the same two ends are already wired
-    seen.add(pair);
-    cleanWires.push({ id: typeof wire.id === "string" && wire.id.length <= 64 && !FORBIDDEN_KEYS.has(wire.id) ? wire.id : `W${cleanWires.length + 1}`, a, b, ...(waypoints ? { waypoints } : {}) });
+    parsedWires.push({ id: typeof wire.id === "string" && wire.id.length <= 64 && !FORBIDDEN_KEYS.has(wire.id) ? wire.id : `W${parsedWires.length + 1}`, a, b, ...(waypoints ? { waypoints } : {}) });
   }
+  cleanWires.push(...normalizeClipboardWires(parsedWires));
   if (!cleanComponents.length && !cleanJunctions.length) return null;
   const source = typeof payload.source === "string" && payload.source.length <= 64 ? payload.source : "";
   return { format: CLIPBOARD_FORMAT, version: CLIPBOARD_VERSION, ...(source ? { source } : {}), components: cleanComponents, junctions: cleanJunctions, wires: cleanWires };
@@ -144,15 +162,31 @@ export function parseClipboardText(text) {
  * Instantiate the clipboard into `circuit` (unchanged): {components, wires, junctions, idMap, junctionMap, clearedControls, offset}.
  * `pasteIndex` ≥ 0 scales the shift. A controlled source whose target is outside the fragment keeps its reference only when `sameProject`
  * is true and the target (a V source or current sensor) exists in `circuit`; otherwise the reference is cleared.
+ * `allocator` (id-allocator.js) gives the pasted items ids that were never used in this project.
  */
-export function pasteClipboard(circuit, clipboard, pasteIndex = 1, { sameProject = true } = {}) {
+export function pasteClipboard(circuit, clipboard, pasteIndex = 1, { sameProject = true, allocator = null } = {}) {
   const offset = PASTE_STEP * pasteIndex;
+  // The internal clipboard holds wires as they are in the circuit; apply the same normalisation as for parsed text, so the result never depends on the paste path.
+  clipboard = { ...clipboard, wires: normalizeClipboardWires(clipboard.wires) };
   const resolveControl = (elementId) => sameProject && circuit.components.some((component) => component.id === elementId && ["V", "CURRENT_SENSOR"].includes(component.type));
-  return { ...remapFragment(circuit, clipboard, offset, { resolveControl }), offset };
+  return { ...remapFragment(circuit, clipboard, offset, { resolveControl, allocator }), offset };
 }
 
 /** How many pasted current-controlled sources have no (valid) control target and need one chosen. */
 export const controlsNeedingTarget = (pasted) => pasted.components.filter((component) => ["CCCS", "CCVS"].includes(component.type) && !component.control).length;
+
+/**
+ * Would adding these parts, junctions and wires push the circuit past the editing limits? The message, or null when it fits.
+ * Paste and duplicate (Ctrl+D) share this pre-check, so neither can build a circuit that the validators reject afterwards.
+ */
+export function additionLimitReason(circuit, added) {
+  if (circuit.components.length + (added.components?.length ?? 0) > CIRCUIT_LIMITS.components
+    || circuit.wires.length + (added.wires?.length ?? 0) > CIRCUIT_LIMITS.wires
+    || (circuit.junctions?.length ?? 0) + (added.junctions?.length ?? 0) > CIRCUIT_LIMITS.junctions) {
+    return `교육용 편집 한도(부품 ${CIRCUIT_LIMITS.components}, 배선 ${CIRCUIT_LIMITS.wires}, 접속점 ${CIRCUIT_LIMITS.junctions})를 넘습니다`;
+  }
+  return null;
+}
 
 /**
  * Check only what a paste adds: the pasted parts, junctions and wires on their own (plus stand-ins for the controlled sources' targets), and
@@ -160,11 +194,8 @@ export const controlsNeedingTarget = (pasted) => pasted.components.filter((compo
  * Returns null when fine, otherwise the message.
  */
 export function pasteRejection(circuit, pasted) {
-  if (circuit.components.length + pasted.components.length > CIRCUIT_LIMITS.components
-    || circuit.wires.length + pasted.wires.length > CIRCUIT_LIMITS.wires
-    || (circuit.junctions?.length ?? 0) + pasted.junctions.length > CIRCUIT_LIMITS.junctions) {
-    return `교육용 편집 한도(부품 ${CIRCUIT_LIMITS.components}, 배선 ${CIRCUIT_LIMITS.wires}, 접속점 ${CIRCUIT_LIMITS.junctions})를 넘습니다`;
-  }
+  const limit = additionLimitReason(circuit, pasted);
+  if (limit) return limit;
   const stubs = new Map();
   const stub = (id, type) => { if (!stubs.has(id)) stubs.set(id, { id, type, x: 0, y: 0, props: {} }); return id; };
   const pastedIds = new Set(pasted.components.map((component) => component.id));

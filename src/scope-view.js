@@ -322,7 +322,7 @@ export class ScopeView {
       ...(this.result.analysis === "dc" ? [] : [{ key: "x", label: this.logarithmic ? "주파수" : "시간", axis: this.xAxis, unit: this.logarithmic ? "dec" : "s" }]),
       ...[...this.axes].map(([key, axis]) => ({ key, label: LABELS[key] ?? key, axis, unit: key })),
     ];
-    this.controls.innerHTML = items.map(({ key, label, axis, unit }) => `<div class="scale-control" data-scale-control="${escapeHtml(key)}" title="휠로 한 칸당 눈금을 조절합니다"><span>${label}<small>${axis.automatic ? "자동" : "고정"}</small></span><div><button type="button" data-scale-axis="${escapeHtml(key)}" data-scale-step="-1" aria-label="${label} 눈금 값 줄이기">−</button><output>${engineering(axis.division, unit)}/div</output><button type="button" data-scale-axis="${escapeHtml(key)}" data-scale-step="1" aria-label="${label} 눈금 값 늘리기">+</button></div></div>`).join("");
+    this.controls.innerHTML = items.map(({ key, label: rawLabel, axis, unit }) => { const label = escapeHtml(rawLabel); return `<div class="scale-control" data-scale-control="${escapeHtml(key)}" title="휠로 한 칸당 눈금을 조절합니다"><span>${label}<small>${axis.automatic ? "자동" : "고정"}</small></span><div><button type="button" data-scale-axis="${escapeHtml(key)}" data-scale-step="-1" aria-label="${label} 눈금 값 줄이기">−</button><output>${engineering(axis.division, unit)}/div</output><button type="button" data-scale-axis="${escapeHtml(key)}" data-scale-step="1" aria-label="${label} 눈금 값 늘리기">+</button></div></div>`; }).join("");
   }
 
   render() {

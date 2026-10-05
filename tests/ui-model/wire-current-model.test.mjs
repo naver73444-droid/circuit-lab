@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { simulate, componentDefaults } from "../../src/circuit-engine.js";
 import { examples } from "../../src/examples.js";
-import { flowSampleIndex, flowSpeedClass, peakComponentCurrent, pinCurrentsInto, wireCurrents } from "../../src/wire-current-model.js";
+import { analyzeWireNets, flowSampleIndex, flowSpeedClass, peakComponentCurrent, pinCurrentsInto, wireCurrents } from "../../src/wire-current-model.js";
 
 const example = (id) => examples.find((item) => item.id === id);
 const part = (id, type, props = {}) => ({ id, type, x: 0, y: 0, rotation: 0, props: { ...componentDefaults(type, 1), ...props } });
@@ -155,4 +155,52 @@ test("the reference current is the peak over the whole run, so a decaying transi
   const early = wireCurrents({ circuit, componentCurrents: result.points[1].componentCurrents });
   assert.equal(flowSpeedClass(Math.abs(early.byWire.W2.current), Math.max(early.maxAbs, peak)), 4, "start: fastest class");
   assert.equal(peakComponentCurrent(null), 0);
+});
+
+test("two GND parts are one node: a wire between them lies on a cycle through that node and is undetermined", () => {
+  // 1 V source -> 1 kOhm; the source's - side goes to G1, the resistor's return to G2, and Wg joins G1 to G2.
+  const circuit = {
+    components: [part("V1", "V", { dc: "1" }), part("R1", "R", { value: "1k" }), part("G1", "GND"), part("G2", "GND")],
+    junctions: [],
+    wires: [wire("W1", "V1:0", "R1:0"), wire("Wr", "R1:1", "G2:0"), wire("Wv", "V1:1", "G1:0"), wire("Wg", "G1:0", "G2:0")],
+  };
+  const result = simulate(circuit, { analysis: "dc" });
+  const { byWire } = wireCurrents({ circuit, componentCurrents: result.points[0].componentCurrents });
+  assert.deepEqual(byWire.Wg, { current: null, state: "loop" }, "the engine ties G1 and G2 together, so Wg is parallel to that implicit link");
+  close(byWire.W1.current, 1e-3, "W1");
+  close(byWire.Wr.current, 1e-3, "Wr still follows the part current");
+  close(byWire.Wv.current, -1e-3, "Wv");
+});
+
+test("two GND parts without a wire between them: both returns are determined, the shared node absorbs the imbalance", () => {
+  const circuit = {
+    components: [part("V1", "V", { dc: "1" }), part("R1", "R", { value: "1k" }), part("G1", "GND"), part("G2", "GND")],
+    junctions: [],
+    wires: [wire("W1", "V1:0", "R1:0"), wire("Wr", "R1:1", "G2:0"), wire("Wv", "V1:1", "G1:0")],
+  };
+  const result = simulate(circuit, { analysis: "dc" });
+  const { byWire } = wireCurrents({ circuit, componentCurrents: result.points[0].componentCurrents });
+  for (const id of ["W1", "Wr", "Wv"]) assert.equal(byWire[id].state, "flow");
+  close(byWire.Wv.current, -1e-3, "Wv");
+});
+
+test("a path that leaves one GND and re-enters another is a cycle through the implicit link", () => {
+  const circuit = {
+    components: [part("G1", "GND"), part("G2", "GND")],
+    junctions: [{ id: "J1", x: 0, y: 0 }],
+    wires: [wire("A", "G1:0", "J1"), wire("B", "J1", "G2:0")],
+  };
+  const { byWire } = wireCurrents({ circuit, componentCurrents: {} });
+  assert.deepEqual(byWire.A, { current: null, state: "loop" });
+  assert.deepEqual(byWire.B, { current: null, state: "loop" });
+});
+
+test("a precomputed net analysis gives the same answer and can be reused for every sample", () => {
+  const { circuit, settings } = example("rc-charge");
+  const result = simulate(circuit, { analysis: "transient", ...settings });
+  const nets = analyzeWireNets(circuit);
+  for (const index of [1, 5, result.points.length - 1]) {
+    const componentCurrents = result.points[index].componentCurrents;
+    assert.deepEqual(wireCurrents({ circuit, componentCurrents, nets }), wireCurrents({ circuit, componentCurrents }));
+  }
 });

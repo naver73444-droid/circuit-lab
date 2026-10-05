@@ -1860,4 +1860,97 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal(now.pendingPin, null, "releasing outside the canvas cancels the wire (empty canvas would keep it pending)");
     assert.deepEqual(await counts(), base);
   });
+  // ---- review round 2: current-flow overlay lifecycle, never-reused ids, one paste per Ctrl+V -------------------------------------------------------------
+
+  const flowState = () => ev(`${L}.getFlow()`);
+  const flowMarkup = () => ev(`document.getElementById("flow-layer").innerHTML`);
+
+  test("current flow: the overlay clears the moment an edit makes the result stale, and a render in the middle of a move drag keeps it hidden", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await runAnalysis("dc");
+    await ev(`${L}.setFlow(true)`);
+    assert.equal((await flowState()).status, "flow");
+    assert.ok((await flowMarkup()).includes("flow-dash"), "dashes are drawn for the fresh result");
+    // Typing a new value (a draft, no canvas render follows) already marks the result stale: the animation must stop right away.
+    await selectPart("R1");
+    await click("#inspector-tab");
+    await typeInto(VALUE_INPUT, "3k");
+    assert.equal((await state()).stale, true, "the draft made the result stale");
+    assert.equal((await flowState()).status, "stale");
+    assert.equal(await flowMarkup(), "", "no stale arrows keep animating");
+    await runAnalysis("dc");
+    assert.equal((await flowState()).status, "flow", "a fresh result draws again");
+
+    // A render that arrives while a part is being carried (here a finished analysis) must not bring the overlay back under the moving wires.
+    await click('[data-tool="select"]');
+    const grab = await partPoint("R2");
+    await dragBetween(grab, { x: grab.x + 60, y: grab.y }, {
+      beforeRelease: async () => {
+        assert.notEqual((await state()).pointerOwnerId, null, "the drag is in progress");
+        assert.equal((await flowState()).suspended, true, "hidden while dragging");
+        await ev(`${L}.runAnalysis()`);
+        await ev(`${L}.forceCanvasRender()`);
+        await settle();
+        assert.equal((await ev(`${L}.getState().runState.status`)), "success", "the analysis finished in the middle of the drag");
+        assert.equal((await flowState()).suspended, true, "the render of the finished analysis did not un-suspend the overlay");
+      },
+    });
+    assert.equal((await flowState()).suspended, false, "the overlay is allowed again after the drag");
+    assert.equal((await flowState()).status, "stale", "and the moved circuit's old result is not drawn");
+  });
+
+  test("ids are never reused: a part placed after deleting R1 gets R2, and undo does not bring the number back down", async () => {
+    await navigate("/");
+    await autoUpdateOff();
+    const place = async () => {
+      await sleep(300); // a click right after a keyboard edit or a drag release is still inside the click-suppression window
+      await click('.palette-item[data-type="R"]');
+      const empty = await bgPoint();
+      await clickAt(empty.x, empty.y); await settle();
+      await click('[data-tool="select"]');
+    };
+    await place();
+    assert.deepEqual((await state()).circuit.components.map((item) => item.id), ["R1"]);
+    await selectPart("R1");
+    await press("Delete", "Delete", 46);
+    assert.equal((await state()).circuit.components.length, 0);
+    await place();
+    const second = (await state()).circuit.components;
+    assert.deepEqual(second.map((item) => item.id), ["R2"], "R1 is not handed out again");
+    assert.equal(second[0].props.ref, "R2");
+    await press("z", "KeyZ", 90, 2); // undo the second placement
+    await place();
+    assert.deepEqual((await state()).circuit.components.map((item) => item.id), ["R3"], "an undone R2 stays used");
+  });
+
+  test("one Ctrl+V pastes once whichever comes first, the native paste event or the 0 ms key fallback", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    const base = (await counts()).components;
+    await selectPart("R1");
+    await ev(`document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "c", code: "KeyC", ctrlKey: true, bubbles: true, cancelable: true }))`);
+    await sleep(80);
+    // Order A: the native event arrives after the fallback timer already pasted from the internal clipboard.
+    const text = clipPayload([resistor("R1")]);
+    await ev(`document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "v", code: "KeyV", ctrlKey: true, bubbles: true, cancelable: true }))`);
+    await sleep(60);
+    assert.equal((await counts()).components, base + 1, "the key fallback pasted once");
+    await syntheticPaste(text);
+    assert.equal((await counts()).components, base + 1, "the late native paste of the same key press does nothing");
+    // Order B: the native event is raised right after the key press, before the fallback timer.
+    await sleep(600);
+    await ev(`(() => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "v", code: "KeyV", ctrlKey: true, bubbles: true, cancelable: true }));
+      const data = new DataTransfer(); data.setData("text/plain", ${JSON.stringify(text)});
+      document.body.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    })()`);
+    await sleep(80); await settle();
+    assert.equal((await counts()).components, base + 2, "native first: exactly one more part");
+    // A menu paste long after any key press is a paste of its own.
+    await sleep(600);
+    await syntheticPaste(text);
+    assert.equal((await counts()).components, base + 3);
+  });
+
 });
