@@ -13,7 +13,8 @@ export const SWEEP_MAX_COUNT = 10;
 export const SWEEP_COLORS = Object.freeze(["#80bfff", "#f5bc79", "#c5a2f2", "#8ed4ad", "#ff969e", "#d7d783", "#83d2db", "#eea7d0", "#b0b8c4", "#a3e07a"]);
 
 const UNIT_BY_TYPE = { R: "Ω", C: "F", L: "H", V: "V", I: "A" };
-const POSITIVE_TYPES = new Set(["R", "C", "L"]);
+// R/C/L 값과 OP AMP 개방루프 이득(스윕 가능한 유일한 속성, 엔진도 0보다 커야 함)은 양수만 허용
+const POSITIVE_TYPES = new Set(["R", "C", "L", "OPAMP"]);
 const PREFIXES = [[-15, "f"], [-12, "p"], [-9, "n"], [-6, "u"], [-3, "m"], [0, ""], [3, "k"], [6, "meg"], [9, "g"], [12, "t"]];
 const PREFIX_BY_EXPONENT = new Map(PREFIXES);
 
@@ -77,17 +78,25 @@ export function planSweep(baseValue, spec = {}, options = {}) {
     }
     if (name === "시작 값") from = value; else to = value;
   }
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return { ok: false, reason: "시작·끝 값이 너무 커서 계산할 수 없습니다." };
   if (POSITIVE_TYPES.has(type) && !(from > 0 && to > 0)) return { ok: false, reason: `${ref || type} 값은 0보다 커야 합니다.` };
   if (scale === "log" && !(from > 0 && to > 0)) return { ok: false, reason: "로그 스윕은 0보다 큰 값만 쓸 수 있습니다. 선형 스윕을 사용하세요." };
   if (count > 1 && from === to) return { ok: false, reason: "시작 값과 끝 값이 같아 여러 점을 만들 수 없습니다." };
 
+  // 로그: log10 공간에서 보간(범위가 1e-300…1e300이어도 to/from 오버플로 없음), 선형: (1−t)·from + t·to(to−from 오버플로 없음).
+  // 양 끝점은 원래 값으로 고정한다.
+  const lowLog = scale === "log" ? Math.log10(from) : 0;
+  const highLog = scale === "log" ? Math.log10(to) : 0;
   const raw = Array.from({ length: count }, (_, i) => {
-    if (count === 1) return from;
+    if (count === 1 || i === 0) return from;
+    if (i === count - 1) return to;
     const t = i / (count - 1);
-    return scale === "log" ? from * (to / from) ** t : from + (to - from) * t;
+    return scale === "log" ? 10 ** ((1 - t) * lowLog + t * highLog) : (1 - t) * from + t * to;
   });
+  if (!raw.every(Number.isFinite)) return { ok: false, reason: "스윕 값을 계산할 수 없습니다(범위가 너무 큼)." };
   // 서로 다른 값 문자열이 되도록 유효숫자를 늘려 가며 만든다.
   let texts = null;
+  let textDigits = 3;
   for (let digits = 3; digits <= 12; digits += 1) {
     const candidate = raw.map((value) => formatSIValue(value, digits));
     const parsed = candidate.map((text) => parseNumber(text, "스윕 값"));
@@ -96,7 +105,7 @@ export function planSweep(baseValue, spec = {}, options = {}) {
     const distinct = new Set(candidate).size === candidate.length;
     // 정밀도가 충분한지(목표값과 1e-3 이내) + 구분 가능한지
     const accurate = values.every((value, i) => raw[i] === 0 ? value === 0 : Math.abs(value - raw[i]) <= Math.abs(raw[i]) * 1e-3);
-    if (distinct && accurate) { texts = candidate; break; }
+    if (distinct && accurate) { texts = candidate; textDigits = digits; break; }
   }
   if (!texts) return { ok: false, reason: "스윕 값을 서로 구분되는 값으로 만들 수 없습니다." };
   const values = texts.map((text, index) => {
@@ -105,7 +114,7 @@ export function planSweep(baseValue, spec = {}, options = {}) {
       index,
       value,
       text,
-      label: `${ref ? `${ref} = ` : ""}${engineering(value, unit)}`,
+      label: `${ref ? `${ref} = ` : ""}${engineering(value, unit, Math.max(4, textDigits))}`, // 값 문자열이 구분되는 유효숫자만큼 표시해 라벨도 구분
       isBase: base !== null && Math.abs(value - base) <= Math.abs(base) * 1e-9,
     };
   });
@@ -163,6 +172,9 @@ export function buildSweepCircuits(circuit, componentId, key, plan) {
   return { ok: true, entries };
 }
 
+/** 자기 속성만 읽는다("toString" 같은 상속 키가 함수로 새어 나오지 않게). */
+const own = (object, key) => (object !== null && typeof object === "object" && Object.hasOwn(object, key) ? object[key] : undefined);
+
 function unwrapResult(entry) {
   if (!entry) return { error: "해석 결과가 없습니다." };
   if (entry.ok === false) return { error: entry.reason ?? entry.error?.message ?? "해석에 실패했습니다." };
@@ -175,13 +187,15 @@ function unwrapResult(entry) {
 function rawSeries(result, probe) {
   if (probe.kind === "voltage") {
     const node = probe.junctionId !== undefined
-      ? result.topology?.nodeIdByJunction?.[probe.junctionId]
-      : result.topology?.nodeIdByPin?.[`${probe.componentId}:${probe.pin}`];
-    if (node === undefined) return { error: "프로브 노드가 이 결과에 없습니다." };
-    return { raw: result.points.map((point) => point.nodeVoltages[node]), baseUnit: "V" };
+      ? own(result.topology?.nodeIdByJunction, probe.junctionId)
+      : own(result.topology?.nodeIdByPin, `${probe.componentId}:${probe.pin}`);
+    if (!Number.isInteger(node)) return { error: "프로브 노드가 이 결과에 없습니다." };
+    const raw = result.points.map((point) => own(point?.nodeVoltages, node));
+    if (raw.some((value) => value === undefined)) return { error: "프로브 노드 전압이 이 결과에 없습니다." };
+    return { raw, baseUnit: "V" };
   }
   if (probe.kind === "current") {
-    const raw = result.points.map((point) => point.componentCurrents[probe.componentId]);
+    const raw = result.points.map((point) => own(point?.componentCurrents, probe.componentId));
     if (raw.some((value) => value === undefined)) return { error: "프로브 부품 전류가 이 결과에 없습니다." };
     return { raw, baseUnit: "A" };
   }

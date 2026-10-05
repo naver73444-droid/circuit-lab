@@ -9,6 +9,10 @@ import { deserializeProject, serializeProject } from "./project-format.js";
 export const SHARE_PARAM = "p";
 export const SHARE_MAX_DECODED_BYTES = 200 * 1024;
 export const SHARE_MAX_URL_CHARS = 8000;
+/** 해시(# 뒤) 전체 길이 상한. 이보다 길면 분할·디코딩 없이 거부한다. */
+export const SHARE_MAX_HASH_CHARS = 64 * 1024;
+/** 압축 해제기에 한 번에 넣는 입력 조각 크기(압축 폭탄이 한 번에 부풀 수 있는 양을 제한). */
+export const SHARE_INFLATE_SLICE_BYTES = 4096;
 export const SHARE_TOO_LARGE_REASON = "너무 커서 링크로 공유할 수 없습니다. 파일로 저장하세요.";
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -63,18 +67,51 @@ async function deflateRaw(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-/** 해제 크기가 limit를 넘으면 즉시 중단(압축 폭탄 방지). */
+/**
+ * 압축을 풀되, 입력을 작은 조각(SHARE_INFLATE_SLICE_BYTES)으로 나눠 넣고 조각마다 누적 출력 크기를 확인한다.
+ * 출력이 limit를 넘으면 다음 조각을 넣지 않고 즉시 중단(압축 폭탄 방지)하며 null을 돌려준다.
+ * 손상된 데이터는 throw.
+ */
 async function inflateRaw(bytes, limit) {
-  const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+  const stream = new DecompressionStream("deflate-raw");
+  const writer = stream.writable.getWriter();
+  const reader = stream.readable.getReader();
   const chunks = [];
   let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.length;
-    if (total > limit) { try { await reader.cancel(); } catch { /* ignore */ } return null; }
-    chunks.push(value);
+  let exceeded = false;
+  let readError = null;
+  const pump = (async () => {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        total += value.length;
+        if (total > limit) {
+          exceeded = true;
+          writer.abort(new Error("limit")).catch(() => {}); // 막혀 있는 write도 풀어 준다
+          try { await reader.cancel(); } catch { /* ignore */ }
+          return;
+        }
+        chunks.push(value);
+      }
+    } catch (error) {
+      readError = error;
+    }
+  })();
+  let writeError = null;
+  try {
+    for (let offset = 0; offset < bytes.length && !exceeded; offset += SHARE_INFLATE_SLICE_BYTES) {
+      await writer.write(bytes.subarray(offset, offset + SHARE_INFLATE_SLICE_BYTES));
+      await Promise.resolve(); // 읽기 쪽이 방금 나온 출력을 집계할 기회를 준다
+      await Promise.resolve();
+    }
+    if (!exceeded) await writer.close();
+  } catch (error) {
+    writeError = error;
   }
+  await pump;
+  if (exceeded) return null;
+  if (writeError || readError) throw writeError ?? readError;
   const out = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
@@ -100,6 +137,11 @@ export async function encodeProjectToHash(project, options = {}) {
   } catch (error) {
     return { ok: false, reason: `프로젝트를 직렬화할 수 없습니다: ${error?.message ?? error}` };
   }
+  try {
+    deserializeProject(json); // 복원할 수 없는 입력은 링크로 만들지 않는다
+  } catch (error) {
+    return { ok: false, reason: `복원할 수 없는 프로젝트라 링크로 공유할 수 없습니다: ${error?.message ?? error}` };
+  }
   const raw = new TextEncoder().encode(json);
   if (raw.length > maxDecodedBytes) return { ok: false, reason: SHARE_TOO_LARGE_REASON };
   const plain = `#${SHARE_PARAM}=j.${bytesToBase64Url(raw)}`;
@@ -121,19 +163,29 @@ export function buildShareUrl(baseHref, hash) {
   return `${String(baseHref).split("#")[0]}${hash}`;
 }
 
-function extractPayload(input) {
-  if (typeof input !== "string") return null;
+/**
+ * 해시(또는 전체 URL)에서 p= 값을 찾는다. 분할(split) 없이 '&' 위치만 훑는다.
+ * 반환: {payload:string|null, tooLarge:boolean}. 해시 길이가 maxHashChars를 넘으면 스캔 전에 tooLarge.
+ */
+function extractPayload(input, maxHashChars = SHARE_MAX_HASH_CHARS) {
+  if (typeof input !== "string") return { payload: null, tooLarge: false };
   const hashIndex = input.indexOf("#");
-  const fragment = hashIndex >= 0 ? input.slice(hashIndex + 1) : input;
-  for (const part of fragment.split("&")) {
-    if (part.startsWith(`${SHARE_PARAM}=`)) return part.slice(SHARE_PARAM.length + 1);
+  const start = hashIndex >= 0 ? hashIndex + 1 : 0;
+  if (input.length - start > maxHashChars) return { payload: null, tooLarge: true };
+  const prefix = `${SHARE_PARAM}=`;
+  let from = start;
+  while (from <= input.length) {
+    let end = input.indexOf("&", from);
+    if (end < 0) end = input.length;
+    if (input.startsWith(prefix, from)) return { payload: input.slice(from + prefix.length, end), tooLarge: false };
+    from = end + 1;
   }
-  return null;
+  return { payload: null, tooLarge: false };
 }
 
-/** 해시/URL에 공유 데이터가 들어 있는지(검증 없이). */
+/** 해시/URL에 공유 데이터가 들어 있는지(검증 없이). 해시가 SHARE_MAX_HASH_CHARS를 넘으면 false. */
 export function hasShareHash(input) {
-  const payload = extractPayload(input);
+  const { payload } = extractPayload(input);
   return payload !== null && payload.length > 0;
 }
 
@@ -143,8 +195,9 @@ export function hasShareHash(input) {
  * 실패: { ok:false, reason }
  */
 export async function decodeProjectFromHash(input, options = {}) {
-  const { maxDecodedBytes = SHARE_MAX_DECODED_BYTES, fallbackSettings = {} } = options;
-  const payload = extractPayload(input);
+  const { maxDecodedBytes = SHARE_MAX_DECODED_BYTES, fallbackSettings = {}, maxHashChars = SHARE_MAX_HASH_CHARS } = options;
+  const { payload, tooLarge } = extractPayload(input, maxHashChars);
+  if (tooLarge) return { ok: false, reason: SHARE_TOO_LARGE_REASON };
   if (payload === null || payload.length === 0) return { ok: false, reason: "공유 링크에 프로젝트 데이터가 없습니다." };
   const method = payload.slice(0, 2);
   if (method !== "z." && method !== "j.") return { ok: false, reason: "지원하지 않는 공유 링크 형식입니다." };

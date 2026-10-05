@@ -138,3 +138,78 @@ test("직렬화할 수 없는 프로젝트는 ok:false", async () => {
   assert.equal(result.ok, false);
   assert.match(result.reason, /직렬화/);
 });
+
+// ---- 리뷰 회귀 테스트 ----
+test("리뷰1: 압축 폭탄은 4 KB 입력 조각 단위로 넣다가 한도 초과 즉시 중단(전체 입력을 한 번에 넣지 않음)", async () => {
+  const Original = globalThis.DecompressionStream;
+  const writes = [];
+  globalThis.DecompressionStream = class SpyDecompressionStream {
+    constructor(format) {
+      const inner = new Original(format);
+      const innerWriter = inner.writable.getWriter();
+      this.readable = inner.readable;
+      this.writable = new WritableStream({
+        write(chunk) { writes.push(chunk.length); return innerWriter.write(chunk); },
+        close() { return innerWriter.close(); },
+        abort(reason) { return innerWriter.abort(reason); },
+      });
+    }
+  };
+  try {
+    // 무작위에 가까운 입력(압축 후 크기가 커지도록) + 거대한 0 구간 = 입력은 크고 일부 조각만 보면 한도 초과
+    const zeros = new Uint8Array(16 * 1024 * 1024);
+    const stream = new Blob([zeros]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+    const packed = new Uint8Array(await new Response(stream).arrayBuffer());
+    // 압축본 뒤에 조각을 더 붙여 입력을 키운다(첫 조각에서 이미 한도를 넘으므로 나머지는 쓰이면 안 된다)
+    const padded = new Uint8Array(packed.length + 24_000);
+    padded.set(packed);
+    const totalSlices = Math.ceil(padded.length / 4096);
+    assert.ok(totalSlices >= 8);
+    const result = await decodeProjectFromHash(`#p=z.${bytesToBase64Url(padded)}`);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, SHARE_TOO_LARGE_REASON);
+    assert.ok(writes.length >= 1);
+    assert.ok(Math.max(...writes) <= 4096, `입력 조각 최대 ${Math.max(...writes)}바이트`);
+    assert.ok(writes.length < totalSlices, `중단 없이 ${writes.length}/${totalSlices}조각을 모두 넣음`);
+  } finally {
+    globalThis.DecompressionStream = Original;
+  }
+});
+
+test("리뷰1: 인코딩된 페이로드 길이 상한(해시 64 KB) 초과는 디코딩 전에 거부", async () => {
+  const result = await decodeProjectFromHash(`#p=z.${"A".repeat(70_000)}`);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, SHARE_TOO_LARGE_REASON);
+});
+
+test("리뷰8: 유효한 해시 뒤에 '&' 100만 개 — 분할 없이 길이 상한으로 즉시 거부, hasShareHash도 false", async () => {
+  const good = (await encodeProjectToHash(projectOf(examples[0]))).hash;
+  const huge = `${good}${"&".repeat(1_000_000)}`;
+  const originalSplit = String.prototype.split;
+  let splitCalls = 0;
+  String.prototype.split = function patched(...args) { splitCalls += 1; return originalSplit.apply(this, args); };
+  try {
+    const started = performance.now();
+    const result = await decodeProjectFromHash(huge);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, SHARE_TOO_LARGE_REASON);
+    assert.equal(hasShareHash(huge), false);
+    assert.equal(splitCalls, 0, "split을 쓰면 안 된다");
+    assert.ok(performance.now() - started < 500);
+  } finally {
+    String.prototype.split = originalSplit;
+  }
+  // 상한 이내의 여러 파라미터는 여전히 동작
+  assert.equal((await decodeProjectFromHash(`#a=1&&b=2&${good.slice(1)}&c=3`)).ok, true);
+  assert.equal(hasShareHash("#a=1&&p=x&"), true);
+  assert.equal(hasShareHash("#a=1&&"), false);
+});
+
+test("리뷰9: 복원할 수 없는 입력('{}' 등)은 인코딩 단계에서 ok:false", async () => {
+  for (const input of ["{}", "[]", "{\"format\":\"circuit-lab\"}", JSON.stringify({ hello: "world" })]) {
+    const result = await encodeProjectToHash(input);
+    assert.equal(result.ok, false, input);
+    assert.match(result.reason, /복원할 수 없는/);
+  }
+  assert.equal((await encodeProjectToHash(projectOf(examples[0]))).ok, true);
+});

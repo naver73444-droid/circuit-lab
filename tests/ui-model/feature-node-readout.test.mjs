@@ -198,3 +198,26 @@ test("전류원: 공급 전력 부호가 저항 소비와 일치", () => {
   near(source.power.value + resistor.power.value, 0, 1e-12);
   assert.equal(nodeReadout({ circuit, result, target: { kind: "pin", componentId: "R1", pin: 0 } }).voltage.text, "1 V");
 });
+
+// ---- 리뷰 회귀 테스트 ----
+test("리뷰10: 접속점 ID가 'toString'/'constructor'/'__proto__'여도 함수가 새지 않고 ok:false (TypeError 없음)", () => {
+  const { circuit, result } = run("divider");
+  for (const id of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+    assert.equal(nodeIdForTarget(circuit, result, { kind: "junction", junctionId: id }), null, id);
+    let readout;
+    assert.doesNotThrow(() => { readout = nodeReadout({ circuit, result, target: { kind: "junction", junctionId: id } }); }, id);
+    assert.equal(readout.ok, false);
+    assert.doesNotThrow(() => hoverReadout({ circuit, result, target: { kind: "junction", junctionId: id } }));
+    // 배선 끝점이 그런 접속점을 가리켜도 마찬가지
+    const withWire = { ...circuit, wires: [...circuit.wires, { id: "WX", a: { junctionId: id }, b: { junctionId: id } }] };
+    assert.equal(nodeIdForTarget(withWire, result, { kind: "wire", wireId: "WX" }), null);
+    assert.doesNotThrow(() => nodeReadout({ circuit: withWire, result, target: { kind: "wire", wireId: "WX" } }));
+  }
+  // 부품 ID가 상속 키인 경우도 안전
+  assert.equal(componentReadout({ circuit, result, componentId: "toString" }).ok, false);
+  // 전압·전류 배열이 일부 없는 결과: 던지지 않고 값 없음 처리
+  const stripped = { ...result, points: result.points.map((point) => ({ ...point, nodeVoltages: undefined, componentCurrents: undefined })) };
+  assert.doesNotThrow(() => nodeReadout({ circuit, result: stripped, target: { kind: "pin", componentId: "R1", pin: 1 } }));
+  assert.equal(nodeReadout({ circuit, result: stripped, target: { kind: "pin", componentId: "R1", pin: 1 } }).ok, false);
+  assert.doesNotThrow(() => componentReadout({ circuit, result: stripped, componentId: "R1" }));
+});

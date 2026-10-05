@@ -21,6 +21,10 @@ const TYPE_NAMES = {
 const isComplex = (value) => value !== null && typeof value === "object" && Number.isFinite(value.re) && Number.isFinite(value.im);
 const fail = (reason) => ({ ok: false, reason });
 
+/** 자기 속성만 읽는다("toString"·"constructor" 같은 상속 키가 함수로 새어 나오지 않게). */
+const own = (object, key) => (object !== null && typeof object === "object" && Object.hasOwn(object, key) ? object[key] : undefined);
+const nodeIdOf = (value) => (Number.isInteger(value) && value >= 0 ? value : null);
+
 function refOf(component) {
   return component?.props?.ref ?? component?.id ?? "?";
 }
@@ -47,8 +51,8 @@ export function nodeIdForTarget(circuit, result, target) {
   if (!topology) return null;
   const byEndpoint = (endpoint) => {
     if (!endpoint) return null;
-    const node = endpoint.junctionId !== undefined ? topology.nodeIdByJunction[endpoint.junctionId] : topology.nodeIdByPin[`${endpoint.componentId}:${endpoint.pin}`];
-    return node ?? null;
+    const node = endpoint.junctionId !== undefined ? own(topology.nodeIdByJunction, endpoint.junctionId) : own(topology.nodeIdByPin, `${endpoint.componentId}:${endpoint.pin}`);
+    return nodeIdOf(node);
   };
   if (target.kind === "pin") return byEndpoint({ componentId: target.componentId, pin: target.pin });
   if (target.kind === "junction") return byEndpoint({ junctionId: target.junctionId });
@@ -68,7 +72,7 @@ export function pinsOnNode(circuit, result, nodeId, limit = 4) {
   for (const component of circuit?.components ?? []) {
     if (component.type === "GND") continue;
     for (let pin = 0; pin < pinCount(component.type); pin += 1) {
-      if (topology.nodeIdByPin[`${component.id}:${pin}`] === nodeId) labels.push(`${refOf(byId.get(component.id))}.${pin + 1}`);
+      if (own(topology.nodeIdByPin, `${component.id}:${pin}`) === nodeId) labels.push(`${refOf(byId.get(component.id))}.${pin + 1}`);
     }
   }
   return labels.length > limit ? [...labels.slice(0, limit), `외 ${labels.length - limit}개`] : labels;
@@ -114,7 +118,7 @@ function quantity(value, unit) {
 function csub(a, b) { return { re: a.re - b.re, im: a.im - b.im }; }
 
 function nodeValue(point, nodeId) {
-  const value = point?.nodeVoltages?.[nodeId];
+  const value = Number.isInteger(nodeId) ? own(point?.nodeVoltages, nodeId) : undefined;
   return value === undefined ? null : value;
 }
 
@@ -174,7 +178,7 @@ export function componentReadout({ circuit, result, componentId, index, x } = {}
   const title = `${ref} (${TYPE_NAMES[component.type] ?? component.type})`;
   const pins = [];
   for (let pin = 0; pin < pinCount(component.type); pin += 1) {
-    const nodeId = topology?.nodeIdByPin[`${component.id}:${pin}`];
+    const nodeId = nodeIdOf(own(topology?.nodeIdByPin, `${component.id}:${pin}`)) ?? undefined;
     const raw = nodeId === undefined ? null : nodeValue(point, nodeId);
     pins.push({ pin, label: `${ref}.${pin + 1}`, nodeId: nodeId ?? null, voltage: raw === null ? null : quantity(raw, "V") });
   }
@@ -184,7 +188,7 @@ export function componentReadout({ circuit, result, componentId, index, x } = {}
   }
 
   const descriptor = currentDirectionDescriptor(component);
-  const rawCurrent = point?.componentCurrents?.[component.id];
+  const rawCurrent = own(point?.componentCurrents, component.id);
   const current = rawCurrent === undefined ? null : { ...quantity(rawCurrent, "A"), direction: descriptor?.label ?? "" };
 
   let rawVoltage = null;

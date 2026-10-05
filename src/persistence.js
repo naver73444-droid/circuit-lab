@@ -2,9 +2,10 @@
  * 회로 편집기 자동 저장 모델 (DOM 없음, import 시 부작용 없음).
  *
  * 저장 형식(storage[key]): JSON {"v":1,"savedAt":<ms>,"project":<serializeProject 결과를 파싱한 객체>}
+ * "invalid-skip": 현재 프로젝트가 복원 파서(parse)를 통과하지 못해(편집 도중 등) 저장하지 않고 이전 저장본을 그대로 둔 상태.
  * 저장소(storage) 오류(용량 초과·사생활 보호 모드·접근 거부)는 절대 throw하지 않고 상태 객체로 돌려준다.
  *
- * 상태 객체: { ok:boolean, state:"saved"|"pending"|"cleared"|"empty"|"unavailable"|"quota"|"error"|"invalid", reason?:string, savedAt?:number }
+ * 상태 객체: { ok:boolean, state:"saved"|"pending"|"cleared"|"empty"|"unavailable"|"quota"|"error"|"invalid"|"invalid-skip", reason?:string, savedAt?:number }
  */
 import { deserializeProject, serializeProject } from "./project-format.js";
 
@@ -16,6 +17,7 @@ const REASONS = {
   unavailable: "브라우저 저장소를 사용할 수 없어 자동 저장하지 않습니다.",
   quota: "브라우저 저장 공간이 부족해 자동 저장하지 못했습니다. 파일로 저장하세요.",
   error: "자동 저장에 실패했습니다.",
+  invalidSkip: "현재 편집 중인 내용이 아직 올바르지 않아 자동 저장을 건너뛰었습니다(이전 저장본은 그대로입니다).",
   tooLarge: "프로젝트가 너무 커서 자동 저장하지 못했습니다. 파일로 저장하세요.",
 };
 
@@ -121,6 +123,11 @@ export function createAutosave({
       const text = serialize(project);
       const object = typeof text === "string" ? JSON.parse(text) : text;
       const savedAt = now();
+      try {
+        parse(JSON.stringify(object), {}); // 복원할 수 없는 내용으로 좋은 저장본을 덮어쓰지 않는다
+      } catch (error) {
+        return record(status("invalid-skip", { reason: `${REASONS.invalidSkip} (${error?.message ?? error})` }));
+      }
       payload = JSON.stringify({ v: AUTOSAVE_VERSION, savedAt, project: object });
       if (payload.length > AUTOSAVE_MAX_CHARS) return record(status("error", { reason: REASONS.tooLarge }));
       target.setItem(key, payload);
@@ -135,10 +142,10 @@ export function createAutosave({
   function flush() {
     cancelTimer();
     if (!hasPending) return lastStatus;
-    const project = pendingProject;
-    hasPending = false;
-    pendingProject = null;
-    return write(project);
+    // 쓰기에 성공했을 때만 대기 항목을 비운다(용량 초과 등으로 실패하면 다음 flush()에서 다시 시도).
+    const result = write(pendingProject);
+    if (result.state === "saved") { hasPending = false; pendingProject = null; }
+    return result;
   }
 
   return {

@@ -164,3 +164,75 @@ test("DC 스윕 병합과 실패/누락 결과 건너뛰기", () => {
   assert.equal(mergeSweepResults({ plan: null, results, probe }).ok, false);
   assert.equal(buildSweepCircuits(example.circuit, "R2", "value", { ok: false, reason: "나쁜 계획" }).ok, false);
 });
+
+// ---- 리뷰 회귀 테스트 ----
+test("리뷰10: 프로브 접속점/부품 ID가 'toString'이어도 TypeError 없이 건너뜀, 전압 배열 누락도 처리", () => {
+  const plan = planSweep("1k", { from: "1k", to: "2k", count: 2, scale: "lin" }, { type: "R", ref: "R1" });
+  const fake = { analysis: "dc", xValues: [0], points: [{ nodeVoltages: { 1: 5 }, componentCurrents: { R1: 1 } }], topology: { nodeIdByPin: { "R1:0": 1 }, nodeIdByJunction: { J1: 1 } } };
+  const results = [fake, fake];
+  for (const probe of [
+    { key: "a", kind: "voltage", junctionId: "toString", label: "V(J)", color: "#fff" },
+    { key: "b", kind: "voltage", componentId: "toString", pin: 0, label: "V(x)", color: "#fff" },
+    { key: "c", kind: "current", componentId: "toString", label: "I(x)", color: "#fff" },
+    { key: "d", kind: "voltage", junctionId: "constructor", label: "V(J)", color: "#fff" },
+  ]) {
+    let merged;
+    assert.doesNotThrow(() => { merged = mergeSweepResults({ plan, results, probe }); }, probe.key);
+    assert.equal(merged.ok, false, probe.key);
+    assert.equal(merged.skipped.length, 2);
+  }
+  // 정상 접속점은 동작
+  assert.equal(mergeSweepResults({ plan, results, probe: { key: "j", kind: "voltage", junctionId: "J1", label: "V(J1)", color: "#fff" } }).ok, true);
+  // nodeVoltages 배열 자체가 없으면 전류처럼 '결과에 없음'으로 건너뜀
+  const noVoltages = { ...fake, points: [{ componentCurrents: { R1: 1 } }] };
+  let merged;
+  assert.doesNotThrow(() => { merged = mergeSweepResults({ plan, results: [noVoltages, noVoltages], probe: { key: "j", kind: "voltage", junctionId: "J1", label: "V", color: "#fff" } }); });
+  assert.equal(merged.ok, false);
+  assert.match(merged.skipped[0].reason, /없습니다/);
+});
+
+test("리뷰11: 1000…1001 선형 10점은 값 문자열이 구분되는 만큼 라벨도 모두 다름", () => {
+  const plan = planSweep("1k", { from: "1000", to: "1001", count: 10, scale: "lin" }, { type: "R", ref: "R1" });
+  assert.equal(plan.ok, true, plan.reason);
+  assert.equal(new Set(plan.values.map((entry) => entry.text)).size, 10);
+  assert.equal(new Set(plan.values.map((entry) => entry.label)).size, 10, plan.values.map((entry) => entry.label).join(" | "));
+  // 기본(정밀도 4) 라벨 형식은 그대로
+  assert.equal(planSweep("1k", { from: "100", to: "10k", count: 3 }, { type: "R", ref: "R1" }).values[1].label, "R1 = 1 kΩ");
+});
+
+test("리뷰12: 극단 범위 — log 1e-300…1e300 3점은 [1e-300,1,1e300], 선형 -1e308…1e308도 유한", () => {
+  const log = planSweep(null, { from: "1e-300", to: "1e300", count: 3, scale: "log" }, { type: "V" });
+  assert.equal(log.ok, true, log.reason);
+  assert.deepEqual(log.values.map((entry) => entry.value), [1e-300, 1, 1e300]);
+  const lin = planSweep(null, { from: "-1e308", to: "1e308", count: 3, scale: "lin" }, { type: "V" });
+  assert.equal(lin.ok, true, lin.reason);
+  assert.deepEqual(lin.values.map((entry) => entry.value), [-1e308, 0, 1e308]);
+  assert.ok(lin.values.every((entry) => Number.isFinite(entry.value)));
+  const lin5 = planSweep(null, { from: "-1e308", to: "1e308", count: 5, scale: "lin" }, { type: "V" });
+  assert.equal(lin5.ok, true, lin5.reason);
+  assert.equal(lin5.values[0].value, -1e308);
+  assert.equal(lin5.values[4].value, 1e308);
+  // 끝점은 항상 원래 값 그대로
+  const ends = planSweep(null, { from: "1", to: "1e9", count: 7, scale: "log" }, { type: "V" });
+  assert.equal(ends.values[0].value, 1);
+  assert.equal(ends.values[6].value, 1e9);
+  // 기준값 ×10이 오버플로하면 실패로 처리
+  assert.equal(planSweep("1e308", {}, { type: "V" }).ok, false);
+});
+
+test("리뷰13: OPAMP 개방루프 이득은 0·음수 거부 (계획·적용 모두)", () => {
+  const circuit = cloneExample("opamp").circuit;
+  const opamp = circuit.components.find((component) => component.type === "OPAMP");
+  assert.ok(opamp, "예제에 OPAMP 필요");
+  for (const text of ["0", "-5", "-1k"]) {
+    const applied = applySweepValue(circuit, opamp.id, "gain", text);
+    assert.equal(applied.ok, false, text);
+    assert.match(applied.reason, /0보다/);
+  }
+  assert.equal(applySweepValue(circuit, opamp.id, "gain", "100k").ok, true);
+  const plan = planSweep("100k", { from: "0", to: "1k", count: 3, scale: "lin" }, { type: "OPAMP", ref: opamp.props?.ref ?? "U1" });
+  assert.equal(plan.ok, false);
+  assert.match(plan.reason, /0보다/);
+  assert.equal(planSweep("100k", { from: "-1", to: "1k", count: 3, scale: "lin" }, { type: "OPAMP", ref: "U1" }).ok, false);
+  assert.equal(planSweep("100k", { from: "1k", to: "1meg", count: 3 }, { type: "OPAMP", ref: "U1" }).ok, true);
+});

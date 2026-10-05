@@ -175,3 +175,83 @@ test("두 커서 차이: Δx, Δy, 기울기, 1/Δx", () => {
   const gap = y.slice(); gap[4] = NaN;
   assert.equal(cursorDelta(x, gap, 4, 5).ok, false);
 });
+
+// ---- 리뷰 회귀 테스트 ----
+test("리뷰4: NaN 구간을 가로질러 주기를 세지 않는다 (구간당 1주기씩 두 구간 → 측정 불가)", () => {
+  const gappy = [-1, 1, -1, 1, NaN, NaN, NaN, NaN, NaN, -1, 1, -1, 1];
+  const xs = gappy.map((_, i) => i);
+  const result = measurePeriod(xs, gappy, { xUnit: "s", yUnit: "V" });
+  assert.equal(result.period.value, null);
+  assert.equal(result.cycles, 1, "구간 안에서 완전한 주기는 1개");
+  assert.match(result.period.note, /연속 구간/);
+});
+
+test("리뷰4: 한 연속 구간에 주기가 2개 이상 있으면 그 구간만 사용, 구간 사이 간격은 무시", () => {
+  const wave = (n, offset) => Array.from({ length: n }, (_, i) => (i + offset) % 4 < 2 ? -1 : 1);
+  const y = [...wave(8, 0), NaN, NaN, NaN, NaN, NaN, NaN, ...wave(21, 0)];
+  const x = y.map((_, i) => i);
+  const result = measurePeriod(x, y, { xUnit: "s", yUnit: "V" });
+  assert.equal(result.cycles, 4, "긴 구간(21 표본)에서 4주기");
+  near(result.period.value, 4, 1e-9);
+  near(result.frequency.value, 0.25, 1e-9);
+});
+
+test("리뷰5: −3 dB 교차 구간이 NaN을 가로지르면 측정 불가 (16.28 Hz를 만들지 않음)", () => {
+  const result = measureCutoff([1, 10, 100, 1000], [0, -1, NaN, -20]);
+  assert.equal(result.value, null);
+  assert.equal(result.type, null);
+  assert.match(result.note, /누락/);
+  // 누락이 교차 구간 밖이면 정상 측정
+  const ok = measureCutoff([1, 10, 100, 1000, 10000], [0, NaN, -1, -20, -40]);
+  assert.equal(ok.type, "lowpass");
+  assert.ok(ok.value > 100 && ok.value < 1000);
+});
+
+test("리뷰6: 상승 구간 중간 NaN은 상승시간 측정 불가", () => {
+  const y = [0, 0.05, 0.2, NaN, 0.8, 0.95, 1, 1, 1, 1];
+  const x = y.map((_, i) => i);
+  const step = measureStepResponse(x, y, { xUnit: "s", yUnit: "V" });
+  assert.equal(step.riseTime.value, null);
+  assert.match(step.riseTime.note, /누락/);
+});
+
+test("리뷰6: 기록 끝이 NaN이면 정착 시간은 '끝까지 유지'를 검증할 수 없음", () => {
+  const y = [0, 0.1, 0.5, 0.9, 1, 1, 1, NaN, NaN];
+  const x = y.map((_, i) => i);
+  const step = measureStepResponse(x, y, { xUnit: "s", yUnit: "V" });
+  assert.equal(step.settlingTime.value, null);
+  assert.match(step.settlingTime.note, /누락/);
+  // 같은 신호에서 NaN만 없으면 정상 측정
+  const clean = measureStepResponse(x.slice(0, 7), y.slice(0, 7), { xUnit: "s", yUnit: "V" });
+  assert.ok(Number.isFinite(clean.settlingTime.value));
+  // 정착 이후 중간 NaN도 검증 불가
+  const middle = [0, 0.1, 0.5, 0.9, 1, NaN, 1, 1, 1, 1];
+  const mid = measureStepResponse(middle.map((_, i) => i), middle, { xUnit: "s", yUnit: "V" });
+  assert.equal(mid.settlingTime.value, null);
+});
+
+test("리뷰7: 0 이하 주파수가 있으면 −3 dB 주파수 측정 불가", () => {
+  for (const f of [[0, 10, 100, 1000], [-1, 10, 100, 1000], [1, 10, -100, 1000]]) {
+    const result = measureCutoff(f, [0, -1, -10, -30]);
+    assert.equal(result.value, null, JSON.stringify(f));
+    assert.match(result.note, /0보다|증가하는 순서/);
+  }
+  assert.match(measureCutoff([0, 10, 100, 1000], [0, -1, -10, -30]).note, /0보다/);
+  assert.match(measureCutoff([-1, 10, 100, 1000], [0, -1, -10, -30]).note, /0보다/);
+  assert.ok(Number.isFinite(measureCutoff([1, 10, 100, 1000], [0, -1, -10, -30]).value));
+});
+
+test("리뷰14: 극단 상수의 RMS/평균이 오버플로·언더플로 없이 정확", () => {
+  rel(measureStats([0], [1e-200]).rms.value, 1e-200, 1e-12);
+  assert.equal(measureStats([0], [-3]).rms.value, 3, "표본 1개 RMS = |y|");
+  assert.equal(measureStats([0], [1e-200]).mean.value, 1e-200);
+  rel(measureStats([0, 1], [1e200, 1e200]).rms.value, 1e200, 1e-12);
+  const mean = measureStats([0, 1], [1e308, 1e308]);
+  rel(mean.mean.value, 1e308, 1e-12);
+  rel(mean.rms.value, 1e308, 1e-12);
+  rel(measureStats([0, 1, 2], [1e-200, 1e-200, 1e-200]).rms.value, 1e-200, 1e-12);
+  assert.equal(measureStats([0, 1], [0, 0]).rms.value, 0);
+  // x 간격이 0(적분 길이 0)인 폴백 경로도 오버플로 없음
+  rel(measureStats([1, 1], [1e308, 1e308]).mean.value, 1e308, 1e-12);
+  rel(measureStats([1, 1], [1e308, 1e308]).rms.value, 1e308, 1e-12);
+});

@@ -156,7 +156,7 @@ test("clear는 대기 중 저장을 취소하고 저장본을 지운다", () => 
 });
 
 test("사용자 지정 key/serialize/debounceMs", () => {
-  const { autosave, timers, storage } = make(fakeStorage(), { key: "custom", debounceMs: 100, serialize: () => JSON.stringify({ any: 1 }) });
+  const { autosave, timers, storage } = make(fakeStorage(), { key: "custom", debounceMs: 100, serialize: () => JSON.stringify({ any: 1 }), parse: (text) => JSON.parse(text) });
   autosave.schedule({});
   timers.advance(100);
   assert.deepEqual(JSON.parse(storage.data.get("custom")).project, { any: 1 });
@@ -194,4 +194,50 @@ test("describeSavedAt 한국어 경과 시간", () => {
   assert.equal(describeSavedAt(0, 2 * 3600_000), "2시간 전");
   assert.equal(describeSavedAt(0, 3 * 86400_000), "3일 전");
   assert.equal(describeSavedAt(NaN), "저장 시각 알 수 없음");
+});
+
+// ---- 리뷰 회귀 테스트 ----
+test("리뷰2: 복원할 수 없는 설정({end:'abc'})은 이전 저장본을 덮어쓰지 않고 invalid-skip", () => {
+  const { autosave, timers, storage } = make();
+  autosave.schedule(projectOf());
+  timers.advance(800);
+  assert.equal(autosave.getStatus().state, "saved");
+  const before = storage.data.get(AUTOSAVE_KEY);
+  const typing = projectOf();
+  typing.settings = { analysis: "transient", start: "0", end: "abc", step: "1m" };
+  autosave.schedule(typing);
+  assert.doesNotThrow(() => timers.advance(800));
+  assert.equal(autosave.getStatus().state, "invalid-skip");
+  assert.equal(autosave.getStatus().ok, false);
+  assert.match(autosave.getStatus().reason, /건너뛰/);
+  assert.equal(storage.data.get(AUTOSAVE_KEY), before, "이전 저장본 유지");
+  assert.equal(autosave.load() !== null, true, "저장본은 여전히 복원 가능");
+  // 값이 올바르게 고쳐지면 다시 저장된다
+  typing.settings = { analysis: "transient", start: "0", end: "10m", step: "1m" };
+  autosave.schedule(typing);
+  timers.advance(800);
+  assert.equal(autosave.getStatus().state, "saved");
+  assert.notEqual(storage.data.get(AUTOSAVE_KEY), before);
+});
+
+test("리뷰3: 용량 초과 후에도 대기 중인 프로젝트를 버리지 않고 flush()로 재시도", () => {
+  let full = true;
+  const storage = fakeStorage({
+    setItem(key, value) {
+      if (full) { const error = new Error("full"); error.name = "QuotaExceededError"; throw error; }
+      storage.data.set(key, String(value));
+    },
+  });
+  const { autosave, timers } = make(storage);
+  autosave.schedule(projectOf());
+  timers.advance(800);
+  assert.equal(autosave.getStatus().state, "quota");
+  assert.equal(autosave.hasPending(), true, "실패했으므로 대기 유지");
+  assert.equal(autosave.flush().state, "quota");
+  assert.equal(autosave.hasPending(), true);
+  full = false;
+  assert.equal(autosave.flush().state, "saved");
+  assert.equal(autosave.hasPending(), false);
+  assert.ok(storage.data.get(AUTOSAVE_KEY));
+  assert.equal(autosave.load() !== null, true);
 });
