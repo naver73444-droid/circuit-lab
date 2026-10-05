@@ -15,8 +15,10 @@ export function parseProblemQuantity(text, quantity, defaultUnit) {
   const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(?:\s*([a-zA-ZµμΩ°/]+))?$/.exec(s);
   if (!match) throw new RangeError('숫자와 호환 단위를 입력하세요. 예: 10 kΩ, 20 mH, 100 µF.');
   const unit = (match[2] ?? defaultUnit).replaceAll('µ', 'u').replaceAll('μ', 'u').replaceAll('Ω', 'ohm').replaceAll('Ohm', 'ohm');
-  const factor = UNIT_MAP[quantity]?.[unit];
-  if (factor === undefined) throw new RangeError('단위가 맞지 않습니다: ' + unit + '. 이 항목에는 ' + Object.keys(UNIT_MAP[quantity] ?? {}).join(', ') + '를 사용할 수 있습니다.');
+  // Own keys only: 'toString'/'constructor' etc. must not resolve through Object.prototype.
+  const units = Object.hasOwn(UNIT_MAP, quantity) ? UNIT_MAP[quantity] : undefined;
+  const factor = units && Object.hasOwn(units, unit) ? units[unit] : undefined;
+  if (factor === undefined) throw new RangeError('단위가 맞지 않습니다: ' + unit + '. 이 항목에는 ' + Object.keys(units ?? {}).join(', ') + '를 사용할 수 있습니다.');
   const value = Number(match[1]), result = value * factor;
   if (!Number.isFinite(result) || (result === 0 && /[1-9]/.test(match[1].split(/e/i)[0]))) throw new RangeError('단위 환산값이 수치 표현 범위를 벗어났습니다.');
   return result;

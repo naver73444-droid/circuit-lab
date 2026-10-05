@@ -3,7 +3,9 @@ import { appendCourseMath } from './course-math-view.js';
 import { magnitude, rectangularPolar, waveSample } from './circuit-course-model.js';
 import { EXPERIMENTS, REFERENCES } from './circuit-course-registry.js';
 const esc = v => String(v).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-export function formatNumber(n) { return n === null || n === undefined || !Number.isFinite(n) ? '미정' : new Intl.NumberFormat('en-US', { maximumSignificantDigits: 7, notation: Math.abs(n) > 0 && (Math.abs(n) < 1e-4 || Math.abs(n) >= 1e7) ? 'scientific' : 'standard' }).format(Object.is(n, -0) ? 0 : n); }
+// Intl.NumberFormat construction dominates the cost, so the two formatters are built once.
+const numberFormats = { scientific: new Intl.NumberFormat('en-US', { maximumSignificantDigits: 7, notation: 'scientific' }), standard: new Intl.NumberFormat('en-US', { maximumSignificantDigits: 7, notation: 'standard' }) };
+export function formatNumber(n) { return n === null || n === undefined || !Number.isFinite(n) ? '미정' : numberFormats[Math.abs(n) > 0 && (Math.abs(n) < 1e-4 || Math.abs(n) >= 1e7) ? 'scientific' : 'standard'].format(Object.is(n, -0) ? 0 : n); }
 const fmt = formatNumber;
 const zText = z => !z ? '유한한 값 없음' : fmt(z.re) + (z.im < 0 ? ' − j' : ' + j') + fmt(Math.abs(z.im));
 const polarText = z => { const p = rectangularPolar(z); return fmt(p.magnitude) + ' ∠ ' + (p.angleDeg === null ? '위상 미정' : fmt(p.angleDeg) + '°'); };
@@ -173,7 +175,7 @@ export function createCircuitCourseView(host) {
       showSymbolicAnswers(result.symbolicData,solution);
       if(id==='problem'){const button=host.ownerDocument.createElement('button');button.type='button';button.dataset.circuitCourseMode='numeric';button.textContent='같은 조건에 숫자 넣기';q('answers').append(button);}
       renderSymbolic(q('derivation-body'),{...result.symbolicData,answers:[]},{copyData:{...result.symbolicData,conditions:[...(solution.statement?['문제 메모 (자동 해석하지 않음): '+solution.statement]:[]),...result.symbolicData.conditions]}});
-      if(solution.statement){const memo=document.createElement('p');memo.className='circuit-course-note';memo.textContent='문제 메모 (자동 해석 미지원): '+solution.statement;q('solution').prepend(memo);}
+      if(solution.statement){const memo=host.ownerDocument.createElement('p');memo.className='circuit-course-note';memo.textContent='문제 메모 (자동 해석 미지원): '+solution.statement;q('solution').prepend(memo);}
       mathCards(q('results'));
       return;
     }

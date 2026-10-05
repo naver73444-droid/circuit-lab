@@ -1,4 +1,5 @@
 import { appendCourseMath } from './course-math-view.js';
+import { ensureCourseStyle } from './course-style.js';
 
 export function symbolicText(data) {
   const lines=[data.title||'기호 해석'];
@@ -14,8 +15,10 @@ export function symbolicText(data) {
 
 export function renderSymbolic(container, data, {copyData=data}={}) {
   container.replaceChildren();container.classList.add('course-symbolic');
-  const style=document.createElement('style');style.textContent=`.course-symbolic{font:15px/1.65 system-ui,sans-serif;overflow-wrap:anywhere}.course-symbolic h3{font-size:18px;margin:8px 0}.course-symbolic h4{font-size:15px;margin:16px 0 6px}.course-symbolic p{margin:6px 0}.course-symbolic pre{font:15px/1.65 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0;padding:10px;border:1px solid #667080;border-radius:8px}.course-symbolic ul,.course-symbolic ol{padding-left:24px;margin:6px 0}.course-symbolic .course-symbolic-region{border-left:3px solid #73b8da;padding-left:12px;margin:12px 0}.course-symbolic .course-symbolic-answer{border:1px solid #79b494;border-radius:10px;padding:10px;margin:10px 0}.course-symbolic .course-symbolic-givens{display:flex;flex-wrap:wrap;gap:8px 20px}.course-symbolic .course-symbolic-givens p{flex:1 1 240px}@media(max-width:760px){.course-symbolic pre{font-size:14px}}`;container.append(style);
-  const element=(tag,text,parent=container)=>{const node=document.createElement(tag);node.textContent=text||'';parent.append(node);return node;};
+  const doc=container.ownerDocument;
+  // Once per document. Element selectors are doubled (.course-symbolic.course-symbolic) so they keep beating host styles of equal specificity regardless of stylesheet order.
+  ensureCourseStyle(container,'course-symbolic',`.course-symbolic{font:15px/1.65 system-ui,sans-serif;overflow-wrap:anywhere}.course-symbolic.course-symbolic h3{font-size:18px;margin:8px 0}.course-symbolic.course-symbolic h4{font-size:15px;margin:16px 0 6px}.course-symbolic.course-symbolic p{margin:6px 0}.course-symbolic.course-symbolic pre{font:15px/1.65 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0;padding:10px;border:1px solid #667080;border-radius:8px}.course-symbolic.course-symbolic ul,.course-symbolic.course-symbolic ol{padding-left:24px;margin:6px 0}.course-symbolic .course-symbolic-region{border-left:3px solid #73b8da;padding-left:12px;margin:12px 0}.course-symbolic .course-symbolic-answer{border:1px solid #79b494;border-radius:10px;padding:10px;margin:10px 0}.course-symbolic .course-symbolic-givens{display:flex;flex-wrap:wrap;gap:8px 20px}.course-symbolic .course-symbolic-givens p{flex:1 1 240px}@media(max-width:760px){.course-symbolic.course-symbolic pre{font-size:14px}}`);
+  const element=(tag,text,parent=container)=>{const node=doc.createElement(tag);node.textContent=text||'';parent.append(node);return node;};
   element('h3',data?.title||'기호 해석');
   if(data?.status!=='supported'){element('p',data?.reason||'선택한 조건의 기호해를 지원하지 않습니다.');if(data?.limitations?.length){const ul=element('ul');for(const text of data.limitations)element('li',text,ul);}return;}
   const copy=element('button','풀이 복사');copy.type='button';copy.dataset.symbolicCopy='';

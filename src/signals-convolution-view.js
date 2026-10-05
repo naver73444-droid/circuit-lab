@@ -1,5 +1,5 @@
 import {rectangleConvolution,exponentialConvolution} from './signals-course-model.js';
-import {customConvolutionAt,windowSignal} from './signals-expression.js';
+import {customConvolutionAt,windowSignal,EXPRESSION_LIMITS} from './signals-expression.js';
 const views=new WeakMap();
 const format=n=>Number(n.toPrecision(5)).toString();
 export function convolutionDomain(o,p){
@@ -33,7 +33,7 @@ function mount(parent,state){
   const speedLabel=el('label','재생 속도',controls),speed=el('select',undefined,speedLabel,{'data-signals-speed':''});for(const v of [.25,.5,1,2])el('option',`${v}×`,speed,{value:v});
   const motionNote=el('p','',controls,{class:'signals-caption','data-signals-motion-note':''});
   const status=el('p','',root,{'data-signals-overlap':'',role:'status','aria-live':'off'});
-  if(p.custom)el('p',`직접 입력의 근사 결과 · x와 h 모두 [−${p.T}, ${p.T}] s 밖에서는 0으로 가정. 중점 적분 Δτ=${format(p.dt)} s (${p.cells}구간). 입력·곱 그림은 257점, 출력 곡선은 129점 사이를 선으로 이었습니다. 창 절단·표본화 오차가 있으며 좁은 펄스는 누락될 수 있습니다.`,root,{class:'signals-caption','data-signals-custom-notice':''});
+  if(p.custom)el('p',`직접 입력의 근사 결과 · x와 h 모두 [−${p.T}, ${p.T}] s 밖에서는 0으로 가정. 중점 적분 Δτ=${format(p.dt)} s (${p.cells}구간). 입력·곱 그림은 257점, 출력 곡선은 ${EXPRESSION_LIMITS.outputPoints}점 사이를 선으로 이었습니다. 창 절단·표본화 오차가 있으며 좁은 펄스는 누락될 수 있습니다.`,root,{class:'signals-caption','data-signals-custom-notice':''});
   const plot=(title,xlo,xhi,maxY,{stem=false,fill=false}={})=>{
     const card=el('section',undefined,root,{class:'signals-graph-card'});el('h3',title,card);
     const svg=sv('svg',{viewBox:'0 0 680 240',role:'img','aria-label':title,'data-signals-plot':stem?'stem':'continuous'},card);sv('title',{},svg,title);
