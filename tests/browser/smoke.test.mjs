@@ -11,6 +11,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   L, ctx, ev, until, waitFor, settle, navigate, state, component, pin, partSel, click, clickAt, clickPart, partPoint, dblclick, dragPart, press, typeInto, select, center,
+  MOD, moveTo, wheelAt, plotPoint, bgPoint, pinTip, sleep, openTab,
   runAnalysis, nodeValue, request, startServer, startBrowser, stopAll, leftoverProcessIds, isAlive, assertNoProblems, resetProblems,
 } from "./harness.mjs";
 
@@ -32,6 +33,50 @@ async function autoUpdateOff() {
 }
 async function openSettings() {
   if (!(await ev(`document.getElementById("advanced-analysis").open`))) await click("#advanced-analysis summary");
+}
+
+// ---- helpers for the feature scenarios (shortcuts, wheel, hover, measurements, cursors, sweep, drag, clicks) ----------------------
+const GRID = 20; // src/circuit-geometry.js GRID_SIZE: one arrow-key step
+const SI_PREFIX = { f: 1e-15, p: 1e-12, n: 1e-9, "µ": 1e-6, u: 1e-6, m: 1e-3, "": 1, k: 1e3, M: 1e6, G: 1e9 };
+/** "1.414 V", "−1.036 fV", "159.7 Hz", "1 kHz", "2 ms", "1k" -> number (a sign written as U+2212 is accepted). */
+function parseEng(text) {
+  const match = /^\s*([-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)\s*([fpnµumkMG]?)[A-Za-zΩ°/]*\s*$/.exec(String(text).replace(/−/g, "-"));
+  assert.ok(match, `cannot read a number from "${text}"`);
+  return Number(match[1]) * SI_PREFIX[match[2]];
+}
+function near(actual, expected, relative, what, absolute = 0) {
+  assert.ok(Number.isFinite(actual) && Math.abs(actual - expected) <= Math.max(absolute, Math.abs(expected) * relative), `${what}: ${actual} is not within ${relative * 100}% of ${expected}`);
+}
+const measureRows = () => ev(`[...document.querySelectorAll("#measure-body .measure-row")].map((row) => ({ trace: row.querySelector(".measure-trace").textContent.trim(), cells: Object.fromEntries([...row.querySelectorAll(".measure-cell")].map((cell) => [cell.querySelector("small").textContent, cell.lastChild.textContent.trim()])) }))`);
+const deltaItems = async () => Object.fromEntries((await ev(`[...document.querySelectorAll("#cursor-readout .delta-item")].map((item) => item.textContent.trim())`)).map((text) => [text.split(/\s/)[0], text.replace(/^\S+\s*/, "")]));
+/** Hold every worker request after the first `allow` ones until __gate.release() runs, so a sweep can be caught between two points. */
+const installWorkerGate = (allow = 0) => ev(`(() => {
+  const original = Worker.prototype.postMessage; window.__gate = { passed: 0, allow: ${allow}, queued: [] };
+  Worker.prototype.postMessage = function (...args) { if (window.__gate.passed >= window.__gate.allow) { window.__gate.queued.push(() => original.apply(this, args)); return; } window.__gate.passed += 1; return original.apply(this, args); };
+  window.__gate.release = () => { window.__gate.allow = Infinity; window.__gate.queued.splice(0).forEach((send) => send()); };
+})()`);
+async function openSweepForm(from, to, count) {
+  await selectPart("R1");
+  await click("#inspector-tab");
+  if (!(await ev(`document.getElementById("sweep-box").open`))) await click("#sweep-box summary");
+  await typeInto("#sweep-from", from);
+  await typeInto("#sweep-to", to);
+  await typeInto("#sweep-count", count);
+}
+const sweepOf = () => ev(`${L}.getSweep()`);
+
+const AUTOSAVE_PREFIX = "circuit-lab.autosave.v2.";
+/** Every autosave slot in localStorage, keyed by tab id. */
+const autosaveSlots = () => ev(`Object.fromEntries(Object.keys(localStorage).filter((key) => key.startsWith(${JSON.stringify(AUTOSAVE_PREFIX)})).map((key) => [key.slice(${AUTOSAVE_PREFIX.length}), JSON.parse(localStorage.getItem(key))]))`);
+const tabIdOf = () => ev(`sessionStorage.getItem("circuit-lab.tab-id")`);
+const noticeTexts = () => ev(`[...document.querySelectorAll("#canvas-notices .canvas-notice")].map((notice) => notice.querySelector(".canvas-notice-text").textContent)`);
+/** Same URL, same tab (sessionStorage and therefore the tab id survive, like a user pressing reload). */
+const reloadPage = async () => navigate(await ev(`location.pathname + location.search + location.hash`));
+/** Start from an empty browser profile state: no autosave slots, no tab id. */
+async function clearBrowserStorage() { await navigate("/"); await ev(`localStorage.clear(); sessionStorage.clear()`); }
+async function clickNoticeButton(label) {
+  assert.equal(await ev(`(() => { const button = [...document.querySelectorAll("#canvas-notices button")].find((item) => item.textContent.trim() === ${JSON.stringify(label)}); if (!button) return false; button.dataset.smoke = "notice-action"; return true; })()`), true, `a "${label}" button is in the notice`);
+  await click('[data-smoke="notice-action"]');
 }
 
 describe("browser smoke", { timeout: 600000 }, () => {
@@ -676,5 +721,613 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await click('.view-tabs [data-view="results"]');
     await until(`!document.getElementById("phasor-panel").hidden`, "the phasor pane on the phone");
     assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true, "still no overflow after results");
+  });
+
+  test("shortcuts: Shift+R, W/V, arrow nudges (+1 history each, Shift = 5), input focus, Ctrl+Enter, Ctrl+S download", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await ev(`document.activeElement.blur()`); // the checkbox that was just clicked would otherwise own the keyboard (see report)
+    const downloads = [];
+    const stopListening = ctx.cdp.on((message) => { if (message.method === "Page.downloadWillBegin") downloads.push(message.params.suggestedFilename); });
+    await ctx.cdp.send("Page.setDownloadBehavior", { behavior: "deny" });
+    try {
+      await selectPart("R1");
+      const start = await component("R1");
+      let depth = (await state()).historyDepth;
+      const stepOf = async () => { const now = (await state()).historyDepth; const grew = now - depth; depth = now; return grew; };
+
+      // Shift+R turns counter-clockwise, R clockwise; each is one undo step.
+      await press("R", "KeyR", 82, MOD.shift);
+      assert.equal((await component("R1")).rotation, (start.rotation + 270) % 360, "Shift+R rotates counter-clockwise");
+      assert.equal(await stepOf(), 1);
+      await press("r", "KeyR", 82);
+      assert.equal((await component("R1")).rotation, start.rotation, "R rotates clockwise, back to the start");
+      assert.equal(await stepOf(), 1);
+
+      // Arrow keys: one grid step (Shift = 5 steps), exactly one history entry per press.
+      await press("ArrowRight", "ArrowRight", 39);
+      assert.deepEqual([(await component("R1")).x, (await component("R1")).y], [start.x + GRID, start.y]);
+      assert.equal(await stepOf(), 1, "ArrowRight is one history entry");
+      await press("ArrowRight", "ArrowRight", 39);
+      assert.equal((await component("R1")).x, start.x + 2 * GRID);
+      assert.equal(await stepOf(), 1, "a second press is its own entry");
+      await press("ArrowDown", "ArrowDown", 40, MOD.shift);
+      assert.deepEqual([(await component("R1")).x, (await component("R1")).y], [start.x + 2 * GRID, start.y + 5 * GRID], "Shift+ArrowDown moves 5 steps");
+      assert.equal(await stepOf(), 1, "a Shift nudge is one history entry");
+      await press("ArrowUp", "ArrowUp", 38);
+      await press("ArrowLeft", "ArrowLeft", 37);
+      await press("ArrowLeft", "ArrowLeft", 37);
+      assert.deepEqual([(await component("R1")).x, (await component("R1")).y], [start.x, start.y + 4 * GRID]);
+      assert.equal(await stepOf(), 3, "three presses are three entries");
+
+      // While a text field has the focus the arrows belong to the field (and so do W/R).
+      await click("#inspector-tab");
+      await click(VALUE_INPUT);
+      assert.equal(await ev(`document.activeElement.matches(${JSON.stringify(VALUE_INPUT)})`), true, "the value field has the focus");
+      const placed = await component("R1");
+      for (const [key, code, vk, modifiers] of [["ArrowRight", "ArrowRight", 39, 0], ["ArrowDown", "ArrowDown", 40, MOD.shift], ["w", "KeyW", 87, 0], ["R", "KeyR", 82, MOD.shift]]) await press(key, code, vk, modifiers);
+      assert.deepEqual(await component("R1"), placed, "keys typed into a field must not move or rotate the part");
+      assert.equal((await state()).tool, "select", "W typed into a field does not switch the tool");
+      assert.equal(await stepOf(), 0, "no history entry from keys typed into a field");
+      // Ctrl+S is the one shortcut that still works in a field: it saves the project instead of the browser's page-save dialog.
+      await press("s", "KeyS", 83, MOD.ctrl);
+      await waitFor(() => downloads.length === 1, "Ctrl+S in a field to download the project");
+      await ev(`document.activeElement.blur()`);
+
+      // Tool keys.
+      await press("w", "KeyW", 87);
+      assert.equal((await state()).tool, "wire", "W selects the wire tool");
+      assert.equal(await ev(`document.querySelector('[data-tool="wire"]').classList.contains("active")`), true);
+      await press("v", "KeyV", 86);
+      assert.equal((await state()).tool, "select", "V selects the select tool");
+      assert.equal(await stepOf(), 0, "tool keys do not touch the history");
+
+      // Ctrl+Enter runs the analysis.
+      assert.notEqual((await state()).runState.status, "success", "no result yet");
+      await press("Enter", "Enter", 13, MOD.ctrl);
+      await until(`${L}.getState().runState.status === "success"`, "Ctrl+Enter to run the analysis");
+      assert.equal((await state()).result.analysis, "dc");
+      assert.equal(await stepOf(), 0, "running does not add history");
+
+      // Ctrl+S outside a field: a real download of the project JSON.
+      await press("s", "KeyS", 83, MOD.ctrl);
+      await waitFor(() => downloads.length === 2, "Ctrl+S to download the project");
+      assert.match(downloads[1], /\.json$/);
+      assert.equal(await stepOf(), 0, "saving does not add history");
+    } finally {
+      stopListening();
+      await ctx.cdp.send("Page.setDownloadBehavior", { behavior: "default" });
+    }
+  });
+
+  test("wheel over a value label: E12 steps coalesce within 400 ms into one history entry; elsewhere the wheel zooms", async () => {
+    await navigate("/?example=rc-lowpass");
+    await autoUpdateOff();
+    const label = await center('.component[data-id="R1"] .value-label');
+    const depth0 = (await state()).historyDepth;
+    const view0 = (await state()).canvasView;
+    assert.equal(await valueOf("R1"), "1k");
+
+    await wheelAt(label.x, label.y, -100);
+    await sleep(80);
+    await wheelAt(label.x, label.y, -100);
+    await settle();
+    assert.equal(await valueOf("R1"), "1.5k", "two notches step 1k -> 1.2k -> 1.5k");
+    assert.equal((await state()).historyDepth, depth0 + 1, "ticks within 400 ms are one history entry");
+    assert.deepEqual((await state()).canvasView, view0, "the wheel over a value label does not zoom the canvas");
+
+    await sleep(600); // idle: the coalescing window is over
+    await wheelAt(label.x, label.y, -100);
+    await settle();
+    assert.equal(await valueOf("R1"), "1.8k");
+    assert.equal((await state()).historyDepth, depth0 + 2, "a tick after the idle gap is a new entry");
+    await click("#undo-button");
+    assert.equal(await valueOf("R1"), "1.5k", "one undo takes back only the last (separate) entry");
+    await click("#undo-button");
+    assert.equal(await valueOf("R1"), "1k", "one more undo takes back both coalesced ticks");
+    assert.equal((await state()).historyDepth, depth0);
+
+    // Anywhere else the wheel zooms the circuit view and changes no value.
+    const empty = await bgPoint();
+    await wheelAt(empty.x, empty.y, 100);
+    await settle();
+    const zoomed = (await state()).canvasView;
+    assert.ok(zoomed.width > view0.width * 1.1, `wheel down zooms out (${view0.width} -> ${zoomed.width})`);
+    await wheelAt(empty.x, empty.y, -100);
+    await settle();
+    assert.ok((await state()).canvasView.width < zoomed.width, "wheel up zooms in");
+    assert.equal(await valueOf("R1"), "1k", "zooming changes no value");
+    assert.equal((await state()).historyDepth, depth0, "zooming is not an edit");
+  });
+
+  test("hover readout: node pin shows 5 V, R2 shows 5 mA / 25 mW, an edit makes it say the result is outdated, and hovering never mutates the canvas", async () => {
+    await navigate("/?example=divider");
+    await runAnalysis("dc");
+    await autoUpdateOff();
+    await ev(`window.__mutations = { components: 0, wires: 0 }; for (const [key, id] of [["components", "component-layer"], ["wires", "wire-layer"]]) new MutationObserver((records) => { window.__mutations[key] += records.length; }).observe(document.getElementById(id), { subtree: true, childList: true, attributes: true, characterData: true }); 0`);
+    const hover = () => ev(`${L}.getHoverReadout()`);
+
+    const middle = await pinTip("R1", 1);
+    await moveTo(middle.x, middle.y);
+    await until(`${L}.getHoverReadout().visible`, "the node readout");
+    let readout = await hover();
+    assert.match(readout.text, /(^|\D)5 V/, `the middle node reads 5 V: ${readout.text}`);
+    assert.equal(readout.stale, false);
+
+    const r2 = await partPoint("R2");
+    await moveTo(r2.x, r2.y);
+    await waitFor(async () => (await hover()).text.includes("R2"), "the R2 readout");
+    readout = await hover();
+    assert.match(readout.text, /5 mA/, `R2 current: ${readout.text}`);
+    assert.match(readout.text, /25 mW/, `R2 power: ${readout.text}`);
+    for (let n = 0; n < 6; n += 1) await moveTo(middle.x + (n % 2) * 3, middle.y + n);
+    await moveTo(r2.x, r2.y);
+    assert.deepEqual(await ev(`window.__mutations`), { components: 0, wires: 0 }, "hovering mutates neither the component layer nor the wire layer");
+
+    // An edit with auto-update off leaves the old result on screen: the readout must say so instead of showing old numbers.
+    const label = await center('.component[data-id="R1"] .value-label');
+    await wheelAt(label.x, label.y, -100);
+    await settle();
+    assert.equal(await valueOf("R1"), "1.2k");
+    assert.equal((await state()).stale, true);
+    await moveTo(r2.x + 200, r2.y + 120);
+    await moveTo(r2.x, r2.y);
+    await until(`${L}.getHoverReadout().visible`, "the stale readout");
+    readout = await hover();
+    assert.equal(readout.stale, true);
+    assert.match(readout.text, /결과가 오래됨/);
+    assert.doesNotMatch(readout.text, /mA|mW/, "no old numbers are shown");
+  });
+
+  test("measurements: SIN transient gives RMS = A/sqrt(2), f and Vpp = 2A; AC gives the RC -3 dB frequency; moving over the plot does not recompute", async () => {
+    await navigate("/?example=parallel-sine");
+    const source = (await component("V1")).props;
+    const amplitude = parseEng(source.amplitude), frequency = parseEng(source.frequency);
+    await runAnalysis("transient");
+    await until(`${L}.getMeasure().visible`, "the measurement summary");
+    const rows = await measureRows();
+    const row = rows.find((item) => item.trace === "V(V1.1)");
+    assert.ok(row, `a V(V1.1) measurement row exists: ${JSON.stringify(rows)}`);
+    near(parseEng(row.cells.RMS), amplitude / Math.SQRT2, 0.01, "RMS");
+    near(parseEng(row.cells["주파수"]), frequency, 0.01, "frequency");
+    near(parseEng(row.cells.Vpp), 2 * amplitude, 0.01, "Vpp");
+    near(parseEng(row.cells["평균"]), 0, 1, "mean (about 0)", 0.01 * amplitude);
+    assert.match(await ev(`document.getElementById("measure-summary").textContent`), /RMS/);
+
+    // Mouse moves across the plot only move the cursor: nothing is measured again.
+    const before = await ev(`${L}.getMeasure()`);
+    for (let n = 0; n < 12; n += 1) { const point = await plotPoint(0.05 + n * 0.08); await moveTo(point.x, point.y); }
+    assert.notEqual((await state()).scope.hoverIndex, null, "the plot cursor really followed the mouse");
+    const after = await ev(`${L}.getMeasure()`);
+    assert.equal(after.computeCount, before.computeCount, "mouse moves over the plot must not recompute the measurements");
+    assert.equal(after.signature, before.signature);
+
+    await navigate("/?example=rc-lowpass");
+    const { R1, C1 } = Object.fromEntries((await state()).circuit.components.map((item) => [item.id, item.props]));
+    await runAnalysis("ac");
+    const acRows = await measureRows();
+    const acRow = acRows.find((item) => item.trace === "V(C1.1)");
+    assert.ok(acRow, `an AC measurement row exists: ${JSON.stringify(acRows)}`);
+    near(parseEng(acRow.cells["−3 dB 차단"]), 1 / (2 * Math.PI * parseEng(R1.value) * parseEng(C1.value)), 0.01, "-3 dB frequency");
+  });
+
+  test("A/B cursors: click pins A, Shift+click places B, deltas are raw-sample differences, Shift+arrow moves only B, Esc clears A then B", async () => {
+    await navigate("/?example=parallel-sine");
+    await selectPart("R1");
+    await runAnalysis("transient");
+    const { result } = await state();
+    const v = (index) => nodeValue(result, index, "V1", 0);
+    const x = result.xValues;
+    const r1 = await component("R1");
+    const depth = (await state()).historyDepth;
+
+    const a = await plotPoint(0.1);
+    await clickAt(a.x, a.y); await settle();
+    let scope = (await state()).scope;
+    assert.notEqual(scope.pinnedIndex, null, "a click pins cursor A");
+    assert.equal(scope.cursorB, null);
+    const b = await plotPoint(0.35);
+    await clickAt(b.x, b.y, { modifiers: MOD.shift }); await settle();
+    const placed = (await state()).scope;
+    assert.notEqual(placed.cursorB, null, "Shift+click places cursor B");
+    assert.equal(placed.pinnedIndex, scope.pinnedIndex, "Shift+click leaves A where it was");
+    assert.ok(placed.cursorB > placed.pinnedIndex);
+    const ia = placed.pinnedIndex, ib = placed.cursorB;
+
+    await until(`document.querySelectorAll("#cursor-readout .delta-item").length >= 2`, "the A/B delta line");
+    assert.match(await ev(`document.querySelector("#cursor-readout .cursor-delta").textContent`), /V\(V1\.1\)/, "the delta names the trace it describes");
+    let items = await deltaItems();
+    near(parseEng(items["ΔT"]), x[ib] - x[ia], 0.002, "dT is B - A of the raw time samples");
+    near(parseEng(items["ΔV"]), v(ib) - v(ia), 0.002, "dV is B - A of the raw samples");
+    assert.ok(Math.abs(v(ib) - v(ia)) > 1, "the chosen samples really differ (the check is not vacuous)");
+
+    // Shift+Arrow moves B only: A and the selected part stay where they are, and nothing is added to the history.
+    assert.equal(await ev(`document.activeElement.id`), "wave-plot", "the plot has the keyboard focus after the click");
+    await press("ArrowRight", "ArrowRight", 39, MOD.shift);
+    scope = (await state()).scope;
+    assert.equal(scope.cursorB, ib + 1, "Shift+Right moves B one sample");
+    assert.equal(scope.pinnedIndex, ia, "A did not move");
+    assert.deepEqual(await component("R1"), r1, "the selected component did not move");
+    assert.equal((await state()).historyDepth, depth, "no history entry");
+    items = await deltaItems();
+    near(parseEng(items["ΔT"]), x[ib + 1] - x[ia], 0.002, "dT follows the moved B");
+    near(parseEng(items["ΔV"]), v(ib + 1) - v(ia), 0.002, "dV follows the moved B", 1e-3);
+    await press("ArrowRight", "ArrowRight", 39);
+    scope = (await state()).scope;
+    assert.equal(scope.pinnedIndex, ia + 1, "a plain Right moves A");
+    assert.equal(scope.cursorB, ib + 1, "B did not move");
+    assert.deepEqual(await component("R1"), r1, "the selected component still did not move");
+
+    // Esc releases A first, then B.
+    await press("Escape", "Escape", 27);
+    scope = (await state()).scope;
+    assert.equal(scope.pinnedIndex, null, "the first Esc clears A");
+    assert.equal(scope.cursorB, ib + 1, "B survives the first Esc");
+    await press("Escape", "Escape", 27);
+    scope = (await state()).scope;
+    assert.equal(scope.cursorB, null, "the second Esc clears B");
+    assert.equal(await ev(`document.querySelectorAll("#cursor-readout .cursor-delta").length`), 0, "the delta line is gone");
+  });
+
+  test("sweep: R1 500 -> 2k, 3 log points overlay 3 series whose -3 dB scales 1/R; cancel, an edit and a normal run each drop the overlay", async () => {
+    await navigate("/?example=rc-lowpass");
+    await openSweepForm("500", "2k", "3");
+    await click("#sweep-run");
+    await until(`${L}.getSweep().overlay`, "the sweep overlay");
+    const sweep = await sweepOf();
+    assert.equal(sweep.running, false);
+    assert.equal(sweep.overlay.series.length, 3, "one series per sweep point");
+    assert.equal(new Set(sweep.overlay.series.map((item) => item.label)).size, 3, "distinct labels");
+    assert.equal(new Set(sweep.overlay.series.map((item) => item.color)).size, 3, "distinct colours");
+    assert.deepEqual(sweep.overlay.series.map((item) => item.sweepText), ["500", "1k", "2k"]);
+    // -3 dB frequency per trace: halving the resistance doubles it.
+    await until(`document.querySelectorAll("#measure-body .measure-row").length === 3`, "a measurement row per sweep trace");
+    const cutoffs = (await measureRows()).map((item) => parseEng(item.cells["−3 dB 차단"]));
+    near(cutoffs[0] / cutoffs[1], 2, 0.03, "fc(500) / fc(1k)");
+    near(cutoffs[1] / cutoffs[2], 2, 0.03, "fc(1k) / fc(2k)");
+    near(cutoffs[1], 1 / (2 * Math.PI * 1e3 * 1e-6), 0.01, "fc at the unswept 1k value");
+    // A plain run replaces the overlay with the normal result.
+    await click("#run-button");
+    await until(`${L}.getState().runState.status === "success"`, "the normal run");
+    assert.equal((await sweepOf()).overlay, null, "a normal run clears the overlay");
+
+    // Cancelling between two points leaves nothing behind. The 2nd point is held back until the user cancels.
+    await navigate("/?example=rc-lowpass");
+    await openSweepForm("500", "2k", "3");
+    await installWorkerGate(1); // after the form: an automatic re-run must not use up the free slot
+    await click("#sweep-run");
+    await until(`${L}.getSweep().running && ${L}.getSweep().progress.startsWith("스윕 2/")`, "the sweep to wait on its 2nd point");
+    await click("#cancel-analysis-button");
+    await ev(`window.__gate.release()`);
+    await sleep(300);
+    let after = await sweepOf();
+    assert.equal(after.running, false, "the sweep stopped");
+    assert.equal(after.overlay, null, "a cancelled sweep publishes no overlay");
+    assert.equal(await ev(`document.querySelectorAll("#probe-list .sweep-chip").length`), 0, "no sweep legend is left");
+
+    // Editing the circuit while the sweep runs invalidates it.
+    await navigate("/?example=rc-lowpass");
+    await openSweepForm("500", "2k", "3");
+    await installWorkerGate(1);
+    await click("#sweep-run");
+    await until(`${L}.getSweep().running && ${L}.getSweep().progress.startsWith("스윕 2/")`, "the sweep to wait on its 2nd point");
+    await typeInto(VALUE_INPUT, "2k");
+    await press("Enter", "Enter", 13);
+    await waitFor(async () => (await valueOf("R1")) === "2k", "the edit to commit");
+    await ev(`window.__gate.release()`);
+    await sleep(400);
+    after = await sweepOf();
+    assert.equal(after.running, false, "the sweep stopped after the edit");
+    assert.equal(after.overlay, null, "an edit during the sweep drops its result");
+    assert.equal(await valueOf("R1"), "2k");
+  });
+
+  test("drag render: 50 consecutive drags are never cancelled, never fall back to a full render, and the SVG equals a forced full render", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await click('[data-tool="select"]');
+    await ev(`window.__cancelled = []; document.getElementById("circuit-canvas").addEventListener("pointercancel", () => window.__cancelled.push("pointercancel"), true); 0`);
+    const stats0 = await ev(`${L}.getCanvasStats()`);
+    assert.equal(typeof stats0.dragFallback, "number", "the debug hook exposes dragFallback");
+    const depth0 = (await state()).historyDepth;
+    const layers = `["wire-layer", "component-layer", "overlay-layer"].map((id) => document.getElementById(id).innerHTML)`;
+    const start = await component("R2");
+    for (let n = 0; n < 50; n += 1) {
+      const dx = n % 2 === 0 ? 40 : -40, dy = n % 2 === 0 ? 20 : -20; // alternate so the part stays on screen
+      const before = await component("R2");
+      await dragPart("R2", dx, dy);
+      const moved = await component("R2");
+      assert.deepEqual([moved.x, moved.y], [before.x + dx, before.y + dy], `drag ${n} was committed in full (not cancelled)`);
+      if (n % 10 === 9 || n < 2) {
+        const [cheap, full] = await ev(`(() => { const cheap = ${layers}; ${L}.forceCanvasRender(); return [cheap, ${layers}]; })()`);
+        for (const [i, name] of ["wire-layer", "component-layer", "overlay-layer"].entries()) assert.equal(cheap[i], full[i], `drag ${n}: ${name} after the cheap drag update equals a full render`);
+      }
+    }
+    const end = await component("R2");
+    assert.deepEqual([end.x, end.y], [start.x, start.y], "50 alternating drags return to the start");
+    const stats = await ev(`${L}.getCanvasStats()`);
+    assert.equal(stats.dragFallback, stats0.dragFallback, "no drag frame fell back to a full render");
+    assert.ok(stats.drag - stats0.drag >= 50, `the cheap drag path really ran (${stats.drag - stats0.drag} frames)`);
+    assert.deepEqual(await ev(`window.__cancelled`), [], "no drag was cancelled by the browser");
+    assert.equal((await state()).historyDepth, depth0 + 50, "one history entry per drag");
+  });
+
+  test("canvas clicks: background deselects; a part's centre selects and a pin tip starts a wire at min, default and max zoom; a junction centre selects it", async () => {
+    await navigate("/?example=rc-charge");
+    await autoUpdateOff();
+    await click('[data-tool="select"]');
+    const exercise = async (zoom) => {
+      await clickPart("R1");
+      assert.deepEqual((await state()).selected, { kind: "component", id: "R1" }, `${zoom}: the middle of R1 selects it`);
+      const empty = await bgPoint();
+      await clickAt(empty.x, empty.y); await settle();
+      assert.equal((await state()).selected, null, `${zoom}: a click on the background deselects`);
+      await clickPart("R1");
+      assert.equal((await state()).selected?.id, "R1", `${zoom}: R1 is selectable again`);
+      const tip = await pinTip("R1", 0);
+      await clickAt(tip.x, tip.y); await settle();
+      assert.deepEqual((await state()).pendingPin, { componentId: "R1", pin: 0 }, `${zoom}: a click on the pin tip starts a wire`);
+      await press("Escape", "Escape", 27);
+      assert.equal((await state()).pendingPin, null, `${zoom}: Esc cancels the wire`);
+    };
+    const zoomAround = async (deltaY, limit) => {
+      const anchor = await partPoint("R1");
+      for (let n = 0; n < 30; n += 1) {
+        const width = (await state()).canvasView.width;
+        await wheelAt(anchor.x, anchor.y, deltaY);
+        await settle();
+        if ((await state()).canvasView.width === width) break;
+      }
+      assert.equal((await state()).canvasView.width, limit, "the zoom reached its limit");
+    };
+
+    await exercise("default zoom");
+    await zoomAround(-100, 220);
+    await exercise("min zoom (220)");
+    await zoomAround(100, 3040);
+    await exercise("max zoom (3040)");
+    await click("#fit-button");
+
+    // A junction made by double-clicking a wire: clicking its centre selects it (and does not start a wire).
+    const onWire = await ev(`(() => {
+      const hit = document.querySelector('[data-wire-id="W2"] .wire-hit'); const middle = hit.getPointAtLength(hit.getTotalLength() / 2);
+      const p = new DOMPoint(middle.x, middle.y).matrixTransform(hit.getScreenCTM());
+      return { x: p.x, y: p.y, own: Boolean(document.elementFromPoint(p.x, p.y)?.closest('[data-wire-id="W2"]')) };
+    })()`);
+    assert.ok(onWire.own, "the middle of wire W2 is clickable");
+    await clickAt(onWire.x, onWire.y, { clickCount: 1 });
+    await clickAt(onWire.x, onWire.y, { clickCount: 2 });
+    await settle();
+    const junction = (await state()).circuit.junctions?.[0];
+    assert.ok(junction, "a double-click on a wire adds a junction");
+    const empty = await bgPoint();
+    await clickAt(empty.x, empty.y); await settle();
+    assert.equal((await state()).selected, null);
+    const dot = await ev(`(() => {
+      const e = document.querySelector('[data-junction-id="${junction.id}"] circle.junction'); const r = e.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2;
+      return { x, y, own: Boolean(document.elementFromPoint(x, y)?.closest('[data-junction-id="${junction.id}"]')) };
+    })()`);
+    assert.ok(dot.own, "the junction centre belongs to the junction");
+    await clickAt(dot.x, dot.y); await settle();
+    assert.deepEqual((await state()).selected, { kind: "junction", id: junction.id }, "a click on the junction centre selects it");
+    assert.equal((await state()).pendingPin, null);
+  });
+
+  test("파형 크게: the toggle makes the plot taller and the second press restores it", async () => {
+    await navigate("/?example=rc-charge");
+    await runAnalysis("transient");
+    const plotHeight = () => ev(`document.getElementById("wave-plot").getBoundingClientRect().height`);
+    const label = () => ev(`document.getElementById("wave-size-button").textContent.trim()`);
+    const normal = await plotHeight();
+    assert.equal(await label(), "파형 크게");
+    await click("#wave-size-button");
+    await waitFor(async () => (await plotHeight()) > normal + 20, "the plot to grow");
+    assert.equal(await label(), "파형 작게");
+    assert.equal(await ev(`document.getElementById("wave-size-button").getAttribute("aria-pressed")`), "true");
+    assert.ok((await state()).scope.geometry.height > normal, "the plot redrew at the larger size");
+    await click("#wave-size-button");
+    await waitFor(async () => Math.abs((await plotHeight()) - normal) < 2, "the plot to return to its normal height");
+    assert.equal(await label(), "파형 크게");
+    assert.equal(await ev(`document.getElementById("wave-size-button").getAttribute("aria-pressed")`), "false");
+  });
+
+  test("autosave: an edit is restored after a reload (복원 -> one history step), 무시 only hides the banner", async () => {
+    await clearBrowserStorage();
+    await navigate("/?example=divider");
+    assert.match(await ev(`location.search`), /example=divider/, "the launch link is still in the address bar before any edit");
+    await selectPart("R1");
+    await press("r", "KeyR", 82);
+    const edited = await state();
+    const rotated = (await component("R1")).rotation;
+    assert.equal(await ev(`location.search`), "", "the first edit drops ?example= from the address bar");
+    const tabId = await tabIdOf();
+    await waitFor(async () => (await autosaveSlots())[tabId]?.project?.circuit?.components?.find((item) => item.id === "R1")?.rotation === rotated, "the edit to be autosaved (debounced)");
+
+    await reloadPage();
+    assert.equal((await state()).circuit.components.length, 0, "the reloaded tab opens the default editor, not the old circuit");
+    await until(`document.querySelectorAll("#canvas-notices .canvas-notice").length === 1`, "the restore banner");
+    assert.match((await noticeTexts())[0], /이전 작업이 있습니다/);
+    await clickNoticeButton("복원");
+    const restored = await state();
+    assert.deepEqual(restored.circuit, edited.circuit, "restoring brings the autosaved circuit back exactly");
+    assert.equal(restored.historyDepth, 1, "the restore is one undo step");
+    assert.deepEqual(await noticeTexts(), [], "the banner closes after 복원");
+    assert.equal(await ev(`location.search`), "");
+
+    // 무시: the banner goes away, the editor stays as it is (empty), and nothing is written over the autosave.
+    const before = (await autosaveSlots())[tabId];
+    await reloadPage();
+    await until(`document.querySelectorAll("#canvas-notices .canvas-notice").length === 1`, "the restore banner again");
+    await clickNoticeButton("무시");
+    assert.deepEqual(await noticeTexts(), [], "무시 hides the banner");
+    assert.equal((await state()).circuit.components.length, 0, "무시 does not restore");
+    assert.equal((await state()).historyDepth, 0);
+    await sleep(1000);
+    assert.deepEqual((await autosaveSlots())[tabId], before, "dismissing leaves the saved slot untouched");
+  });
+
+  test("autosave: two tabs never overwrite each other's slot, and a restore that races a pending save keeps the restored content", async () => {
+    await clearBrowserStorage();
+    await navigate("/?example=divider");
+    await selectPart("R1");
+    await press("r", "KeyR", 82);
+    const tab1 = await tabIdOf();
+    const slotHas = async (id, componentId) => Boolean((await autosaveSlots())[id]?.project?.circuit?.components?.some((item) => item.id === componentId));
+    await waitFor(() => slotHas(tab1, "R2"), "tab 1 to autosave the divider");
+
+    const second = await openTab();
+    let tab2;
+    try {
+      await second.run(async () => {
+        await navigate("/?example=rc-lowpass");
+        await selectPart("C1");
+        await press("r", "KeyR", 82);
+        tab2 = await tabIdOf();
+        await waitFor(() => slotHas(tab2, "C1"), "tab 2 to autosave the low-pass");
+      });
+    } finally { await second.close(); }
+    assert.notEqual(tab1, tab2, "each tab has its own id");
+    let slots = await autosaveSlots();
+    assert.deepEqual(Object.keys(slots).sort(), [tab1, tab2].sort(), "exactly one slot per tab (circuit-lab.autosave.v2.<tabId>)");
+    assert.equal(slots[tab1].project.title, "분압기 (DC)", "tab 1's slot still holds its own circuit");
+    assert.equal(slots[tab2].project.title, "RC 저역통과 (AC)");
+    assert.equal(slots[tab1].project.circuit.components.some((item) => item.id === "C1"), false, "tab 2's circuit did not leak into tab 1's slot");
+
+    // Tab 1 keeps editing: only its own slot changes.
+    const untouched = slots[tab2];
+    await press("r", "KeyR", 82);
+    const rotatedAgain = (await component("R1")).rotation;
+    await waitFor(async () => (await autosaveSlots())[tab1]?.project?.circuit?.components?.find((item) => item.id === "R1")?.rotation === rotatedAgain, "tab 1's second edit to be autosaved");
+    slots = await autosaveSlots();
+    assert.deepEqual(slots[tab2], untouched, "tab 1's save did not touch tab 2's slot");
+
+    // Reload tab 1 (empty default editor + banner), start an edit, and restore before its save fires: the restore wins.
+    const ownBefore = slots[tab1];
+    await reloadPage();
+    await until(`document.querySelectorAll("#canvas-notices .canvas-notice").length >= 1`, "the restore banner");
+    await click('.palette-item[data-type="R"]');
+    const empty = await bgPoint();
+    await clickAt(empty.x, empty.y); await settle();
+    assert.equal((await state()).circuit.components.length, 1, "the pending edit placed one part");
+    await clickNoticeButton("복원");
+    const restored = (await state()).circuit;
+    assert.deepEqual(restored.components.map((item) => item.id).sort(), ownBefore.project.circuit.components.map((item) => item.id).sort(), "the restored circuit replaced the half-made edit");
+    await sleep(1400); // longer than the 800 ms debounce
+    assert.deepEqual((await state()).circuit, restored, "the restored content is still there after the old save would have fired");
+    assert.deepEqual((await autosaveSlots())[tab1], ownBefore, "the pending save of the replaced edit was dropped, not written");
+  });
+
+  test("share link: the copied URL opens in a new page with the same circuit and a notice; an oversize #p= link is refused", async () => {
+    await clearBrowserStorage();
+    await navigate("/?example=rc-lowpass");
+    await ev(`Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { window.__copied = text; } } })`);
+    const label = await center('.component[data-id="R1"] .value-label');
+    await wheelAt(label.x, label.y, -100);
+    await settle();
+    assert.equal(await valueOf("R1"), "1.2k");
+    await click("#share-button");
+    const url = await until(`window.__copied`, "the share link to be copied");
+    assert.ok(url.startsWith(`${ctx.base}/#p=`), `a hash link on this origin: ${url.slice(0, 80)}`);
+    assert.ok(url.length < 8000);
+    await until(`document.getElementById("canvas-notices").textContent.includes("링크를 복사했습니다")`, "the copy notice");
+    const original = await state();
+
+    const second = await openTab();
+    try {
+      await second.run(async () => {
+        await navigate(url.slice(ctx.base.length));
+        await until(`${L}.getState().circuit.components.length > 0`, "the shared circuit to load");
+        const shared = await state();
+        assert.deepEqual(shared.circuit, original.circuit, "the shared page shows the same circuit");
+        assert.equal(shared.circuit.components.find((item) => item.id === "R1").props.value, "1.2k", "including the edit that was made after loading the example");
+        assert.deepEqual(shared.probes, original.probes);
+        await until(`document.getElementById("canvas-notices").textContent.includes("공유 링크에서 불러왔습니다")`, "the 'loaded from a share link' notice");
+        assert.equal(shared.historyDepth, 1, "opening a link is one undo step");
+      });
+    } finally { await second.close(); }
+
+    // A link that is far too large is explained and the default editor stays.
+    await navigate(`/?oversize=1#p=j.${"A".repeat(70000)}`); // a different query, so this is a real page load and not a hash-only jump
+    await until(`document.getElementById("canvas-notices").textContent.includes("너무 커서")`, "the 'too large' notice");
+    assert.equal((await state()).circuit.components.length, 0, "the default editor is kept");
+    assert.equal((await state()).historyDepth, 0);
+  });
+
+  test("drag + keyboard: R during an active drag commits the move first; undo then reverts the rotation and then the move", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await ev(`document.activeElement.blur()`);
+    const start = await component("R2");
+    const depth0 = (await state()).historyDepth;
+    const grab = await partPoint("R2");
+    const mouse = (type, x, y, extra = {}) => ctx.cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra });
+    await mouse("mouseMoved", grab.x, grab.y);
+    await mouse("mousePressed", grab.x, grab.y, { button: "left", buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 4; step += 1) await mouse("mouseMoved", grab.x + 15 * step, grab.y, { buttons: 1 });
+    await settle();
+    let now = await state();
+    assert.notEqual(now.pointerOwnerId, null, "the drag is in progress");
+    assert.equal(now.selected?.id, "R2");
+    await press("r", "KeyR", 82);
+    now = await state();
+    assert.equal(now.pointerOwnerId, null, "the key committed the drag");
+    const moved = await component("R2");
+    assert.equal(moved.x, start.x + 60, "the part sits where the drag left it");
+    assert.equal(moved.rotation, (start.rotation + 90) % 360, "and it was rotated");
+    assert.equal(now.historyDepth, depth0 + 2, "move and rotate are two entries");
+    await mouse("mouseReleased", grab.x + 60, grab.y, { button: "left", buttons: 0, clickCount: 1 });
+    await settle();
+    assert.equal((await state()).historyDepth, depth0 + 2, "releasing the button afterwards adds nothing");
+    assert.deepEqual(await component("R2"), moved);
+
+    await click("#undo-button");
+    let undone = await component("R2");
+    assert.deepEqual([undone.x, undone.y, undone.rotation], [moved.x, moved.y, start.rotation], "first undo reverts only the rotation (the move stays)");
+    await click("#undo-button");
+    undone = await component("R2");
+    assert.deepEqual([undone.x, undone.y, undone.rotation], [start.x, start.y, start.rotation], "second undo reverts the move");
+    assert.equal((await state()).historyDepth, depth0);
+  });
+
+  test("arrow keys do not move the selected part while a scope button or the B cursor button has focus", async () => {
+    await navigate("/?example=rc-charge");
+    await selectPart("R1");
+    await runAnalysis("transient");
+    // The "B 커서" button is only shown once the scope reports a cursor change (it stays hidden right after a run, see the report),
+    // so place B from the keyboard first: click the plot (A), then Shift+Right.
+    const spot = await plotPoint(0.3);
+    await clickAt(spot.x, spot.y); await settle();
+    await press("ArrowRight", "ArrowRight", 39, MOD.shift);
+    await until(`!document.getElementById("cursor-b-button").classList.contains("hidden")`, "the B cursor button");
+    const placed = await component("R1");
+    const depth = (await state()).historyDepth;
+    for (const selector of ["#cursor-b-button", '#scope-controls [data-scale-step="1"]']) {
+      await ev(`document.querySelector(${JSON.stringify(selector)}).focus()`);
+      assert.equal(await ev(`document.activeElement.matches(${JSON.stringify(selector)})`), true, `${selector} has the focus`);
+      await press("ArrowRight", "ArrowRight", 39);
+      await press("ArrowDown", "ArrowDown", 40, MOD.shift);
+      await press("ArrowLeft", "ArrowLeft", 37);
+      assert.deepEqual(await component("R1"), placed, `arrows with ${selector} focused must not move the part`);
+      assert.equal((await state()).historyDepth, depth, `${selector}: no history entry`);
+    }
+    // Control: with the focus back on the page the very same key moves the part.
+    await ev(`document.activeElement.blur()`);
+    await press("ArrowRight", "ArrowRight", 39);
+    assert.equal((await component("R1")).x, placed.x + GRID, "the same key moves the part once nothing owns the arrows");
+    assert.equal((await state()).historyDepth, depth + 1);
+  });
+
+  test("new circuit after ?example=: a reload opens an empty editor and the example does not come back", async () => {
+    await clearBrowserStorage();
+    await navigate("/?example=divider");
+    assert.match(await ev(`location.search`), /example=divider/);
+    await click("#new-button");
+    assert.equal((await state()).circuit.components.length, 0);
+    assert.equal(await ev(`location.search`), "", "새 회로 removes ?example= from the address bar");
+    await reloadPage();
+    assert.equal((await state()).circuit.components.length, 0, "the reloaded editor is empty");
+    assert.ok(!(await ev(`location.href`)).includes("example"), "no example parameter after the reload");
+    assert.equal(await ev(`document.getElementById("empty-hint").classList.contains("hidden")`), false, "the empty-canvas hint is shown");
+    assert.deepEqual(await noticeTexts(), [], "nothing is offered for restore (the example was never autosaved)");
   });
 });

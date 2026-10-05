@@ -116,7 +116,7 @@ export class Cdp {
 }
 
 // ---- shared harness state ------------------------------------------------------------------------------------------
-export const ctx = { server: null, edge: null, cdp: null, profile: null, base: "", port: 0, serverLog: "" };
+export const ctx = { server: null, edge: null, cdp: null, profile: null, base: "", port: 0, serverLog: "", debugPort: 0 };
 export const problems = [];
 let cleanedUp = false;
 
@@ -169,16 +169,50 @@ export async function startBrowser() {
     if (!page) await sleep(100);
   }
   assert.ok(page, "Edge did not expose a page target");
+  ctx.debugPort = debugPort;
   ctx.cdp = new Cdp(page.webSocketDebuggerUrl);
   await ctx.cdp.open();
-  ctx.cdp.on(({ method, params }) => {
+  watchProblems(ctx.cdp);
+  await enableDomains(ctx.cdp);
+}
+
+/** Record console errors, uncaught exceptions and failed requests of one page into the shared problem list. */
+function watchProblems(cdp) {
+  cdp.on(({ method, params }) => {
     if (method === "Runtime.consoleAPICalled" && ["error", "warning", "assert"].includes(params.type)) problems.push(`console.${params.type}: ${params.args.map((arg) => arg.value ?? arg.description).join(" ").slice(0, 300)}`);
     if (method === "Runtime.exceptionThrown") problems.push(`exception: ${params.exceptionDetails.exception?.description ?? params.exceptionDetails.text}`.slice(0, 400));
     if (method === "Log.entryAdded" && params.entry.level === "error") problems.push(`log: ${params.entry.text} ${params.entry.url ?? ""}`.slice(0, 300));
     if (method === "Network.loadingFailed" && !params.canceled) problems.push(`network failure: ${params.errorText} ${params.requestId}`);
   });
-  for (const domain of ["Page", "Runtime", "Log", "Network", "DOM"]) await ctx.cdp.send(`${domain}.enable`);
-  await ctx.cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
+}
+
+async function enableDomains(cdp) {
+  for (const domain of ["Page", "Runtime", "Log", "Network", "DOM"]) await cdp.send(`${domain}.enable`);
+  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
+}
+
+/**
+ * A second page (tab) in the same browser context, so it shares localStorage with the first but has its own sessionStorage.
+ * Drive it with the usual helpers inside `await tab.run(async () => { ... })`: they talk to whichever page is current.
+ */
+export async function openTab(url = "about:blank") {
+  const target = await (await fetch(`http://127.0.0.1:${ctx.debugPort}/json/new?${encodeURIComponent(url)}`, { method: "PUT" })).json();
+  const cdp = new Cdp(target.webSocketDebuggerUrl);
+  await cdp.open();
+  watchProblems(cdp);
+  await enableDomains(cdp);
+  return {
+    cdp,
+    async run(work) {
+      const previous = ctx.cdp;
+      ctx.cdp = cdp;
+      try { return await work(); } finally { ctx.cdp = previous; }
+    },
+    async close() {
+      cdp.close();
+      try { await fetch(`http://127.0.0.1:${ctx.debugPort}/json/close/${target.id}`); } catch { /* the browser is going away anyway */ }
+    },
+  };
 }
 
 /** Idempotent. Returns the PIDs that were stopped so the caller can assert they are gone. */
@@ -287,10 +321,20 @@ export async function center(selector, { allowCovered = false } = {}) {
   return point;
 }
 
-export async function clickAt(x, y, { clickCount = 1 } = {}) {
+/** Modifier bits for Input.dispatch*Event: Alt 1, Ctrl 2, Meta 4, Shift 8. */
+export const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
+
+export async function clickAt(x, y, { clickCount = 1, modifiers = 0 } = {}) {
+  await mouse("mouseMoved", x, y, { modifiers });
+  await mouse("mousePressed", x, y, { button: "left", buttons: 1, clickCount, modifiers });
+  await mouse("mouseReleased", x, y, { button: "left", buttons: 0, clickCount, modifiers });
+}
+/** Move the real mouse (no buttons) and let the app handle the resulting events. */
+export async function moveTo(x, y) { await mouse("mouseMoved", x, y); await settle(); }
+/** One real wheel notch at a point (negative deltaY = away from the user). The pointer is moved there first. */
+export async function wheelAt(x, y, deltaY, modifiers = 0) {
   await mouse("mouseMoved", x, y);
-  await mouse("mousePressed", x, y, { button: "left", buttons: 1, clickCount });
-  await mouse("mouseReleased", x, y, { button: "left", buttons: 0, clickCount });
+  await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY, modifiers });
 }
 export async function click(selector, options) { const p = await center(selector, options); await clickAt(p.x, p.y); await settle(); }
 /** Two real clicks in a row; the second carries clickCount 2 so the browser raises dblclick. */
@@ -349,4 +393,44 @@ export async function runAnalysis(kind) {
 }
 export function nodeValue(result, pointIndex, componentId, pinIndex) {
   return result.points[pointIndex].nodeVoltages[result.topology.nodeIdByPin[`${componentId}:${pinIndex}`]];
+}
+
+// ---- extra helpers for the feature scenarios ------------------------------------------------------------------------
+/** Screen point inside the waveform plot area, as fractions (0..1) of the plot width/height. Needs a result on screen. */
+export async function plotPoint(fx, fy = 0.5) {
+  const point = await ev(`(() => {
+    const svg = document.getElementById("wave-plot"); const g = ${L}.getState().scope.geometry; const m = svg.getScreenCTM();
+    if (!g || !m) return null;
+    const p = new DOMPoint(g.left + g.plotWidth * ${fx}, g.top + g.plotHeight * ${fy}).matrixTransform(m);
+    return { x: p.x, y: p.y };
+  })()`);
+  assert.ok(point, "the waveform plot has no geometry yet (no result on screen?)");
+  return point;
+}
+
+/** An empty spot of the circuit canvas (the element under it is the background rect), searched from the lower right corner. */
+export async function bgPoint() {
+  const point = await ev(`(() => {
+    const r = document.getElementById("circuit-canvas").getBoundingClientRect();
+    for (let row = 0; row < 12; row += 1) for (let col = 0; col < 16; col += 1) {
+      const x = r.right - 14 - col * (r.width - 28) / 16, y = r.bottom - 10 - row * (r.height - 20) / 12;
+      if (document.elementFromPoint(x, y)?.classList.contains("canvas-bg")) return { x, y };
+    }
+    return null;
+  })()`);
+  assert.ok(point, "no empty canvas background point is visible");
+  return point;
+}
+
+/** The pin dot of a part; the element under that point must be that very pin (or its hit disc). */
+export async function pinTip(id, index) {
+  const point = await ev(`(() => {
+    const e = document.querySelector(${JSON.stringify(pin(id, index))}); if (!e) return null;
+    const r = e.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2;
+    const hit = document.elementFromPoint(x, y)?.closest(".pin, .pin-hit");
+    return { x, y, ok: Boolean(hit && hit.closest(".component")?.dataset.id === ${JSON.stringify(id)} && Number(hit.dataset.pin) === ${index}) };
+  })()`);
+  assert.ok(point, `missing pin ${id}:${index}`);
+  assert.ok(point.ok, `the tip of pin ${id}:${index} is covered by something else`);
+  return point;
 }
