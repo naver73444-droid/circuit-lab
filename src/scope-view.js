@@ -40,7 +40,12 @@ export class ScopeView {
       this.selectedTraceKeys.set(button.dataset.axisSide, button.dataset.cursorTraceKey);
       this.renderCursor();
     });
-    this.resizeObserver = new ResizeObserver(() => { if (this.result) this.render(); });
+    // Cache the plot size here: reading clientWidth right after innerHTML writes forces a layout in render().
+    this.size = null;
+    this.resizeObserver = new ResizeObserver(() => {
+      this.size = { width: svg.clientWidth, height: svg.clientHeight };
+      if (this.result) this.render();
+    });
     this.resizeObserver.observe(svg);
   }
 
@@ -182,8 +187,10 @@ export class ScopeView {
   moveCursor(point) {
     if (!this.result || this.result.analysis === "dc") return;
     if (this.result.analysis === "transient" && this.pinnedIndex !== null) return;
-    this.hoverIndex = this.indexAtPoint(point);
-    this.cursorIndex = this.hoverIndex;
+    const index = this.indexAtPoint(point);
+    if (index === this.hoverIndex && index === this.cursorIndex) return;
+    this.hoverIndex = index;
+    this.cursorIndex = index;
     this.renderCursor();
   }
 
@@ -254,8 +261,9 @@ export class ScopeView {
     } : null;
     this.renderControls();
     if (active?.axis && active.step) this.controls.querySelector(`[data-scale-axis="${active.axis}"][data-scale-step="${active.step}"]`)?.focus({ preventScroll: true });
-    const width = Math.max(260, this.svg.clientWidth || 600);
-    const height = Math.max(180, this.svg.clientHeight || 320);
+    const size = this.size ?? { width: this.svg.clientWidth, height: this.svg.clientHeight };
+    const width = Math.max(260, size.width || 600);
+    const height = Math.max(180, size.height || 320);
     const transientAxes = this.result.analysis === "transient";
     const hasLeftAxis = transientAxes ? [...this.axes.keys()].some((quantity) => axisSide(quantity) === "left") : this.axes.size > 0;
     const hasRightAxis = transientAxes ? [...this.axes.keys()].some((quantity) => axisSide(quantity) === "right") : this.axes.size > 1;

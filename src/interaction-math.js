@@ -1,4 +1,8 @@
 /** Screen-space gesture math. Values are CSS pixels, never device pixels. */
+/** Shared canvas zoom limits (viewBox width): wheel/button zoom and pinch must agree. */
+export const CANVAS_VIEW_MIN_WIDTH = 220;
+export const CANVAS_VIEW_MAX_WIDTH = 3040;
+
 export function passedDragSlop(start, point, pointerType = "mouse") {
   if (![start?.x, start?.y, point?.x, point?.y].every(Number.isFinite)) return false;
   return Math.hypot(point.x - start.x, point.y - start.y) >= (pointerType === "touch" ? 8 : 4);
@@ -22,7 +26,7 @@ export function viewForPinch(start, midpoint, distance) {
     start.anchor?.x, start.anchor?.y, start.center?.x, start.center?.y].every(Number.isFinite)
     || distance < 1 || start.distance < 1 || start.scale <= 0
     || start.view.width <= 0 || start.view.height <= 0) return null;
-  const width = Math.max(220, Math.min(3040, start.view.width * start.distance / distance));
+  const width = Math.max(CANVAS_VIEW_MIN_WIDTH, Math.min(CANVAS_VIEW_MAX_WIDTH, start.view.width * start.distance / distance));
   const factor = width / start.view.width, height = start.view.height * factor;
   const scale = start.scale / factor;
   return { width, height,

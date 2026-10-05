@@ -50,7 +50,7 @@ import { suggestAnalysis } from "./analysis-policy.js";
 import { initializeAppearance } from "./theme.js";
 import { traceColor } from "./trace-color.js";
 import { InputDrafts } from "./input-drafts.js";
-import { passedDragSlop, nearestScreenTarget } from "./interaction-math.js";
+import { passedDragSlop, nearestScreenTarget, CANVAS_VIEW_MIN_WIDTH, CANVAS_VIEW_MAX_WIDTH } from "./interaction-math.js";
 import { installCanvasTouch } from "./canvas-touch.js";
 import { createPanelController } from "./panel-controller.js";
 import { distanceToSegment } from "./touch-targets.js";
@@ -129,6 +129,10 @@ let canvasFrame = null;
 function updateCanvasView() {
   const v = state.canvasView;
   elements["circuit-canvas"].setAttribute("viewBox", `${v.x} ${v.y} ${v.width} ${v.height}`);
+}
+let overlayFrame = null;
+function scheduleOverlayRender() {
+  if (overlayFrame === null) overlayFrame = requestAnimationFrame(() => { overlayFrame = null; if (circuitWorkspaceActive) renderOverlay(); });
 }
 function scheduleCanvasRender() {
   if (canvasFrame === null) canvasFrame = requestAnimationFrame(() => { canvasFrame = null; renderCanvas(); });
@@ -247,7 +251,11 @@ function updateDraftNotice(updatePhasor = true) {
   const notice = document.getElementById("draft-notice");
   notice.classList.toggle("hidden", inputDrafts.size === 0);
   document.getElementById("draft-count").textContent = `입력 대기 ${inputDrafts.size}`;
-  if (updatePhasor) renderPhasorLearning();
+  // Per-keystroke path: only AC results are shown live; other analyses refresh on the next full render.
+  if (updatePhasor) {
+    if (state.settings.analysis === "ac") renderPhasorLearning();
+    else phasorDirty = true;
+  }
 }
 
 function applyInputDrafts(container, kind, component = null) {
@@ -509,6 +517,7 @@ function wireRoute(wire, a, b) {
 }
 
 function renderOverlay(componentById = new Map(state.circuit.components.map((component) => [component.id, component]))) {
+  if (overlayFrame !== null) { cancelAnimationFrame(overlayFrame); overlayFrame = null; }
   const endpointCounts = new Map();
   const endpointByKey = new Map();
   for (const wire of state.circuit.wires) {
@@ -958,6 +967,35 @@ function selectedConnectionStatus(componentId) {
   }
 }
 
+// Inspector re-renders rebuild innerHTML, which would drop keyboard focus (Tab lands on BODY).
+// Remember the focused control (and any in-flight Tab direction) and re-focus its successor.
+let inspectorTabIntent = 0;
+let inspectorLastFocused = null;
+const INSPECTOR_FOCUSABLE = "input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])";
+function captureInspectorFocus() {
+  const root = elements["inspector-content"];
+  // During a Tab-triggered change event the browser has already cleared activeElement.
+  let active = document.activeElement;
+  if ((!active || !root.contains(active)) && inspectorTabIntent !== 0 && inspectorLastFocused?.isConnected) active = inspectorLastFocused;
+  if (!active || active === root || !root.contains(active)) return null;
+  const index = [...root.querySelectorAll(INSPECTOR_FOCUSABLE)].indexOf(active);
+  if (index < 0) return null;
+  const caret = typeof active.selectionStart === "number" ? { start: active.selectionStart, end: active.selectionEnd } : null;
+  return { index, caret, direction: inspectorTabIntent };
+}
+function restoreInspectorFocus(saved) {
+  if (!saved) return;
+  const root = elements["inspector-content"];
+  if (document.activeElement && document.activeElement !== document.body && root.contains(document.activeElement)) return;
+  const items = [...root.querySelectorAll(INSPECTOR_FOCUSABLE)];
+  const target = items[saved.index + saved.direction];
+  if (!target) return;
+  target.focus({ preventScroll: false });
+  if (!saved.direction && saved.caret && typeof target.setSelectionRange === "function") {
+    try { target.setSelectionRange(saved.caret.start, saved.caret.end); } catch { /* non-text input */ }
+  }
+}
+
 function renderInspector() {
   if (!circuitWorkspaceActive) { circuitRenderDeferred = true; return; }
   const selected = state.selected;
@@ -1036,6 +1074,7 @@ function renderInspector() {
     if (control.status !== "valid") html += `<div class="connection-detail status-analysis-floating"><strong>제어 참조 오류</strong><span>${escapeHtml(control.reason)}</span><small>실행·정상 JSON 저장은 차단됩니다.</small></div>`;
   }
   if (component.type === "GND") html += `<p class="field-help">이 핀이 모든 전압 해석의 0 V 기준입니다.</p>`;
+  const savedFocus = captureInspectorFocus();
   elements["inspector-content"].innerHTML = html;
   applyInputDrafts(elements["inspector-content"], "prop", component);
   elements["inspector-content"].querySelectorAll("[data-prop-slider]").forEach((slider) => {
@@ -1098,6 +1137,7 @@ function renderInspector() {
   };
   controlTarget?.addEventListener("change", commitControlReference);
   controlDirection?.addEventListener("change", commitControlReference);
+  restoreInspectorFocus(savedFocus);
 }
 
 function settingField(label, key, value) {
@@ -1209,7 +1249,15 @@ function displayNumber(value, unit) {
   return `${Number(value.toPrecision(6))} ${unit}`;
 }
 
-function renderPhasorLearning() { phasorView.render(); }
+// The phasor view is expensive and only meaningful while its panel is open; a hidden panel is
+// marked dirty and flushed by panels' onChange / the next full render once it becomes visible.
+let phasorDirty = false;
+function phasorPanelVisible() { return !panels || panels.isOpen("phasor"); }
+function renderPhasorLearning() {
+  if (!phasorPanelVisible()) { phasorDirty = true; return; }
+  phasorDirty = false;
+  phasorView.render();
+}
 
 function rawSeriesForProbe(probe) {
   if (!state.result) return null;
@@ -1456,7 +1504,7 @@ async function runAnalysis({ automatic = false, generation = null, requestedAt =
   setStatus(automatic ? "자동 계산 중…" : "계산 중…", "running");
   if (automatic) elements["auto-update-status"].textContent = "자동 계산 중";
   elements["error-box"].classList.add("hidden");
-  await new Promise((resolve) => requestAnimationFrame(resolve));
+  await new Promise((resolve) => { requestAnimationFrame(resolve); setTimeout(resolve, 50); });
   if (serial !== state.runSerial || !acceptsRunGeneration(generation, state.generation)) return;
   const workerRequest = analysisWorkerClient.start("normal", { circuit, settings });
   activeAnalysisJob = { kind: "normal", serial, requestId: workerRequest.requestId, generation };
@@ -1526,12 +1574,14 @@ function deleteSelection() {
 function undo() {
   if (!state.history.length || !confirmDiscardDrafts()) return;
   state.future.push(snapshot());
+  if (state.future.length > 100) state.future.shift();
   restore(state.history.pop());
 }
 
 function redo() {
   if (!state.future.length || !confirmDiscardDrafts()) return;
   state.history.push(snapshot());
+  if (state.history.length > 100) state.history.shift();
   restore(state.future.pop());
 }
 
@@ -1554,7 +1604,7 @@ function cloneSelection(event = null) {
 
 function zoomCanvas(factor, anchor = { x: state.canvasView.x + state.canvasView.width / 2, y: state.canvasView.y + state.canvasView.height / 2 }) {
   const old = state.canvasView;
-  const width = Math.max(220, Math.min(1520, old.width * factor));
+  const width = Math.max(CANVAS_VIEW_MIN_WIDTH, Math.min(CANVAS_VIEW_MAX_WIDTH, old.width * factor));
   const height = width * (old.height / old.width);
   const xRatio = (anchor.x - old.x) / old.width;
   const yRatio = (anchor.y - old.y) / old.height;
@@ -1751,6 +1801,7 @@ function finishCanvasPointer(pointerId, reason = "commit") {
     state.ignoreClickUntil = performance.now() + 180;
     if (drag.kind !== "pan") {
       state.history.push(drag.before);
+      if (state.history.length > 100) state.history.shift();
       state.future = [];
       state.generation += 1;
       markStale();
@@ -1928,6 +1979,12 @@ function setupEvents() {
   document.addEventListener("click", (event) => {
     if (!event.target.closest("#probe-context-menu")) closeProbeContextMenu();
   });
+  elements["inspector-content"].addEventListener("focusin", (event) => { inspectorLastFocused = event.target; });
+  elements["inspector-content"].addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || event.ctrlKey || event.altKey || event.metaKey) return;
+    inspectorTabIntent = event.shiftKey ? -1 : 1;
+    setTimeout(() => { inspectorTabIntent = 0; }, 0);
+  }, true);
   document.querySelectorAll("[data-tool]").forEach((button) => button.addEventListener("click", () => setTool(button.dataset.tool)));
   elements["circuit-canvas"].addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || !["select", "pan"].includes(state.tool) || (state.tool !== "pan" && !event.target.classList.contains("canvas-bg")) || state.pendingPin) return;
@@ -1948,7 +2005,7 @@ function setupEvents() {
     if (!circuitWorkspaceActive) return;
     if (state.pendingPin && event.isPrimary !== false && event.target.closest?.("#circuit-canvas")) {
       const point = svgPoint(event);
-      if (point) { state.pointer = snapPoint(point); renderOverlay(); }
+      if (point) { state.pointer = snapPoint(point); scheduleOverlayRender(); }
     }
     updateCanvasPointer(event);
   });
@@ -2083,6 +2140,9 @@ function setupEvents() {
   window.addEventListener("pointermove", (event) => {
     if (!circuitWorkspaceActive) return;
     if (plotDrag && !ownsPointer(plotDrag, event.pointerId)) return;
+    // Skip the layout-forcing getScreenCTM() unless the pointer is over the plot, a drag is active,
+    // or a hover cursor still has to be cleared after leaving the plot.
+    if (!plotDrag && scopeView.hoverIndex === null && !elements["wave-plot"].contains(event.target)) return;
     const point = scopeView.point(event);
     if (plotDrag && point) {
       plotDrag = advanceCursorPointerSession(plotDrag, { x: event.clientX, y: event.clientY }, point);
