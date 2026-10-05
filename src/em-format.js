@@ -60,3 +60,29 @@ export function siComplex(re, im, unit = '', { digits = 4, polar = true } = {}) 
   const rectangular = `${shared.parts[0]} ${im < 0 ? '−' : '+'} j${shared.parts[1]}`;
   return withUnit(polar ? `${rectangular} = ${shared.parts[2]} ∠ ${angle}` : rectangular, shared.unit);
 }
+
+/** Relative tolerance below which a value is floating-point cancellation noise of its own integrand scale. */
+export const NOISE_RTOL = 1e-9;
+export const NOISE_ZERO_TEXT = "≈ 0 (수치 오차 이내)";
+
+/** True when 0 < |value| <= rtol * scale: indistinguishable from round-off of the terms that were summed. Exact 0 is not noise. */
+export function isNumericNoise(value, scale, rtol = NOISE_RTOL) {
+  return Number.isFinite(value) && Number.isFinite(scale) && scale > 0 && value !== 0 && Math.abs(value) <= rtol * scale;
+}
+
+/**
+ * Display text for a quantity whose theoretical value may be 0 (closed integral of a conservative field, div/curl of a
+ * solenoidal/irrotational field). scale is the magnitude of the terms that were summed (max|F|·path length, max|dFi/dxj|).
+ * Returns { text, title, noise }: noise values read "≈ 0 (수치 오차 이내)" and keep the raw number in title for a tooltip.
+ */
+export function noiseAwareText(value, scale, format, rtol = NOISE_RTOL) {
+  if (!isNumericNoise(value, scale, rtol)) return { text: format(value), title: "", noise: false };
+  return { text: NOISE_ZERO_TEXT, title: `원시값 ${format(value)} · 판정 기준 |값| ≤ ${rtol}×${format(scale)} (적분 항 크기 대비 상대 허용오차)`, noise: true };
+}
+
+/** Same rule for a vector (curl): all components must be noise relative to one scale; the title lists the raw vector. */
+export function noiseAwareVectorText(vector, scale, format, rtol = NOISE_RTOL) {
+  const max = Array.isArray(vector) ? Math.max(...vector.map(Math.abs)) : NaN;
+  if (!(max > 0) || !isNumericNoise(max, scale, rtol)) return { text: format(vector), title: "", noise: false };
+  return { text: NOISE_ZERO_TEXT, title: `원시값 ${format(vector)} · 판정 기준 |성분| ≤ ${rtol}×${scale}`, noise: true };
+}

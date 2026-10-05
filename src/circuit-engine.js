@@ -561,6 +561,11 @@ export function analyzeIdealVoltageConstraints(circuit, { analysis = "dc", start
   return { analysis, start, constraints, conflicts, redundancies };
 }
 
+function tiedIdealOpamps(circuit) {
+  const topology = buildTopology(circuit);
+  return circuit.components.filter((component) => component.type === "OPAMP_IDEAL" && topology.nodeFor(component.id, 0) === topology.nodeFor(component.id, 1));
+}
+
 function refinedConstraintError(error, circuit, analysis, start = 0) {
   if (!(error instanceof CircuitError) || error.code !== "SINGULAR") return error;
   const diagnostic = analyzeIdealVoltageConstraints(circuit, { analysis, start });
@@ -576,7 +581,21 @@ function refinedConstraintError(error, circuit, analysis, start = 0) {
       { certainty: "confirmed", reason: "ideal-voltage-conflict", analysis: initial ? "transient-initial" : "dc", ...conflict },
     );
   }
+  // An ideal op amp whose + and - inputs are the same node has an empty constraint row, so the MNA matrix is singular
+  // no matter what else is attached. When redundant ideal constraints (e.g. parallel capacitor ICs, whose duplicate
+  // equation is skipped at the transient start anyway) would otherwise take the blame, name the op amp instead.
+  // Without such a redundancy the plain SINGULAR error is kept.
   const redundancy = diagnostic.redundancies[0];
+  const tiedOpamp = redundancy ? tiedIdealOpamps(circuit)[0] : undefined;
+  if (tiedOpamp) {
+    const ref = tiedOpamp.props?.ref ?? tiedOpamp.id;
+    return new CircuitError(
+      "IDEAL_OPAMP_INPUT_TIED",
+      `이상 연산증폭기 ${ref} [${tiedOpamp.id}]의 +/− 입력이 같은 노드에 묶여 있어 op amp 제약(V+ = V−)이 출력을 정하지 못합니다.`,
+      "비반전·반전 입력을 서로 다른 노드에 연결하고, 출력에서 반전 입력으로 피드백을 구성하세요.",
+      { certainty: "confirmed", reason: "ideal-opamp-inputs-tied", analysis: analysis === "initial" ? "transient-initial" : analysis, componentId: tiedOpamp.id, ref },
+    );
+  }
   if (redundancy) {
     return new CircuitError(
       "IDEAL_CONSTRAINT_REDUNDANCY",
