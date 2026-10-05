@@ -29,9 +29,33 @@ export function createCanvasRenderer(deps) {
   // Render counters (debug hook): full rebuilds vs cheap drag updates.
   const stats = { full: 0, overlay: 0, drag: 0, dragFallback: 0, selection: 0 };
 
+  // Pin and junction hit discs are sized in screen pixels from the current zoom (see styles.css --pin-hit-*-r / --junction-hit-r).
+  const svgSize = { width: 0, height: 0 };
+  let hitScale = 0;
+  const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+  function syncHitSizes(force = false) {
+    const svg = elements["circuit-canvas"];
+    if (force || !svgSize.width) { svgSize.width = svg.clientWidth; svgSize.height = svg.clientHeight; }
+    const v = state.canvasView;
+    const scale = Math.min(svgSize.width / v.width, svgSize.height / v.height);
+    if (!(scale > 0) || (!force && Math.abs(scale - hitScale) < hitScale * 0.004)) return;
+    hitScale = scale;
+    // A part's pins sit 40 units from its centre. In the select tool the disc stays well inside that distance so the middle of the
+    // part still selects it; while wiring there is no body to protect, so the disc is larger. Radii are screen px turned into user units.
+    const near = 40 * scale;
+    const units = (screenRadius) => `${(screenRadius / scale).toFixed(2)}px`;
+    svg.style.setProperty("--pin-hit-select-r", units(clamp(near * 0.4, 6.5, 18)));
+    svg.style.setProperty("--pin-hit-wire-r", units(clamp(near * 0.6, 11, 22)));
+    svg.style.setProperty("--junction-hit-r", units(13));
+  }
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(() => syncHitSizes(true)).observe(elements["circuit-canvas"]);
+  }
+
   function updateCanvasView() {
     const v = state.canvasView;
     elements["circuit-canvas"].setAttribute("viewBox", `${v.x} ${v.y} ${v.width} ${v.height}`);
+    syncHitSizes();
   }
 
   function scheduleOverlayRender() {
@@ -211,6 +235,9 @@ export function createCanvasRenderer(deps) {
     elements["component-layer"].innerHTML = state.circuit.components.map((component) => componentMarkup(component, connection.byComponent[component.id])).join("");
     renderOverlay(componentById);
     elements["circuit-canvas"].setAttribute("viewBox", `${state.canvasView.x} ${state.canvasView.y} ${state.canvasView.width} ${state.canvasView.height}`);
+    elements["circuit-canvas"].dataset.canvasTool = state.tool.startsWith("place:") ? "place" : state.tool;
+    elements["circuit-canvas"].dataset.wiring = state.pendingPin || state.port.mode ? "1" : "0";
+    syncHitSizes();
     elements["empty-hint"].classList.toggle("hidden", state.circuit.components.length > 0);
     elements["circuit-count"].textContent = `부품 ${state.circuit.components.length} · 배선 ${state.circuit.wires.length}`;
     const warningCount = (connection.counts.unwired ?? 0) + (connection.counts["no-ground"] ?? 0) + (connection.counts["analysis-floating"] ?? 0) + (connection.counts["solver-check"] ?? 0);

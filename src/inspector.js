@@ -6,6 +6,8 @@ import { controlReferenceModel, controlledSourceInputModel, passiveSliderModel }
 import { bindSweep, sweepMarkup } from "./sweep-panel.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
+const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원" };
+
 export function createInspector(deps) {
   const { state, elements, workspace, inputDrafts, phasorView, mutate, currentConnections, synchronizeIntent, cancelScheduledRun, markInputDirty, scheduleAutoRun, renderPhasorLearning,
     setStatus, renderAll, showInspector, isCircuitUiActive, runSweep, clearSweep } = deps;
@@ -162,7 +164,7 @@ export function createInspector(deps) {
     const combined = slider
       ? `<div class="field-slider"><input type="range" data-prop-slider="${key}" min="${slider.min}" max="${slider.max}" step="0.05" value="${slider.value}" aria-label="${label} 빠른 조절"/>${control}</div>`
       : control;
-    const outside = slider?.outside ? `<span class="field-help range-note">현재 값은 빠른 조절 범위 밖입니다. 입력값은 그대로 보존됩니다.</span>` : "";
+    const outside = slider?.outside ? `<span class="field-help range-note">슬라이더 범위 밖의 값입니다.</span>` : "";
     return `<div class="field${active ? " active-field" : ""}"><label>${label}</label>${combined}${help ? `<span class="field-help">${help}</span>` : ""}${outside}</div>`;
   }
 
@@ -216,79 +218,73 @@ export function createInspector(deps) {
     const selected = state.selected;
     if (!selected) {
       elements["selection-label"].textContent = "선택 없음";
-      elements["inspector-content"].innerHTML = `<div class="inspector-empty"><p>부품을 선택하면 이름, 값, 파형과 초기조건을 수정할 수 있습니다.</p></div>`;
+      elements["inspector-content"].innerHTML = `<div class="inspector-empty"><p>부품을 선택하면 값을 수정할 수 있습니다.</p></div>`;
       return;
     }
     if (selected.kind === "wire") {
       const wire = state.circuit.wires.find((item) => item.id === selected.id);
       elements["selection-label"].textContent = "배선";
-      elements["inspector-content"].innerHTML = wire ? `<div class="field"><label>배선 ID</label><input value="${escapeHtml(wire.id)}" disabled /></div><p class="field-help">교차한 선은 연결되지 않습니다. 같은 핀에서 여러 배선을 시작하면 접속점 ●이 표시됩니다.</p>` : "";
+      elements["inspector-content"].innerHTML = wire ? `<p class="field-help">교차한 선은 연결되지 않습니다. 선을 두 번 누르면 접속점이 생깁니다.</p>` : "";
       return;
     }
     if (selected.kind === "junction") {
       const junction = (state.circuit.junctions ?? []).find((item) => item.id === selected.id);
       elements["selection-label"].textContent = "접속점";
-      elements["inspector-content"].innerHTML = junction ? `<div class="field"><label>접속점</label><input value="${escapeHtml(junction.id)}" disabled /></div><p class="field-help">이동하면 연결은 유지됩니다. 삭제하면 연결된 선만 끊고 자동 병합하지 않습니다.</p>` : "";
+      elements["inspector-content"].innerHTML = junction ? `<p class="field-help">끌어서 옮길 수 있고 연결은 유지됩니다. 삭제하면 이어진 선이 끊어집니다.</p>` : "";
       return;
     }
     const component = state.circuit.components.find((item) => item.id === selected.id);
     if (!component) { state.selected = null; renderInspector(); return; }
     const p = component.props ??= {};
     const connection = selectedConnectionStatus(component.id);
-    elements["selection-label"].textContent = component.type;
+    elements["selection-label"].textContent = TYPE_NAMES[component.type] ?? component.type;
     let html = field("참조 이름", "ref", p.ref ?? component.id);
-    if (connection) html += `<div class="connection-detail status-${connection.status}"><strong>${connection.badge} ${connection.label}</strong><span>${connection.short}</span><small>사전 reference 경로 안내이며 최종 수렴·전원 모순 판정은 해석 실행 결과를 따릅니다.</small></div>`;
+    // Only a problem needs a card; a part with a ground path says nothing here (the canvas footer already shows "✓ GND 기준 경로").
+    if (connection && connection.status !== "referenced") html += `<div class="connection-detail status-${connection.status}"><strong>${connection.badge} ${connection.label}</strong><span>${connection.short}</span></div>`;
     if (["R", "C", "L"].includes(component.type)) {
       const labels = { R: "저항 (Ω)", C: "커패시턴스 (F)", L: "인덕턴스 (H)" };
-      html += field(labels[component.type], "value", p.value, "로그 슬라이더와 정확한 공학 단위 입력을 함께 사용할 수 있습니다.", null, sliderRangeFor(component.type, p.value));
+      html += field(labels[component.type], "value", p.value, "", null, sliderRangeFor(component.type, p.value));
     }
     if (["C", "L"].includes(component.type)) {
       const icHelp = component.type === "C"
-        ? "시간응답 첫 표본에서 V(1)−V(2)=IC로 강제합니다. 소스의 시작 전압과 방향까지 일치해야 합니다."
-        : "시간응답 첫 표본의 1→2 전류입니다. SIN 정상상태 성분을 원하면 위상에 맞는 IC를 직접 지정해야 합니다.";
+        ? "시간응답 시작 시점의 V(1)−V(2). 소스 시작 전압과 맞아야 합니다."
+        : "시간응답 시작 시점의 1→2 전류.";
       html += field(component.type === "C" ? "초기 전압 IC (V)" : "초기 전류 IC (A)", "ic", p.ic ?? "0", icHelp);
     }
     if (["V", "I"].includes(component.type)) {
       const unit = component.type === "I" ? "A" : "V";
       const timeActive = state.settings.analysis !== "ac";
       const acActive = state.settings.analysis === "ac";
-      const dcHelp = state.settings.analysis === "dc"
-        ? "현재 DC 동작점에 사용됩니다."
-        : state.settings.analysis === "transient" && p.mode === "DC"
-          ? "현재 시간응답에 일정 레벨로 사용됩니다."
-          : state.settings.analysis === "ac"
-            ? "AC 해석에서는 비선형 소자의 DC bias 동작점을 정하며 AC 자극 크기와는 별도입니다."
-            : "현재 시간 파형에는 쓰이지 않지만 DC 동작점용 값으로 보존됩니다.";
-      html += `<fieldset class="source-group${timeActive ? " active-group" : ""}"><legend>DC · 시간영역</legend>`;
-      html += field("소스 파형", "mode", p.mode ?? "DC", "DC 동작점은 아래 DC bias를 사용하며 SIN의 t=0 값을 대신 쓰지 않습니다.", [["DC", "DC"], ["SIN", "SIN"], ["PULSE", "PULSE"]], null, state.settings.analysis === "transient");
-      html += field(`DC bias / level (${unit})`, "dc", p.dc ?? "0", dcHelp, null, null, state.settings.analysis === "dc" || (state.settings.analysis === "transient" && p.mode === "DC"));
+      html += `<fieldset class="source-group${timeActive ? " active-group" : ""}"><legend>DC · 시간응답</legend>`;
+      html += field("소스 파형", "mode", p.mode ?? "DC", "", [["DC", "DC"], ["SIN", "SIN"], ["PULSE", "PULSE"]], null, state.settings.analysis === "transient");
+      html += field(`DC 값 (${unit})`, "dc", p.dc ?? "0", "", null, null, state.settings.analysis === "dc" || (state.settings.analysis === "transient" && p.mode === "DC"));
       if (p.mode === "SIN") {
-        html += field(`오프셋 (${unit})`, "offset", p.offset ?? "0") + field(`peak 진폭 (${unit}pk)`, "amplitude", p.amplitude ?? "0", "시간영역 SIN에만 사용됩니다.", null, null, state.settings.analysis === "transient") + field("SIN 주파수 (Hz)", "frequency", p.frequency ?? "60", "AC sweep/페이저 주파수와 독립입니다.") + field("SIN 위상(°)", "phase", p.phase ?? "0", "엔진은 sin 정의를 사용하며 AC phasor는 cos 기준입니다.");
+        html += field(`오프셋 (${unit})`, "offset", p.offset ?? "0") + field(`진폭 (${unit}pk)`, "amplitude", p.amplitude ?? "0", "", null, null, state.settings.analysis === "transient") + field("주파수 (Hz)", "frequency", p.frequency ?? "60") + field("위상 (°)", "phase", p.phase ?? "0", "sin 기준");
       }
       if (p.mode === "PULSE") {
-        html += field(`low (${unit})`, "pulseV1", p.pulseV1 ?? "0") + field(`high (${unit})`, "pulseV2", p.pulseV2 ?? "0", "canvas inline 값은 high만 빠르게 편집하며 전체 파형은 low/timing도 함께 결정합니다.", null, null, state.settings.analysis === "transient") + field("지연 (s)", "pulseDelay", p.pulseDelay ?? "0") + field("상승시간 (s)", "pulseRise", p.pulseRise ?? "0") + field("하강시간 (s)", "pulseFall", p.pulseFall ?? "0") + field("펄스 폭 (s)", "pulseWidth", p.pulseWidth ?? "1") + field("주기 (s)", "pulsePeriod", p.pulsePeriod ?? "2");
+        html += field(`낮은 값 (${unit})`, "pulseV1", p.pulseV1 ?? "0") + field(`높은 값 (${unit})`, "pulseV2", p.pulseV2 ?? "0", "", null, null, state.settings.analysis === "transient") + field("지연 (s)", "pulseDelay", p.pulseDelay ?? "0") + field("상승시간 (s)", "pulseRise", p.pulseRise ?? "0") + field("하강시간 (s)", "pulseFall", p.pulseFall ?? "0") + field("펄스 폭 (s)", "pulseWidth", p.pulseWidth ?? "1") + field("주기 (s)", "pulsePeriod", p.pulsePeriod ?? "2");
       }
-      html += `</fieldset><fieldset class="source-group${acActive ? " active-group" : ""}"><legend>AC 소신호 · 단일주파수</legend>`;
-      html += `<p class="source-help">DC bias 주위의 별도 peak/cos 자극입니다. 크기 0이면 이 소스의 AC 자극이 없습니다. RMS=peak/√2이며 SIN 주파수가 AC 설정을 바꾸지 않습니다.</p>`;
-      html += field(`AC peak 크기 (${unit}pk)`, "acMagnitude", p.acMagnitude ?? "0", "AC sweep와 지정 페이저에서만 사용됩니다.", null, null, acActive) + field("AC cos 위상(°)", "acPhase", p.acPhase ?? "0", "시간영역 SIN과 비교할 때 cos 위상 = sin 위상 − 90°입니다.", null, null, acActive);
+      html += `</fieldset><fieldset class="source-group${acActive ? " active-group" : ""}"><legend>AC 해석</legend>`;
+      html += `<p class="source-help">크기가 0이면 AC 자극이 없습니다. RMS = 크기/√2.</p>`;
+      html += field(`AC 크기 (${unit}pk)`, "acMagnitude", p.acMagnitude ?? "0", "", null, null, acActive) + field("AC 위상 (°)", "acPhase", p.acPhase ?? "0", "cos 기준 (sin 위상 − 90°)", null, null, acActive);
       html += `</fieldset>`;
     }
     if (component.type === "D") html += field("포화전류 Is", "is", p.is ?? "1e-12") + field("방출계수 n", "n", p.n ?? "1");
-    if (component.type === "OPAMP") html += field("개방루프 이득 A", "gain", p.gain ?? "100k") + `<p class="model-note">유한 개방루프 이득 모델입니다. 전원·포화·대역폭이 없고 안정성을 판정하지 않습니다.</p>`;
-    if (component.type === "OPAMP_IDEAL") html += `<div class="connection-detail status-referenced"><strong>이상 OP AMP</strong><span>pin 1: 비반전(+), pin 2: 반전(−), pin 3: 출력</span><small>입력전류 0, 출력저항 0, 유효한 선형 해에서 V+=V−인 MNA 제약입니다. rail·포화·대역폭·slew 제한이 없고 안정성을 판정하지 않습니다. 출력 전류의 양수는 출력→내부 기준 GND입니다.</small></div>`;
-    if (component.type === "VCVS") html += field("전압 이득 g (V/V)", "g", p.g ?? "1", "pin 1/2=p/n 출력, pin 3/4=cp/cn 제어. V(p)-V(n)=g·(V(cp)-V(cn)); g는 무차원이며 0과 음수도 허용됩니다.");
-    if (component.type === "VCCS") html += field("상호컨덕턴스 gm (S)", "gm", p.gm ?? "1mS", "pin 1→2 출력 전류가 gm·(V(cp)-V(cn))입니다. S/mS/µS 또는 단위 생략 SI를 사용하며 소문자 s는 허용하지 않습니다.");
-    if (component.type === "CURRENT_SENSOR") html += `<div class="connection-detail status-referenced"><strong>0 V 전류 센서</strong><span>양의 센서 전류는 p(pin 1)→n(pin 2)입니다.</span><small>측정할 가지에 직렬로 배치하세요. 병렬 단락이나 자동 삽입은 하지 않습니다.</small></div>`;
-    if (component.type === "CCCS") html += field("전류 이득 beta (A/A)", "beta", p.beta ?? "1", "출력 p→n 전류 = beta·direction·I(control). 무차원이며 0과 음수도 허용됩니다.");
-    if (component.type === "CCVS") html += field("전달저항 rm (Ω)", "rm", p.rm ?? "1k", "V(p)-V(n) = rm·direction·I(control). Ω/ohm 또는 단위 생략을 허용합니다.");
+    if (component.type === "OPAMP") html += field("개방루프 이득 A", "gain", p.gain ?? "100k") + `<p class="model-note">전원 한계·포화·대역폭은 모델에 없습니다.</p>`;
+    if (component.type === "OPAMP_IDEAL") html += `<div class="connection-detail status-referenced"><strong>이상 OP AMP</strong><span>핀 1 비반전(+) · 핀 2 반전(−) · 핀 3 출력</span><small>V+ = V−, 입력전류 0. 전원 한계·포화·대역폭 없음.</small></div>`;
+    if (component.type === "VCVS") html += field("전압 이득 g (V/V)", "g", p.g ?? "1", "핀 1·2 출력(p,n) · 핀 3·4 제어(cp,cn)<br>V(p)−V(n) = g·(V(cp)−V(cn))");
+    if (component.type === "VCCS") html += field("상호컨덕턴스 gm (S)", "gm", p.gm ?? "1mS", "핀 1→2 전류 = gm·(V(cp)−V(cn))");
+    if (component.type === "CURRENT_SENSOR") html += `<div class="connection-detail status-referenced"><strong>0 V 전류 센서</strong><span>양의 전류는 핀 1→2 방향입니다.</span><small>측정할 가지에 직렬로 놓으세요.</small></div>`;
+    if (component.type === "CCCS") html += field("전류 이득 beta (A/A)", "beta", p.beta ?? "1", "출력 p→n 전류 = beta·방향·I(제어)");
+    if (component.type === "CCVS") html += field("전달저항 rm (Ω)", "rm", p.rm ?? "1k", "V(p)−V(n) = rm·방향·I(제어)");
     if (component.type === "CCCS" || component.type === "CCVS") {
       const control = controlReferenceModel(state.circuit, component);
       const options = [["", "제어 대상 선택"], ...control.targets.map((target) => [target.id, `${target.label} · ${target.type === "V" ? "독립 V" : "센서"}`])];
-      html += `<div class="field"><label>제어 branch 영구 ID</label><select data-control-target>${options.map(([id, label]) => `<option value="${escapeHtml(id)}"${component.control?.elementId === id ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select><span class="field-help">표시 이름이나 배열 순서가 아니라 component ID를 저장합니다.</span></div>`;
-      html += `<div class="field"><label>제어 방향</label><select data-control-direction><option value="1"${component.control?.direction === 1 ? " selected" : ""}>+1 · 대상 p→n 그대로</option><option value="-1"${component.control?.direction === -1 ? " selected" : ""}>−1 · 반전</option></select><span class="field-help">일반 복제는 외부 대상 ID를 유지합니다. Shift+복제는 대상과 내부 배선을 함께 새 ID로 복제합니다.</span></div>`;
-      if (control.status !== "valid") html += `<div class="connection-detail status-analysis-floating"><strong>제어 참조 오류</strong><span>${escapeHtml(control.reason)}</span><small>실행·정상 JSON 저장은 차단됩니다.</small></div>`;
+      html += `<div class="field"><label>제어 대상</label><select data-control-target>${options.map(([id, label]) => `<option value="${escapeHtml(id)}"${component.control?.elementId === id ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></div>`;
+      html += `<div class="field"><label>제어 방향</label><select data-control-direction><option value="1"${component.control?.direction === 1 ? " selected" : ""}>+1 · 대상 p→n 그대로</option><option value="-1"${component.control?.direction === -1 ? " selected" : ""}>−1 · 반전</option></select></div>`;
+      if (control.status !== "valid") html += `<div class="connection-detail status-analysis-floating"><strong>제어 대상 오류</strong><span>${escapeHtml(control.reason)}</span><small>해결할 때까지 실행·저장할 수 없습니다.</small></div>`;
     }
-    if (component.type === "GND") html += `<p class="field-help">이 핀이 모든 전압 해석의 0 V 기준입니다.</p>`;
+    if (component.type === "GND") html += `<p class="field-help">0 V 기준점입니다.</p>`;
     html += sweepMarkup(component, state);
     const savedFocus = captureInspectorFocus();
     elements["inspector-content"].innerHTML = html;
@@ -369,7 +365,7 @@ export function createInspector(deps) {
     // Only the fields of the chosen analysis are shown; DC has none.
     if (state.settings.analysis === "dc") {
       elements["analysis-settings"].innerHTML = "";
-      elements["analysis-note"].textContent = "DC는 추가 설정이 없습니다. SIN/PULSE/AC 값은 보존됩니다.";
+      elements["analysis-note"].textContent = "DC는 따로 설정할 항목이 없습니다.";
     } else if (state.settings.analysis === "transient") {
       elements["analysis-settings"].innerHTML = settingField("시작", "start", state.settings.start) + settingField("끝", "end", state.settings.end) + settingField("간격", "step", state.settings.step);
       elements["analysis-note"].textContent = "";

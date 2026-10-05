@@ -61,7 +61,9 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 
 /* Fixed desktop layout. */
 .workbench { min-height: 0; min-width: 0; padding: 10px; display: grid; gap: 10px;
-  grid-template-columns: 188px minmax(0,1fr) 340px; grid-template-rows: minmax(0,1fr) clamp(220px, 34vh, 360px); }
+  grid-template-columns: 188px minmax(0,1fr) 340px; grid-template-rows: minmax(0,11fr) minmax(320px,9fr); }
+/* "파형 크게": the waveform takes most of the height and the circuit area shrinks. */
+.workbench[data-wave="large"] { grid-template-rows: minmax(320px,5fr) minmax(0,6fr); }
 .panel { min-width: 0; min-height: 0; border: 1px solid var(--line-soft); border-radius: 14px; background: var(--panel); overflow: hidden; }
 #palette-panel { grid-column: 1; grid-row: 1 / 3; display: flex; flex-direction: column; overflow: auto; }
 .canvas-panel { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; }
@@ -95,9 +97,10 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .tool-group.compact button { min-width: 34px; padding: 3px 6px; font-size: 16px; }
 .tool-group.compact #fit-button { font-size: 13px; color: var(--accent); border-color: transparent; }
 .interaction-help { position: relative; margin-left: auto; }
-.interaction-help > summary { min-height: 34px; display: flex; align-items: center; padding: 3px 9px; list-style: none; white-space: nowrap; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 9px; }
+.interaction-help > summary { min-height: 34px; min-width: 34px; display: flex; align-items: center; justify-content: center; padding: 3px 7px; font-size: 0; list-style: none; white-space: nowrap; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 9px; }
 .interaction-help > summary::-webkit-details-marker { display: none; }
-.interaction-help > summary::before { content: "?"; width: 17px; height: 17px; margin-right: 5px; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); font: 700 11px var(--mono); }
+.interaction-help > summary::before { content: "?"; width: 17px; height: 17px; margin-right: 0; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); font: 700 11px var(--mono); }
+@media (min-width: 1500px) { .interaction-help > summary { font-size: 14px; padding: 3px 9px; } .interaction-help > summary::before { margin-right: 5px; } }
 .interaction-help[open] > summary { color: var(--accent); border-color: var(--accent); background: var(--selection); }
 .interaction-help-card { position: absolute; right: 0; top: calc(100% + 6px); z-index: 38; width: min(460px, calc(100vw - 24px)); max-height: min(70dvh, 420px); overflow: auto; padding: 12px 14px; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 48px #0007; }
 .interaction-help-card ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 12px; line-height: 1.65; }
@@ -130,7 +133,10 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .diagnostic-constraints span { font-size: 12px; }
 .canvas-wrap { position: relative; flex: 1 1 0; min-height: 0; }
 #circuit-canvas { display: block; width: 100%; height: 100%; background: var(--canvas); user-select: none; touch-action: none; }
-.canvas-bg { cursor: crosshair; }
+/* Cursor follows the active tool (data-canvas-tool is set by the renderer): empty canvas pans in select mode, crosshair for wiring/probing/placing. */
+.canvas-bg { cursor: grab; }
+#circuit-canvas[data-canvas-tool="wire"] .canvas-bg, #circuit-canvas[data-canvas-tool="voltage-probe"] .canvas-bg, #circuit-canvas[data-canvas-tool="current-probe"] .canvas-bg, #circuit-canvas[data-canvas-tool="place"] .canvas-bg, #circuit-canvas[data-wiring="1"] .canvas-bg { cursor: crosshair; }
+#circuit-canvas.dragging, #circuit-canvas.dragging .canvas-bg, #circuit-canvas.dragging .component, #circuit-canvas.dragging .pin-hit { cursor: grabbing; }
 /* Slim notices at the top of the canvas: restore offer, share-link result. The strip itself never blocks the canvas. */
 .canvas-notices { position: absolute; top: 8px; left: 50%; z-index: 14; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: calc(100% - 16px); pointer-events: none; }
 .canvas-notices:empty { display: none; }
@@ -160,6 +166,11 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 #connection-summary.has-warning { color: var(--warning); }
 #connection-summary.has-error { color: var(--danger); }
 #circuit-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Desktop: the status strip floats over the bottom edge of the canvas instead of taking its own row, which gives the circuit more height. */
+@media (min-width: 900px) {
+  .canvas-panel { position: relative; }
+  .canvas-footer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; padding-top: 8px; border-top: none; pointer-events: none; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--canvas) 88%, transparent) 60%); }
+}
 
 /* Circuit drawing. */
 #grid-small path { stroke: var(--grid); opacity: .42; }
@@ -170,6 +181,12 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .wire-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
 .component { cursor: grab; }
 .component:active { cursor: grabbing; }
+/* Hover cue: a part lights up lightly before it is selected. */
+#circuit-canvas:not([data-canvas-tool="pan"]) .component:not(.selected):hover .body, #circuit-canvas:not([data-canvas-tool="pan"]) .component:not(.selected):hover .lead { stroke: color-mix(in srgb, var(--accent) 65%, var(--symbol)); }
+#circuit-canvas[data-canvas-tool="wire"] .component, #circuit-canvas[data-canvas-tool="voltage-probe"] .component, #circuit-canvas[data-canvas-tool="place"] .component { cursor: default; }
+#circuit-canvas[data-canvas-tool="current-probe"] .component { cursor: pointer; }
+#circuit-canvas[data-canvas-tool="pan"] .component { cursor: grab; }
+.component.selected .body { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent) 70%, transparent)); }
 .component .body { fill: var(--canvas); stroke: var(--symbol); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .component .lead, .component .symbol-line { fill: none; stroke: var(--symbol); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .component .ideal-mark { fill: var(--symbol); font: 700 17px var(--mono); text-anchor: middle; }
@@ -177,7 +194,7 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .component .label { fill: var(--text); font-size: 12px; font-weight: 600; text-anchor: middle; pointer-events: none; }
 .component .value-label { fill: var(--muted); font-size: 12px; text-anchor: middle; cursor: text; pointer-events: all; }
 .component .source-mode-label { fill: var(--muted); font-size: 8px; text-anchor: middle; pointer-events: none; }
-.component-hit { fill: none; stroke: transparent; stroke-width: 44; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: grab; }
+.component-hit { fill: none; stroke: transparent; stroke-width: 44; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: inherit; }
 .connection-halo { fill: none; stroke: var(--warning); stroke-width: 1; stroke-dasharray: 4 4; pointer-events: none; vector-effect: non-scaling-stroke; }
 .connection-halo.status-analysis-floating { stroke: var(--danger); }
 .connection-badge { pointer-events: all; cursor: help; }
@@ -192,9 +209,16 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .component-delete:focus { outline: none; }
 .pin { fill: var(--canvas); stroke: var(--symbol); stroke-width: 1.8; cursor: crosshair; vector-effect: non-scaling-stroke; }
 .pin.probed { fill: var(--probe-color); stroke: var(--probe-color); }
-.pin:hover, .pin.pending, .pin.target { fill: var(--selection); stroke: var(--accent); }
+.pin:hover, .pin-hit:hover + .pin, .pin.pending, .pin.target { fill: var(--selection); stroke: var(--accent); }
+.pin-hit:hover + .pin { stroke-width: 2.6; }
 .pin-number { fill: var(--muted); font-size: 8px; pointer-events: none; }
-.pin-hit, .junction-hit { fill: none; stroke: transparent; stroke-width: 36; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: crosshair; }
+/* Hit discs are plain filled circles whose radius (user units) the renderer sets from the zoom (--pin-hit-select-r / --pin-hit-wire-r /
+   --junction-hit-r), so they stay a fixed size on screen: at small zoom a pin never swallows the middle of its part, and the whole disc
+   (not just a ring) is hittable. While wiring (or in a wiring tool) the pins get the bigger disc. */
+.pin-hit, .junction-hit { fill: transparent; stroke: none; pointer-events: all; cursor: crosshair; }
+.pin-hit { r: var(--pin-hit-select-r, 14px); }
+#circuit-canvas[data-wiring="1"] .pin-hit, #circuit-canvas[data-canvas-tool="wire"] .pin-hit, #circuit-canvas[data-canvas-tool="voltage-probe"] .pin-hit { r: var(--pin-hit-wire-r, 20px); }
+.junction-hit { r: var(--junction-hit-r, 13px); }
 .junction { fill: var(--symbol); stroke: var(--canvas); stroke-width: 1.5; pointer-events: none; }
 .junction.selected, .junction.target { fill: var(--warning); }
 .wire-preview, .wire-preview-fixed { fill: none; stroke: var(--accent); stroke-width: 2; pointer-events: none; }
@@ -226,6 +250,8 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .field > label { font-size: 12px; color: var(--muted); }
 .field input, .field select { width: 100%; min-width: 0; min-height: 32px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--field); color: var(--text); }
 .field-help, .source-help { color: var(--muted); font-size: 12px; line-height: 1.55; }
+/* Korean copy breaks between words, not inside them. */
+.field-help, .source-help, .model-note, .connection-detail, .inspector-empty, .measure-note, .analysis-note, .empty-hint, .canvas-notice-text, .error-box { word-break: keep-all; overflow-wrap: break-word; }
 .field-slider { display: grid; grid-template-columns: minmax(0, 1fr) 71px; gap: 6px; align-items: center; }
 .field-slider input[type="range"] { padding: 0; accent-color: var(--accent); }
 .range-note { color: var(--warning); }
@@ -752,13 +778,13 @@ body[data-workspace="em"] #em-course-root #em-course-advanced[open]{display:flex
 .measure-line { min-width: 0; overflow-wrap: anywhere; }
 .measure-line i, .measure-trace i { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: var(--trace-color); }
 .measure-panel.stale .measure-line { color: var(--muted); }
-/* Opened details float over the plot instead of squeezing it. */
-.measure-body { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 6; max-height: 150px; overflow: auto; padding: 2px 12px 6px; border-top: 1px solid var(--line); background: var(--raised); box-shadow: 0 -3px 10px #0004; }
-.measure-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; padding: 3px 0; border-top: 1px solid var(--line-soft); }
+/* Desktop: the opened details are a scrollable column beside the plot, so they never cover it. (Phone: see the media query below.) */
+.measure-body { flex: 0 0 clamp(250px, 24%, 340px); min-width: 0; overflow: auto; padding: 4px 10px 8px; background: var(--chrome); border-left: 1px solid var(--line-soft); }
+.measure-row { display: grid; gap: 1px; padding: 5px 0; border-top: 1px solid var(--line-soft); }
 .measure-row:first-child { border-top: none; }
-.measure-trace { min-height: 24px; padding: 1px 6px; font-size: 12px; border-color: transparent; background: transparent; color: var(--muted); }
+.measure-trace { justify-self: start; max-width: 100%; min-height: 24px; padding: 1px 6px; font-size: 12px; text-align: left; border-color: transparent; background: transparent; color: var(--muted); }
 .measure-trace[aria-pressed="true"] { color: var(--text); border-color: var(--line-soft); }
-.measure-cells { display: flex; flex-wrap: wrap; gap: 2px 14px; font-variant-numeric: tabular-nums; }
+.measure-cells { display: flex; flex-wrap: wrap; gap: 1px 12px; padding-left: 6px; font-variant-numeric: tabular-nums; }
 .measure-cell small { margin-right: 4px; color: var(--muted); }
 .measure-cell.na { color: var(--muted); cursor: help; }
 .measure-note { margin: 4px 0 0; color: var(--muted); line-height: 1.5; }
@@ -781,5 +807,8 @@ body[data-workspace="em"] #em-course-root #em-course-advanced[open]{display:flex
   .sweep-scale button, .sweep-actions button { min-height: 44px; }
   .measure-panel > summary { min-height: 40px; align-items: center; }
   .measure-trace, .sweep-clear-chip { min-height: 36px; }
-  .measure-body { position: static; max-height: none; box-shadow: none; }
+  .measure-body { flex: 0 0 auto; max-height: none; padding: 2px 12px 6px; border-left: none; border-top: 1px solid var(--line-soft); background: var(--raised); }
+  .measure-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
+  .measure-cells { padding-left: 0; }
+  #wave-size-button { display: none; }
 }

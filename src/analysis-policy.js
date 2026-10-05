@@ -6,7 +6,7 @@ function number(value, fallback = 0) {
 
 /** Heuristic display/analysis defaults, NOT a substitute for circuit poles or solver validation. */
 export function suggestAnalysis(circuit, previous, intent = "auto") {
-  if (intent === "manual") return { settings: { ...previous }, reason: "직접 설정 · 입력한 해석 조건을 그대로 사용" };
+  if (intent === "manual") return { settings: { ...previous }, reason: "직접 설정한 조건을 사용합니다." };
   const sources = circuit.components.filter((component) => ["V", "I"].includes(component.type));
   const capacitors = circuit.components.filter((component) => component.type === "C").map((component) => number(component.props?.value)).filter((value) => value > 0);
   const inductors = circuit.components.filter((component) => component.type === "L").map((component) => number(component.props?.value)).filter((value) => value > 0);
@@ -14,8 +14,8 @@ export function suggestAnalysis(circuit, previous, intent = "auto") {
   const timeSources = sources.filter((component) => ["SIN", "PULSE"].includes(component.props?.mode));
   const analysis = intent === "auto" ? (timeSources.length || capacitors.length || inductors.length ? "transient" : "dc") : intent;
   const settings = { ...previous, analysis };
-  if (analysis === "dc") return { settings, reason: `${intent === "auto" ? "자동: " : ""}DC 동작점 · DC bias 사용, C 개방 / L 단락` };
-  if (analysis === "ac") return { settings, reason: "AC 주파수 응답 · AC peak/cos 사용 (SIN 파형과 별도). 범위는 해석 설정에서 조정" };
+  if (analysis === "dc") return { settings, reason: `${intent === "auto" ? "자동: " : ""}DC 동작점 (C 개방 · L 단락)` };
+  if (analysis === "ac") return { settings, reason: "AC 주파수 응답 · 범위는 아래에서 조정" };
   const fastScales = [];
   const slowScales = [];
   const warnings = [];
@@ -60,6 +60,6 @@ export function suggestAnalysis(circuit, previous, intent = "auto") {
   settings.end = String(Number(end.toPrecision(10)));
   // Round upward to avoid creating 20,002 points through decimal conversion.
   settings.step = String(step * (1 + 1e-10));
-  const limited = warnings.length ? " · 빠른 변화가 표본 제한을 넘음: 해석 설정에서 구간을 줄이세요" : "";
-  return { settings, reason: `${intent === "auto" ? "자동: " : ""}시간응답${focusedStep ? " · 첫 계단응답 중심" : ""} · 회로값 기반 시작 범위 (복잡한 회로는 dt 수렴 확인)${limited}` };
+  const limited = warnings.length ? " · 빠른 변화가 표본 한도를 넘었습니다. 구간을 줄이세요" : "";
+  return { settings, reason: `${intent === "auto" ? "자동: " : ""}시간응답${focusedStep ? " · 첫 계단응답 중심" : ""} · 회로 값으로 범위 자동 설정${limited}` };
 }

@@ -36,7 +36,7 @@ ${probeSelect}
 <button type="button" id="sweep-clear" data-sweep-clear${hasOverlay ? "" : " hidden"}>스윕 지우기</button>
 <span class="sweep-progress" id="sweep-progress" role="status" aria-live="polite"></span>
 </div>
-<p class="field-help">시작·끝을 비우면 현재 값의 1/10 ~ 10배입니다. 선택한 프로브의 곡선을 값마다 다른 색으로 겹쳐 그립니다. 편집하거나 다시 실행하면 지워집니다.</p>
+<p class="field-help">비우면 현재 값의 1/10 ~ 10배. 값마다 다른 색으로 겹쳐 그리며, 회로를 고치면 지워집니다.</p>
 </div></details>`;
 }
 

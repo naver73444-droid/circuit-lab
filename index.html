@@ -52,7 +52,7 @@
 <div aria-label="편집 동작" class="tool-group compact" role="group">
 <button aria-label="실행 취소" id="undo-button" title="실행 취소 (Ctrl+Z)" type="button">↶</button>
 <button aria-label="다시 실행" id="redo-button" title="다시 실행 (Ctrl+Y)" type="button">↷</button>
-<button aria-label="선택 부품 복제" id="clone-button" title="선택 부품 복제 (Ctrl+D)" type="button">⧉</button>
+<button aria-label="선택 부품 복제" id="clone-button" title="선택 부품 복제 (Ctrl+D) · 제어원은 Shift+클릭으로 제어 대상까지" type="button">⧉</button>
 <button aria-label="선택 부품 회전" id="rotate-button" title="선택 부품 회전 (R · 반시계 Shift+R)" type="button">↻</button>
 <button aria-label="선택 항목 삭제" id="delete-button" title="선택 항목 삭제 (Delete)" type="button">⌫</button>
 </div>
@@ -61,7 +61,7 @@
 <button aria-label="회로 확대" id="zoom-in-button" type="button">＋</button>
 <button id="fit-button" type="button">화면맞춤</button>
 </div>
-<details class="interaction-help" id="interaction-help"><summary>조작 도움말</summary><div class="interaction-help-card">
+<details class="interaction-help" id="interaction-help"><summary aria-label="조작 도움말" title="조작 도움말">조작 도움말</summary><div class="interaction-help-card">
 <ul>
 <li><b>선택·이동</b> 클릭으로 선택하고 끌어 이동, 빈 곳을 끌면 화면 이동 (터치: 선택한 부품만 끌기 · 두 손가락 확대·축소).</li>
 <li><b>배선·값</b> 배선 도구로 핀 두 개를 차례로 누르고 빈 격자점은 꺾임 고정. 값 글자는 두 번 눌러 수정, R·C·L은 값 글자 위에서 휠로 E12 값 한 칸씩 변경.</li>
@@ -117,7 +117,7 @@
 <section aria-labelledby="inspector-tab" class="side-body" id="inspector-panel" role="tabpanel">
 <small id="selection-label">선택 없음</small>
 <div class="inspector-content" id="inspector-content">
-<div class="inspector-empty"><p>부품을 선택하면 이름, 값, 파형과 초기조건을 수정할 수 있습니다.</p></div>
+<div class="inspector-empty"><p>부품을 선택하면 값을 수정할 수 있습니다.</p></div>
 </div>
 </section>
 <section aria-labelledby="results-tab" class="side-body" hidden="" id="results-panel" role="tabpanel">
@@ -177,6 +177,7 @@
 <div class="segmented hidden" id="ac-view-toggle"><button class="active" data-ac-view="magnitude" type="button">크기 (dB)</button><button data-ac-view="phase" type="button">위상 (°)</button></div>
 <button class="hidden" id="cursor-b-button" type="button" aria-pressed="false" title="그래프를 눌러 기준 커서 B를 놓습니다">B 커서</button>
 <button id="reset-view-button" type="button">자동 맞춤</button>
+<button aria-pressed="false" id="wave-size-button" title="파형 영역을 크게 (회로 영역은 작아집니다)" type="button">파형 크게</button>
 <button disabled="" id="csv-button" type="button">CSV 내보내기</button>
 </div>
 </div>
@@ -186,9 +187,10 @@
 <div class="plot-empty" id="plot-empty"><span>V 또는 I 프로브 도구로 회로를 클릭하세요</span></div>
 </div>
 <div aria-label="오실로스코프 눈금 조절" class="scope-controls" id="scope-controls"></div>
+<div aria-label="측정값 상세" class="measure-body" role="region" hidden="" id="measure-body"></div>
 </div>
 <div class="scope-zero-note hidden" id="scope-zero-note"></div>
-<details class="measure-panel hidden" id="measure-panel"><summary id="measure-summary"></summary><div class="measure-body" id="measure-body"></div></details>
+<details class="measure-panel hidden" id="measure-panel"><summary id="measure-summary"></summary></details>
 <div aria-live="polite" class="cursor-readout" id="cursor-readout" role="status">그래프를 눌러 값을 읽습니다.</div>
 </section>
 <nav aria-label="패널 선택" class="view-tabs" role="tablist">

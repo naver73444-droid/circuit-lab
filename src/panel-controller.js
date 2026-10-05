@@ -1,4 +1,4 @@
-/** Fixed editor layout. Desktop: palette | canvas | properties-or-results, waveform below.
+/** Fixed editor layout. Desktop: palette | canvas | properties-or-results, waveform below (the "파형 크게" button swaps the split).
  * Phone: one panel at a time under the canvas, chosen from a bottom tab bar.
  * Presentation only; nothing here is saved, and it never touches workspace visibility. */
 const PANELS = { palette: 'palette-panel', inspector: 'inspector-panel', results: 'results-panel', wave: 'wave-panel' };
@@ -71,6 +71,15 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
       tabs[next].focus();
     });
   }
+  // Desktop only: swap the canvas/waveform split. Pure presentation, so nothing is saved.
+  const sizeButton = document.getElementById('wave-size-button');
+  sizeButton?.addEventListener('click', () => {
+    const large = workbench.dataset.wave !== 'large';
+    if (large) workbench.dataset.wave = 'large'; else delete workbench.dataset.wave;
+    sizeButton.setAttribute('aria-pressed', String(large));
+    sizeButton.textContent = large ? '파형 작게' : '파형 크게';
+    sizeButton.title = large ? '회로 영역을 다시 크게' : '파형 영역을 크게 (회로 영역은 작아집니다)';
+  });
   mobile.addEventListener('change', () => { beforeChange(); synchronize(); });
   synchronize();
   return { show, showCanvas, isOpen, mobile, synchronize, cancelInteractions: beforeChange, inspect: () => ({ mobile: mobile.matches, side: sideView, view: phoneView, result: resultView }) };

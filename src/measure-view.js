@@ -5,6 +5,7 @@ import { measureTraces, summaryLine } from "./wave-measure-model.js";
 /**
  * Waveform measurement summary + the "B 커서" toggle. Display only.
  * One summary line is always visible for the chosen trace; opening it lists up to three traces with their values.
+ * On desktop the list is a column beside the plot (never over it); on the phone it sits inside the details block, below the summary.
  * Values are recomputed only when update() receives a new result/trace set — never on hover or cursor movement.
  */
 export function createMeasureView({ panel, summary, body, bButton, scopeView }) {
@@ -12,6 +13,15 @@ export function createMeasureView({ panel, summary, body, bButton, scopeView }) 
   let signature = null;
   let stale = false;
   let computeCount = 0;
+  const host = body.parentNode;
+  const phone = typeof matchMedia === "function" ? matchMedia("(max-width: 899px)") : null;
+  /** The body lives in the plot row on desktop (so it never overlaps the plot) and inside the details on the phone. */
+  function place() {
+    const into = phone?.matches ? panel : host;
+    if (body.parentNode !== into) into.append(body);
+    syncBody();
+  }
+  function syncBody() { body.hidden = phone?.matches ? false : panel.classList.contains("hidden") || !panel.open; }
 
   function rowMarkup(row, active) {
     const cells = row.cells.map((cell) => `<span class="measure-cell${cell.ok ? "" : " na"}" title="${escapeHtml(cell.note)}"><small>${escapeHtml(cell.label)}</small>${escapeHtml(cell.text)}</span>`).join("");
@@ -22,17 +32,19 @@ export function createMeasureView({ panel, summary, body, bButton, scopeView }) 
   function render() {
     if (!measured?.ok) {
       panel.classList.add("hidden");
+      syncBody();
       return;
     }
     panel.classList.remove("hidden");
     panel.classList.toggle("stale", stale);
+    syncBody();
     const activeKey = scopeView.activeTraceKey ?? measured.rows[0]?.key;
     const active = measured.rows.find((row) => row.key === activeKey) ?? measured.rows[0];
     const line = summaryLine(measured, active?.key);
     summary.innerHTML = `<span class="measure-title">측정</span><span class="measure-line"><i style="--trace-color:${traceColor(active?.color)}"></i>${escapeHtml(line)}</span>`;
-    summary.title = stale ? "이전 결과의 측정값입니다" : "열어서 트레이스별 값과 측정 불가 사유 보기";
+    summary.title = stale ? "이전 결과의 측정값입니다" : "눌러서 트레이스별 값 보기";
     const more = measured.hidden ? `<p class="measure-note">트레이스 ${measured.hidden}개는 표시 개수 제한으로 생략했습니다.</p>` : "";
-    body.innerHTML = `${measured.rows.map((row) => rowMarkup(row, row.key === active?.key)).join("")}${more}<p class="measure-note">${escapeHtml(measured.basis)} · 주기와 −3 dB 주파수만 인접 표본 사이를 선형보간합니다. 말풍선에서 계산 방식과 측정 불가 사유를 볼 수 있습니다.</p>`;
+    body.innerHTML = `${measured.rows.map((row) => rowMarkup(row, row.key === active?.key)).join("")}${more}<p class="measure-note">${escapeHtml(measured.basis)} · 주기·−3 dB는 표본 사이를 보간 · 값에 마우스를 올리면 사유</p>`;
   }
 
   /** inputs: {analysis, traces, stale, signature} — same signature means same data, so nothing is recomputed. */
@@ -75,6 +87,9 @@ export function createMeasureView({ panel, summary, body, bButton, scopeView }) 
   // Active trace / B changes come from the scope; only the cached rows are redrawn.
   scopeView.onChange = () => { refreshButton(); if (measured?.ok) render(); };
   refreshButton();
+  panel.addEventListener("toggle", syncBody);
+  phone?.addEventListener?.("change", place);
+  place();
 
   return { update, clear, refreshButton, inspect: () => ({ computeCount, rows: measured?.rows?.length ?? 0, signature, visible: !panel.classList.contains("hidden") }) };
 }

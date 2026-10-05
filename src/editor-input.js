@@ -116,14 +116,27 @@ export function createEditorInput(deps) {
     state.pointer = null;
     document.querySelectorAll("[data-tool]").forEach((button) => button.classList.toggle("active", button.dataset.tool === tool));
     document.querySelectorAll(".palette-item").forEach((button) => button.classList.toggle("active", tool === `place:${button.dataset.type}`));
-    const hints = {
-      select: "클릭 선택 · 끌어서 이동 · 빈 곳 끌기로 화면 이동",
-      pan: "화면 이동 — 부품은 움직이지 않습니다.",
-      wire: "배선 — 핀을 누르고, 빈 격자점으로 꺾은 뒤 다른 핀·배선에서 끝냅니다.",
-      "voltage-probe": "V 프로브 — 핀이나 배선을 누르면 접지 기준 전압이 추가됩니다.",
-      "current-probe": "I 프로브 — 부품을 누르면 기준 방향 전류가 추가됩니다.",
-    };
-    elements["tool-hint"].textContent = tool.startsWith("place:") ? "캔버스를 눌러 배치 · 계속 놓을 수 있습니다 · Esc로 종료" : hints[tool];
+    restoreToolHint();
+    renderCanvas();
+  }
+
+  const TOOL_HINTS = {
+    select: "클릭 선택 · 끌어서 이동 · 빈 곳 끌기로 화면 이동",
+    pan: "화면 이동 — 부품은 움직이지 않습니다.",
+    wire: "배선 — 핀을 누르고, 빈 격자점으로 꺾은 뒤 다른 핀·배선에서 끝냅니다.",
+    "voltage-probe": "V 프로브 — 핀이나 배선을 누르면 접지 기준 전압이 추가됩니다.",
+    "current-probe": "I 프로브 — 부품을 누르면 기준 방향 전류가 추가됩니다.",
+  };
+  function restoreToolHint() {
+    elements["tool-hint"].textContent = state.tool.startsWith("place:") ? "캔버스를 눌러 배치 · 계속 놓을 수 있습니다 · Esc로 종료" : TOOL_HINTS[state.tool];
+  }
+
+  /** Drop a half-drawn wire but stay in the current tool. */
+  function cancelPendingWire() {
+    state.pendingPin = null;
+    state.pendingWaypoints = [];
+    state.pointer = null;
+    restoreToolHint();
     renderCanvas();
   }
 
@@ -169,16 +182,11 @@ export function createEditorInput(deps) {
         state.pendingPin = target;
         state.pendingWaypoints = [];
         state.pointer = endpointPosition(target);
+        elements["tool-hint"].textContent = "배선 중 — 끝낼 핀이나 배선을 누르세요 · 빈 격자점은 꺾임 · Esc 취소";
         renderCanvas();
         return;
       }
-      if (endpointsEqual(state.pendingPin, target)) {
-        state.pendingPin = null;
-        state.pendingWaypoints = [];
-        state.pointer = null;
-        renderCanvas();
-        return;
-      }
+      if (endpointsEqual(state.pendingPin, target)) { cancelPendingWire(); return; }
       const duplicate = state.circuit.wires.some((wire) => {
         return (endpointsEqual(wire.a, state.pendingPin) && endpointsEqual(wire.b, target))
           || (endpointsEqual(wire.b, state.pendingPin) && endpointsEqual(wire.a, target));
@@ -188,6 +196,7 @@ export function createEditorInput(deps) {
       state.pendingPin = null;
       state.pendingWaypoints = [];
       state.pointer = null;
+      restoreToolHint();
       if (!duplicate) mutate(() => state.circuit.wires.push({ id: `W${Date.now().toString(36)}${state.circuit.wires.length}`, a: start, b: target, waypoints }));
       else renderCanvas();
       return;
@@ -352,6 +361,7 @@ export function createEditorInput(deps) {
     state.pendingPin = null;
     state.pendingWaypoints = [];
     state.pointer = null;
+    restoreToolHint();
     mutate(() => {
       const split = splitWireAtJunction(state.circuit, wireId, point, routePoints);
       state.circuit = split.circuit;
@@ -518,8 +528,8 @@ export function createEditorInput(deps) {
     else {
       const minX = Math.min(...points.map((point) => point.x)) - 90;
       const maxX = Math.max(...points.map((point) => point.x)) + 90;
-      const minY = Math.min(...points.map((point) => point.y)) - 80;
-      const maxY = Math.max(...points.map((point) => point.y)) + 80;
+      const minY = Math.min(...points.map((point) => point.y)) - 64;
+      const maxY = Math.max(...points.map((point) => point.y)) + 64;
       const width = Math.max(260, maxX - minX);
       const height = Math.max(171, maxY - minY);
       const canvas = elements["circuit-canvas"];
@@ -548,6 +558,7 @@ export function createEditorInput(deps) {
     const drag = completed.finished;
     state.drag = null;
     state.pointerOwnerId = null;
+    elements["circuit-canvas"].classList.remove("dragging");
     releasePointer(elements["circuit-canvas"], pointerId);
     if (reason !== "commit") {
       if (drag.kind === "pan") state.canvasView = { ...drag.originView };
@@ -559,6 +570,12 @@ export function createEditorInput(deps) {
       }
       renderAll();
       return true;
+    }
+    if (!drag.moved && drag.kind === "pan" && drag.deselectOnTap) {
+      // The pointer is captured by the svg, so the browser's click no longer targets the background: a tap that started on empty canvas
+      // (no drag past the slop) is decided here instead, and clears the selection.
+      state.ignoreClickUntil = performance.now() + 180;
+      if (state.selected) { state.selected = null; renderSelection(); }
     }
     if (!drag.moved && drag.kind !== "pan") {
       // Pointer capture retargets the subsequent click to the SVG root. Commit the
@@ -578,6 +595,7 @@ export function createEditorInput(deps) {
     const drag = state.drag;
     if (!drag.moved && !passedDragSlop(drag.startClient, { x: event.clientX, y: event.clientY }, drag.pointerType)) return;
     drag.moved = true;
+    elements["circuit-canvas"].classList.add("dragging");
     if (drag.kind === "pan") {
       state.canvasView.x = drag.originView.x - (event.clientX - drag.startClient.x) / drag.screenScale;
       state.canvasView.y = drag.originView.y - (event.clientY - drag.startClient.y) / drag.screenScale;
@@ -717,7 +735,7 @@ export function createEditorInput(deps) {
     document.querySelectorAll("[data-tool]").forEach((button) => button.addEventListener("click", () => setTool(button.dataset.tool)));
     elements["circuit-canvas"].addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || !["select", "pan"].includes(state.tool) || (state.tool !== "pan" && !event.target.classList.contains("canvas-bg")) || state.pendingPin) return;
-      beginCanvasPointer(event, { kind: "pan", startClient: { x: event.clientX, y: event.clientY }, screenScale: elements["circuit-canvas"].getScreenCTM().a, originView: { ...state.canvasView }, moved: false });
+      beginCanvasPointer(event, { kind: "pan", startClient: { x: event.clientX, y: event.clientY }, screenScale: elements["circuit-canvas"].getScreenCTM().a, originView: { ...state.canvasView }, moved: false, deselectOnTap: state.tool === "select" });
     });
     elements["circuit-canvas"].addEventListener("click", (event) => {
       if (performance.now() < state.ignoreClickUntil) return;
@@ -812,7 +830,12 @@ export function createEditorInput(deps) {
       if (event.key === "Escape") {
         if (!elements["probe-context-menu"].classList.contains("hidden")) closeProbeContextMenu();
         else if (state.inlineEdit) closeInlineEditor();
-        else if (!typing) setTool("select");
+        else if (!typing) {
+          // One Esc backs out one level: a half-drawn wire, then the tool, then the selection.
+          if (state.pendingPin) cancelPendingWire();
+          else if (state.tool !== "select" || state.port.mode) setTool("select");
+          else if (state.selected && state.pointerOwnerId === null) { state.selected = null; renderSelection(); }
+        }
       }
       const shortcut = shortcutFor(event, { typing });
       if (!shortcut) return;

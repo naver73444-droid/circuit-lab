@@ -14,10 +14,10 @@ function conductiveForAnalysis(component, analysis, frequency) {
 
 export const CONNECTION_STATUS_META = {
   unwired: { badge: "!", label: "미배선 핀", short: "핀에 배선이 없습니다." },
-  "no-ground": { badge: "G", label: "GND 없는 물리 섬", short: "배선·소자로 이어진 섬에 기준 GND가 없습니다." },
-  "analysis-floating": { badge: "F", label: "분석 기준 없음", short: "물리적으로 연결됐지만 현재 분석에서 전위 기준 경로가 없습니다." },
-  "solver-check": { badge: "?", label: "solver 확인 필요", short: "OP AMP가 포함되어 사전 연결 검사만으로 전위를 단정하지 않습니다." },
-  referenced: { badge: "✓", label: "GND 기준 경로", short: "현재 분석에서 GND 기준 경로가 보입니다." },
+  "no-ground": { badge: "G", label: "GND 없는 연결 묶음", short: "이어진 부분에 GND가 없습니다." },
+  "analysis-floating": { badge: "F", label: "기준 경로 없음", short: "현재 해석에서 GND로 이어지는 경로가 없습니다." },
+  "solver-check": { badge: "?", label: "해석 후 확인", short: "OP AMP가 있어 해석 결과로 확인합니다." },
+  referenced: { badge: "✓", label: "GND 기준 경로", short: "GND로 이어져 있습니다." },
 };
 
 export function classifyCircuitConnections(circuit, analysis = "dc", { frequency = 0 } = {}) {
