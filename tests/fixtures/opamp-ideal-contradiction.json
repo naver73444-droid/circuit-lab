@@ -1,0 +1,30 @@
+{
+  "format": "circuit-lab",
+  "version": 1,
+  "title": "이상 OP AMP 입력 모순",
+  "subtitle": "V+=1 V, V-=0 V이므로 이상 제약과 양립 불가",
+  "circuit": {
+    "version": 1,
+    "geometryVersion": 2,
+    "components": [
+      { "id": "V1", "type": "V", "x": 140, "y": 180, "rotation": 90, "props": { "ref": "V1", "mode": "DC", "dc": "1", "amplitude": "1", "frequency": "1k", "offset": "0", "phase": "0", "pulseV1": "0", "pulseV2": "1", "pulseDelay": "0", "pulseRise": "0", "pulseFall": "0", "pulseWidth": "1", "pulsePeriod": "2", "acMagnitude": "1", "acPhase": "0" } },
+      { "id": "V2", "type": "V", "x": 140, "y": 300, "rotation": 90, "props": { "ref": "V2", "mode": "DC", "dc": "0", "amplitude": "1", "frequency": "1k", "offset": "0", "phase": "0", "pulseV1": "0", "pulseV2": "1", "pulseDelay": "0", "pulseRise": "0", "pulseFall": "0", "pulseWidth": "1", "pulsePeriod": "2", "acMagnitude": "1", "acPhase": "0" } },
+      { "id": "U1", "type": "OPAMP_IDEAL", "x": 380, "y": 220, "rotation": 0, "props": { "ref": "U1" } },
+      { "id": "RL", "type": "R", "x": 520, "y": 300, "rotation": 90, "props": { "ref": "RL", "value": "1k" } },
+      { "id": "G1", "type": "GND", "x": 320, "y": 420, "rotation": 0, "props": { "ref": "GND" } }
+    ],
+    "wires": [
+      { "id": "W1", "a": { "componentId": "V1", "pin": 0 }, "b": { "componentId": "U1", "pin": 0 } },
+      { "id": "W2", "a": { "componentId": "V2", "pin": 0 }, "b": { "componentId": "U1", "pin": 1 } },
+      { "id": "W3", "a": { "componentId": "U1", "pin": 2 }, "b": { "componentId": "RL", "pin": 0 } },
+      { "id": "W4", "a": { "componentId": "V1", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } },
+      { "id": "W5", "a": { "componentId": "V2", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } },
+      { "id": "W6", "a": { "componentId": "RL", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } }
+    ],
+    "junctions": []
+  },
+  "settings": { "analysis": "dc", "start": "0", "end": "2m", "step": "10u", "startFrequency": "10", "endFrequency": "100k", "pointsPerDecade": "30", "phasorFrequency": "1000" },
+  "probes": [
+    { "kind": "voltage", "componentId": "U1", "pin": 2, "key": "V:U1:2", "label": "V(U1.out)", "color": "#80bfff" }
+  ]
+}

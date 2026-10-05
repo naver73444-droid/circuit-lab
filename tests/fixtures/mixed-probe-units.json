@@ -1,0 +1,36 @@
+{
+  "format": "circuit-lab",
+  "version": 1,
+  "title": "혼합 프로브 축 검증",
+  "subtitle": "10 V, 10 mA, 10 µA를 동시에 표시",
+  "circuit": {
+    "version": 1,
+    "components": [
+      { "id": "V1", "type": "V", "x": 150, "y": 240, "rotation": 90, "props": { "ref": "V1", "mode": "DC", "dc": "10" } },
+      { "id": "R1", "type": "R", "x": 380, "y": 150, "rotation": 90, "props": { "ref": "R1", "value": "1k" } },
+      { "id": "R2", "type": "R", "x": 560, "y": 150, "rotation": 90, "props": { "ref": "R2", "value": "1M" } },
+      { "id": "G1", "type": "GND", "x": 380, "y": 390, "rotation": 0, "props": { "ref": "GND" } }
+    ],
+    "wires": [
+      { "id": "W1", "a": { "componentId": "V1", "pin": 0 }, "b": { "componentId": "R1", "pin": 0 } },
+      { "id": "W2", "a": { "componentId": "V1", "pin": 0 }, "b": { "componentId": "R2", "pin": 0 } },
+      { "id": "W3", "a": { "componentId": "V1", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } },
+      { "id": "W4", "a": { "componentId": "R1", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } },
+      { "id": "W5", "a": { "componentId": "R2", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } }
+    ]
+  },
+  "settings": {
+    "analysis": "dc",
+    "start": "0",
+    "end": "5m",
+    "step": "10u",
+    "startFrequency": "10",
+    "endFrequency": "100k",
+    "pointsPerDecade": "30"
+  },
+  "probes": [
+    { "key": "V:V1:0", "kind": "voltage", "componentId": "V1", "pin": 0, "wireId": "W1", "label": "V(V1.1)", "color": "#52e0b7" },
+    { "key": "I:R1", "kind": "current", "componentId": "R1", "label": "I(R1, 1→2)", "color": "#68a7ff" },
+    { "key": "I:R2", "kind": "current", "componentId": "R2", "label": "I(R2, 1→2)", "color": "#ffb454" }
+  ]
+}

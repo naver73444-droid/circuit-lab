@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "analysis": { "start": 0, "end": "10u", "step": "10u" },
+  "tolerances": {
+    "voltageAbsV": 1e-9,
+    "voltageRel": 1e-8,
+    "currentAbsA": 1e-11,
+    "currentRel": 1e-8,
+    "inputCurrentAbsA": 1e-12,
+    "outputKclAbsA": 1e-10,
+    "outputKclRel": 1e-8
+  },
+  "cases": [
+    {
+      "id": "nonunique-no-capacitor",
+      "expectedErrorCode": "SINGULAR",
+      "parts": [
+        { "id": "U1", "type": "OPAMP_IDEAL", "props": {}, "nets": ["0", "0", "out"] },
+        { "id": "RL", "type": "R", "props": { "value": "1k" }, "nets": ["out", "0"] }
+      ]
+    },
+    {
+      "id": "follower-parallel-capacitors",
+      "expectedErrorCode": "INITIAL_DERIVATIVE_UNSUPPORTED",
+      "physicalReference": {
+        "initialVoltageV": 1,
+        "initialResistorCurrentA": 0.001,
+        "initialOutputCurrentA": -0.001,
+        "nodeDerivativeVPerS": -333.3333333333333,
+        "capacitorCurrentsA": { "C1": -0.0003333333333333333, "C2": -0.0006666666666666666 }
+      },
+      "parts": [
+        { "id": "C1", "type": "C", "props": { "value": "1u", "ic": "1" }, "nets": ["n", "0"] },
+        { "id": "C2", "type": "C", "props": { "value": "2u", "ic": "1" }, "nets": ["n", "0"] },
+        { "id": "R1", "type": "R", "props": { "value": "1k" }, "nets": ["n", "0"] },
+        { "id": "U1", "type": "OPAMP_IDEAL", "props": {}, "nets": ["n", "out", "out"] },
+        { "id": "RL", "type": "R", "props": { "value": "1k" }, "nets": ["out", "0"] }
+      ]
+    },
+    {
+      "id": "follower-single-capacitor",
+      "expected": {
+        "timesS": [0, 0.00001],
+        "nodeVoltageV": [1, 0.9900990099009901],
+        "R1CurrentA": [0.001, 0.00099009900990099],
+        "RLCurrentA": [0.001, 0.00099009900990099],
+        "outputCurrentA": [-0.001, -0.00099009900990099],
+        "C1CurrentA": [-0.001, -0.00099009900990099]
+      },
+      "parts": [
+        { "id": "C1", "type": "C", "props": { "value": "1u", "ic": "1" }, "nets": ["n", "0"] },
+        { "id": "R1", "type": "R", "props": { "value": "1k" }, "nets": ["n", "0"] },
+        { "id": "U1", "type": "OPAMP_IDEAL", "props": {}, "nets": ["n", "out", "out"] },
+        { "id": "RL", "type": "R", "props": { "value": "1k" }, "nets": ["out", "0"] }
+      ]
+    }
+  ]
+}

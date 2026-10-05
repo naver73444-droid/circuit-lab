@@ -1,0 +1,33 @@
+{
+  "ui": {
+    "xValues": [0, 0.001, 0.002, 0.0025],
+    "voltage": [0, 5, -2, 1],
+    "current": [0, 0.005, -0.00001, 0.002]
+  },
+  "project": {
+    "format": "circuit-lab",
+    "version": 1,
+    "title": "CIRCUIT-013 SIN 1 kHz raw sample fixture",
+    "subtitle": "5 V peak / 1 kΩ load",
+    "circuit": {
+      "version": 1,
+      "geometryVersion": 2,
+      "components": [
+        { "id": "V1", "type": "V", "x": 180, "y": 220, "rotation": 0, "props": { "ref": "V1", "mode": "SIN", "dc": "0", "amplitude": "5", "frequency": "1k", "offset": "0", "phase": "0", "pulseV1": "0", "pulseV2": "5", "pulseDelay": "0", "pulseRise": "0", "pulseFall": "0", "pulseWidth": "1", "pulsePeriod": "2", "acMagnitude": "1", "acPhase": "0" } },
+        { "id": "R1", "type": "R", "x": 440, "y": 220, "rotation": 0, "props": { "ref": "R1", "value": "1k" } },
+        { "id": "G1", "type": "GND", "x": 310, "y": 380, "rotation": 0, "props": { "ref": "GND" } }
+      ],
+      "wires": [
+        { "id": "W1", "a": { "componentId": "V1", "pin": 0 }, "b": { "componentId": "R1", "pin": 0 } },
+        { "id": "W2", "a": { "componentId": "V1", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } },
+        { "id": "W3", "a": { "componentId": "R1", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } }
+      ],
+      "junctions": []
+    },
+    "settings": { "analysis": "transient", "start": "0", "end": "1m", "step": "0.25m", "startFrequency": "10", "endFrequency": "1meg", "pointsPerDecade": "20", "phasorFrequency": "1k" },
+    "probes": [
+      { "key": "V:R1:0", "kind": "voltage", "componentId": "R1", "pin": 0, "wireId": "W1", "label": "V(R1+)", "color": "#176baf" },
+      { "key": "I:R1", "kind": "current", "componentId": "R1", "label": "I(R1, 1→2)", "color": "#c0392b" }
+    ]
+  }
+}

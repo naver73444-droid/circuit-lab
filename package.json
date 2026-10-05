@@ -1,0 +1,15 @@
+{
+  "name": "circuit-lab",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node scripts/check-boundaries.mjs",
+    "test:ui": "node scripts/test-budget.mjs ui",
+    "test:020": "node --test tests/circuit-020-split-view.test.mjs tests/circuit-020-current-direction.test.mjs tests/review-ui-0920-interaction.test.mjs tests/circuit-018-port-cancel.test.mjs",
+    "test:core": "node scripts/test-budget.mjs core",
+    "test:all-summary": "node scripts/test-budget.mjs all"
+  }
+}

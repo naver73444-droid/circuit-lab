@@ -1,0 +1,25 @@
+{
+  "tolerances": {
+    "voltageAbs": 1e-9,
+    "currentAbs": 1e-11,
+    "resistanceAbs": 1e-6,
+    "relative": 1e-8
+  },
+  "basic": {
+    "vth": 8,
+    "rth": 1333.3333333333333,
+    "in": 0.006,
+    "trialCurrent": 0.001,
+    "trialVoltage": 1.3333333333333333,
+    "loads": [
+      { "resistance": 2000, "voltage": 4.8, "current": 0.0024 },
+      { "resistance": 4000, "voltage": 6, "current": 0.0015 },
+      { "resistance": 8000, "voltage": 6.857142857142857, "current": 0.0008571428571428571 }
+    ]
+  },
+  "active": { "rth": 2000, "trialVoltage": 2 },
+  "negative": { "vth": -1, "rth": -1000, "in": 0.001, "trialVoltage": -1 },
+  "branchReference": { "vth": 0, "rth": 500, "in": 0, "trialVoltage": 0.5 },
+  "idealVoltage": { "vth": 5, "rthKind": "zero", "inKind": "undefined" },
+  "idealCurrent": { "vthKind": "undefined", "rthKind": "infinite", "in": 0.002 }
+}

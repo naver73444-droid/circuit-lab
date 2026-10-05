@@ -1,0 +1,25 @@
+{
+  "format": "circuit-lab",
+  "version": 1,
+  "title": "legacy OP AMP follower",
+  "circuit": {
+    "version": 1,
+    "geometryVersion": 2,
+    "components": [
+      { "id": "V1", "type": "V", "x": 140, "y": 220, "rotation": 90, "props": { "ref": "V1", "mode": "DC", "dc": "1", "acMagnitude": "0", "acPhase": "0" } },
+      { "id": "U1", "type": "OPAMP", "x": 360, "y": 200, "rotation": 0, "props": { "ref": "U1", "gain": "100k" } },
+      { "id": "RL", "type": "R", "x": 500, "y": 280, "rotation": 90, "props": { "ref": "RL", "value": "1k" } },
+      { "id": "G1", "type": "GND", "x": 340, "y": 400, "rotation": 0, "props": { "ref": "GND" } }
+    ],
+    "wires": [
+      { "id": "W1", "a": { "componentId": "V1", "pin": 0 }, "b": { "componentId": "U1", "pin": 0 } },
+      { "id": "W2", "a": { "componentId": "U1", "pin": 2 }, "b": { "componentId": "U1", "pin": 1 } },
+      { "id": "W3", "a": { "componentId": "U1", "pin": 2 }, "b": { "componentId": "RL", "pin": 0 } },
+      { "id": "W4", "a": { "componentId": "RL", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } },
+      { "id": "W5", "a": { "componentId": "V1", "pin": 1 }, "b": { "componentId": "G1", "pin": 0 } }
+    ],
+    "junctions": []
+  },
+  "settings": { "analysis": "dc", "start": "0", "end": "20u", "step": "10u", "startFrequency": "1", "endFrequency": "1", "pointsPerDecade": "1", "phasorFrequency": "1" },
+  "probes": [{ "key": "V:U1:2", "kind": "voltage", "componentId": "U1", "pin": 2, "wireId": "W3", "label": "V(U1.out)", "color": "#176baf" }]
+}

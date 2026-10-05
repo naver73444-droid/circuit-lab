@@ -1,0 +1,40 @@
+import {readFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+const repo=fileURLToPath(new URL('../../../../',import.meta.url));
+let driver=await readFile(new URL('../../../../results/COMBINED-STUDENT-FLOW-2026-10-05/native-check.mjs',import.meta.url),'utf8');
+driver=driver.replace("'em-ux-20261004.css','server.mjs'","'em-ux-20261004.css','server.mjs','src/course-focus.js','src/signals-course-controller.js','src/signals-convolution-view.js','src/signals-visual.js'");
+process.argv[2] ||= repo+'results/V11-UX-INTEGRATION-2026-10-05/attempt-1';
+process.argv[5]=fileURLToPath(new URL('../',import.meta.url));
+let scenario=String.raw`
+ const state=()=>evaluate('window.__CIRCUIT_LAB__.getSignalsCourseState()');
+ const write=async(k,text)=>{await click('[data-signals-key="'+k+'"]');await key('a','KeyA',65,2);await send('Input.insertText',{text});};
+ const choose=async(selector,value)=>{const index=await evaluate('Array.from(document.querySelector('+JSON.stringify(selector)+').options).findIndex(o=>o.value==='+JSON.stringify(value)+')');if(index<0)throw Error('Missing option '+value);await click(selector);await key('Home','Home',36);for(let i=0;i<index;i++)await key('ArrowDown','ArrowDown',40);await key('Enter','Enter',13);};
+ const family=value=>choose('[data-signals-control="family"]',value);
+ await navigate('/');await click('#signals-workspace-tab');await click('[data-signals-lesson="convolution"]');
+ stage='CT draft roundtrip';await write('xExpression','u(t)-u(t-2)');await family('sequence');await family('custom');
+ check('CT unapplied draft survives family roundtrip',(await state()).numericStatus,'draft');check('draft has no current graph',await evaluate('document.querySelectorAll("[data-signals-projection] svg").length'),0);
+ stage='DT exact applied roundtrip';await family('sequence');for(const[k,v]of Object.entries({x:'1,2,-1',h:'2,1',xStart:'-1',hStart:'2'}))await write(k,v);await click('[data-signals-calculate]');
+ check('DT offset result',(await state()).numeric.output,{start:1,values:[2,5,0,-1]});await family('custom');await family('sequence');check('DT applied result survives family roundtrip',(await state()).numeric.output,{start:1,values:[2,5,0,-1]});
+ stage='DT playback';await click('[data-signals-cursor]');await key('Home','Home',36);check('minimum previous disabled',await evaluate('document.querySelector("[data-signals-play=previous]").disabled'));
+ await click('[data-signals-play=play]');check('play aria pressed',await evaluate('document.querySelector("[data-signals-play=play]").getAttribute("aria-pressed")'),'true');
+ await evaluate('window.__changes=0;window.__status=document.querySelector("[data-signals-overlap]");window.__obs=new MutationObserver(r=>window.__changes+=r.length);__obs.observe(__status,{childList:true,subtree:true,characterData:true});true');await wait(120);
+ check('same integer does not rewrite status',await evaluate('__changes'),0);check('DT remains integer',Number.isInteger((await state()).cursor));await click('[data-signals-play=play]');check('stop aria false',await evaluate('document.querySelector("[data-signals-play=play]").getAttribute("aria-pressed")'),'false');await evaluate('__obs.disconnect();true');await click('[data-signals-cursor]');await key('End','End',35);check('maximum next disabled',await evaluate('document.querySelector("[data-signals-play=next]").disabled'));
+ stage='390 invalid recovery';await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await family('custom');await write('hExpression','1/(t-0.123)');await click('[data-signals-calculate]');check('invalid input rejected',(await state()).numericStatus,'invalid');await family('sequence');await family('custom');check('invalid state survives family roundtrip',(await state()).numericStatus,'invalid');check('invalid has no graph',await evaluate('document.querySelectorAll("[data-signals-projection] svg").length'),0);
+ await click('[data-signals-expression-example=rect]');check('preset clears error but stays draft',(await state()).numericStatus,'draft');check('preset error cleared',(await state()).numericError,'');await click('[data-signals-calculate]');check('explicit preset calculation valid',(await state()).numericStatus,'valid');
+ await evaluate('document.querySelector("[data-signals-numeric-details]").scrollIntoView({block:"start"});true');await shot('v11-inputs-390');check('390 viewport no overflow',await evaluate('document.documentElement.scrollWidth<=innerWidth'));
+ stage='Enter focus selection';await click('[data-signals-key=xExpression]');await key('a','KeyA',65,2);await key('Enter','Enter',13);check('Enter retains input focus and selection',await evaluate('(()=>{const e=document.activeElement;return e.dataset.signalsKey==="xExpression"&&e.selectionStart===0&&e.selectionEnd===e.value.length})()'));
+ await click('[data-signals-numeric-details]>summary');await family('sequence');await family('custom');check('closed details survive family roundtrip',await evaluate('document.querySelector("[data-signals-numeric-details]").open'),false);
+ stage='time reversal';await click('[data-signals-lesson=time]');await family('sequence');if(!await evaluate('document.querySelector("[data-signals-numeric-details]").open'))await click('[data-signals-numeric-details]>summary');for(const[k,v]of Object.entries({x:'9,8,7',start:'-4',a:'2',b:'1'}))await write(k,v);await choose('[data-signals-control=sign]','negative');check('time reversal preserves other drafts',(await state()).drafts,{x:'9,8,7',start:'-4',a:'-2',b:'1'});await write('a','-');await choose('[data-signals-control=sign]','positive');check('incomplete a is preserved',(await state()).drafts.a,'-');
+ stage='EM focus';await click('#em-workspace-tab');await click('#em-course-open');await click('#em-course-list');await choose('#em-course-topic','자기유도');await choose('#em-course-select','faraday-loop');check('lesson change returns focus to example list',await evaluate('document.activeElement.id'),'em-course-list');await click('#em-course-condition-settings>summary');await choose('[data-em-symbolic-control=closedCircuit]','0');check('EM condition retains focus',await evaluate('document.activeElement.dataset.emSymbolicControl'),'closedCircuit');check('EM back visible',await evaluate('document.querySelector("#em-course-back").getClientRects().length>0'));await click('#em-course-back');check('EM return focuses launcher',await evaluate('document.activeElement.id'),'em-course-open');
+ stage='AC shared helper';await click('#circuit-workspace-tab');await click('#circuit-course-open');await click('[data-circuit-course-experiment=problem]');await choose('[data-circuit-course-key=problemKind]','three');check('AC shared helper retains changed select focus',await evaluate('document.activeElement.dataset.circuitCourseKey'),'problemKind');
+ report.status='PASS';
+`;
+// Direct correction pass checks only the initially blocked AC harness selector.
+if(process.argv[3]==='ac-correction') scenario=String.raw`
+ await navigate('/');await click('#circuit-course-open');await click('[data-circuit-course-experiment=problem]');
+ stage='AC corrected selector';const selector='[data-circuit-course-key=problemKind]';await click(selector);await key('Home','Home',36);await key('ArrowDown','ArrowDown',40);await key('Enter','Enter',13);
+ check('AC shared helper retains changed select focus',await evaluate('document.activeElement.dataset.circuitCourseKey'),'problemKind');
+ check('AC selected option changed',await evaluate('document.querySelector("[data-circuit-course-key=problemKind]").value'),'three');report.status='PASS';
+`;
+const start=driver.indexOf(' const choose='),end=driver.indexOf('} catch(error)',start);if(start<0||end<0)throw Error('Driver boundaries changed');
+await import('data:text/javascript;base64,'+Buffer.from(driver.slice(0,start)+scenario+driver.slice(end)).toString('base64'));

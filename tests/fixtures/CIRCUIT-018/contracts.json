@@ -1,0 +1,12 @@
+{
+  "tolerances": {
+    "voltageAbs": 1e-9,
+    "currentAbs": 1e-11,
+    "resistanceAbs": 1e-6,
+    "relative": 1e-8
+  },
+  "dc": { "voltage": 5, "current": 0.005 },
+  "transient": { "start": "0", "end": "5m", "step": "10u" },
+  "ac": { "frequency": "1k", "voltageRe": 1, "voltageIm": 0, "currentRe": 0.001, "currentIm": 0 },
+  "port": { "vth": 8, "rth": 1333.3333333333333, "in": 0.006 }
+}

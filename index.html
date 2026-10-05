@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+
+<html data-theme="dark" lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
+<meta content="전기공학 학부생을 위한 로컬 회로 편집·수치 해석 도구" name="description"/>
+<title>Circuit Lab — 회로 편집·시뮬레이션</title>
+<link href="/styles.css" rel="stylesheet"/>
+<!-- Mirrored from em-ux-20261004.css; local server serves only styles.css. Keep this block synchronized. -->
+<style id="em-ux-styles-20261004">
+/* EM UX 2026-10-04. Load after styles.css. Circuit workspace is outside every selector. */
+body[data-workspace="em"] #em-workspace {
+  --em-muted: #cecabe;
+  grid-template-columns: minmax(300px, 330px) minmax(360px, 1fr) minmax(275px, 320px);
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+:root[data-theme="light"] body[data-workspace="em"] #em-workspace { --em-muted: #5d594f; }
+body[data-workspace="em"] #em-workspace [hidden] { display: none !important; }
+body[data-workspace="em"] #em-workspace :is(.em-controls, .em-results) {
+  padding: 14px;
+  gap: 14px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+body[data-workspace="em"] #em-workspace :is(.em-controls, .em-results) > div:first-child {
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+body[data-workspace="em"] #em-workspace :is(.em-controls, .em-results) strong { font-size: 15px; }
+body[data-workspace="em"] #em-workspace :is(p, .em-field-note) { margin: 0; line-height: 1.65; }
+body[data-workspace="em"] #em-workspace :is(.em-controls p, .em-results p, .em-field-note, .em-controls > div:first-child span, .em-results > div:first-child span) {
+  color: var(--em-muted);
+  font-size: 13px;
+}
+body[data-workspace="em"] #em-workspace button { min-height: 40px; line-height: 1.45; }
+body[data-workspace="em"] #em-workspace :is(label, .em-source-row label) { font-size: 13px; gap: 6px; }
+body[data-workspace="em"] #em-workspace :is(.em-controls, .em-stage) label { min-width: 0; }
+body[data-workspace="em"] #em-workspace :is(input:not([type="checkbox"]):not([type="range"]), select) {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+body[data-workspace="em"] #em-workspace input:not([type="checkbox"]):not([type="range"]) { font-family: var(--mono); }
+body[data-workspace="em"] #em-workspace input[type="checkbox"] { width: 17px; height: 17px; flex: 0 0 auto; }
+body[data-workspace="em"] #em-workspace :is(.em-field-grid, .em-controls fieldset) { gap: 10px; }
+/* The generated source-editor grid is a child of another two-column fieldset. */
+body[data-workspace="em"] #em-workspace #em-pg-source-fields { grid-column: 1 / -1; }
+body[data-workspace="em"] #em-workspace :is(.em-controls, .em-stage) fieldset {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px;
+}
+body[data-workspace="em"] #em-workspace legend { padding: 0 4px; font-size: 13px; font-weight: 600; }
+body[data-workspace="em"] #em-workspace :is(fieldset > button, fieldset > .em-pg-toolbar, fieldset > p) { grid-column: 1 / -1; }
+body[data-workspace="em"] #em-workspace :is(.em-scene-tabs, .em-pg-toolbar) { gap: 6px; }
+body[data-workspace="em"] #em-workspace .em-scene-tabs button:last-child { grid-column: auto; }
+body[data-workspace="em"] #em-workspace .em-playground-controls { gap: 12px; }
+body[data-workspace="em"] #em-workspace .em-source-list { gap: 7px; max-height: 220px; }
+body[data-workspace="em"] #em-workspace .em-source-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 9px;
+  padding: 8px;
+}
+body[data-workspace="em"] #em-workspace .em-source-row > button {
+  grid-row: 1 / 3;
+  min-height: 48px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+body[data-workspace="em"] #em-workspace .em-source-row label { min-height: 24px; }
+body[data-workspace="em"] #em-workspace .em-source-row.selected { border-width: 2px; padding: 7px; }
+/* Shared detail treatment covers the existing model help and main-owned setting groups. */
+body[data-workspace="em"] #em-workspace details {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+body[data-workspace="em"] #em-workspace summary {
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+body[data-workspace="em"] #em-workspace details[open] > summary { border-bottom: 1px solid var(--line-soft); margin-bottom: 10px; }
+body[data-workspace="em"] #em-workspace details > :not(summary) { margin: 10px; }
+body[data-workspace="em"] #em-workspace .em-stage { min-width: 0; }
+body[data-workspace="em"] #em-workspace .em-stage-bar {
+  padding: 10px 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--em-muted);
+}
+body[data-workspace="em"] #em-workspace .em-stage-bar > div { flex-wrap: wrap; gap: 6px; }
+body[data-workspace="em"] #em-workspace #em-canvas { min-height: 300px; }
+/* Existing #em-slice keeps its compact fallback unless moved to the central stage. */
+body[data-workspace="em"] #em-workspace .em-stage #em-slice {
+  display: block;
+  width: 100%;
+  height: clamp(300px, 48dvh, 500px);
+  min-height: 300px;
+}
+body[data-workspace="em"] #em-workspace .em-stage #em-slice-note { padding: 0 12px 12px; color: var(--em-muted); font-size: 13px; }
+body[data-workspace="em"] #em-workspace .em-results dl {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+}
+body[data-workspace="em"] #em-workspace .em-results dt { color: var(--em-muted); font-size: 13px; margin-top: 10px; }
+body[data-workspace="em"] #em-workspace .em-results dt:first-child { margin-top: 0; }
+body[data-workspace="em"] #em-workspace .em-results dd {
+  font: 14px/1.65 var(--mono);
+  font-variant-numeric: tabular-nums;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+body[data-workspace="em"] #em-workspace #em-comparison-value { padding: 12px; line-height: 1.65; }
+@media (max-width: 1180px) {
+  body[data-workspace="em"] #em-workspace {
+    grid-template-columns: minmax(290px, 320px) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-content: start;
+    overflow: auto;
+  }
+  body[data-workspace="em"] #em-workspace .em-controls { max-height: 74dvh; }
+  body[data-workspace="em"] #em-workspace .em-stage { min-height: 540px; }
+  body[data-workspace="em"] #em-workspace .em-results { grid-column: 1 / -1; overflow: visible; }
+}
+@media (max-width: 820px) {
+  body[data-workspace="em"] #em-workspace { display: flex; flex-direction: column; padding: 8px; gap: 10px; }
+  body[data-workspace="em"] #em-workspace :is(.em-controls, .em-stage, .em-results) { flex: 0 0 auto; overflow: visible; }
+  body[data-workspace="em"] #em-workspace .em-stage { order: -1; min-height: 380px; grid-template-rows: auto minmax(280px, 1fr) auto; }
+  body[data-workspace="em"] #em-workspace .em-controls { max-height: none; }
+  body[data-workspace="em"] #em-workspace :is(button, summary) { min-height: 44px; }
+  body[data-workspace="em"] #em-workspace :is(input:not([type="checkbox"]):not([type="range"]), select) { min-height: 44px; font-size: 16px; }
+  body[data-workspace="em"] #em-workspace .em-stage #em-slice { height: 320px; }
+  body[data-workspace="em"] #em-workspace #em-canvas { min-height: 280px; }
+}
+
+/* Integration contract: move #em-slice into .em-stage; .em-slice-panel is an optional wrapper. */
+body[data-workspace="em"] #em-workspace .em-stage:has(#em-slice) { display: flex; flex-direction: column; overflow: auto; }
+body[data-workspace="em"] #em-workspace .em-stage:has(#em-slice) > :not(#em-slice):not(.em-slice-panel) { flex: 0 0 auto; }
+body[data-workspace="em"] #em-workspace .em-stage :is(.em-slice-panel, .em-slice-panel #em-slice) { flex: 1 0 300px; }
+body[data-workspace="em"] #em-workspace .em-stage .em-slice-panel { display: flex; flex-direction: column; min-width: 0; gap: 10px; padding: 12px; }
+body[data-workspace="em"] #em-workspace .em-stage > #em-slice { flex: 1 0 300px; }
+body[data-workspace="em"] #em-workspace .em-stage details #em-canvas { height: 300px; }
+</style>
+<style id="em-ux-layout-20261004">
+body[data-workspace="em"] #em-workspace #em-edit-help {color:var(--em-muted);font-size:14px}
+body[data-workspace="em"] #em-workspace #em-selected-hint {font-size:14px;font-weight:600}
+body[data-workspace="em"] #em-workspace #em-stage-edit-tools {display:grid;gap:10px}
+body[data-workspace="em"] #em-workspace .em-stage .em-pg-toolbar {display:flex;flex-wrap:wrap}
+body[data-workspace="em"] #em-workspace .em-stage .em-pg-toolbar button {flex:1 0 auto}
+body[data-workspace="em"] #em-workspace #em-3d-details {margin:12px}
+body[data-workspace="em"] #em-workspace #em-canvas {width:calc(100% - 20px)}
+body[data-workspace="em"] #em-workspace .em-stage .em-slice-panel {flex:0 0 auto}
+body[data-workspace="em"] #em-workspace .em-stage .em-slice-panel #em-slice {flex:0 0 auto;touch-action:none;cursor:crosshair}
+body[data-workspace="em"] #em-workspace .em-results dd {overflow-wrap:anywhere}
+@media (min-width:821px) and (max-width:1180px) {body[data-workspace="em"] #em-workspace .em-stage #em-slice {height:300px}}
+</style>
+<style id="em-course-styles-20261004">
+body[data-workspace="em"] #em-course-root textarea {width:100%;min-height:90px;padding:8px;font-size:14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:inherit}
+body[data-workspace="em"] #em-course-root .em-course-answer {padding:10px;border:1px solid var(--line);border-radius:8px;display:grid;gap:10px}
+body[data-workspace="em"] #em-course-root #em-course-answer {font:14px/1.65 var(--mono);overflow-wrap:anywhere}
+body[data-workspace="em"] #em-course-root #em-course-substitution {font-family:var(--mono);font-size:12px;white-space:normal}
+@media(max-width:820px){body[data-workspace="em"] #em-course-root textarea {font-size:16px}}
+body[data-workspace="em"] #em-workspace:has(#em-course-root:not([hidden])) {grid-template-columns:minmax(0,1fr)}
+body[data-workspace="em"] #em-course-root {min-width:0;min-height:0;grid-column:1/-1;overflow:auto}
+body[data-workspace="em"] #em-course-root .em-course-shell {height:100%;display:flex;flex-direction:column;gap:12px}
+body[data-workspace="em"] #em-course-root .em-course-header {display:flex;gap:16px;align-items:center;justify-content:space-between;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+body[data-workspace="em"] #em-course-root .em-course-header strong {font-size:19px}
+body[data-workspace="em"] #em-course-root .em-course-header p {font-size:13px;color:var(--em-muted)}
+body[data-workspace="em"] #em-course-root .em-course-header label {min-width:220px}
+body[data-workspace="em"] #em-course-root .em-course-layout {min-height:0;flex:1;display:grid;grid-template-columns:minmax(250px,290px) minmax(320px,1fr) minmax(270px,320px);gap:12px}
+body[data-workspace="em"] #em-course-root :is(.em-course-controls,.em-course-stage,.em-course-results) {min-width:0;padding:14px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel);display:flex;flex-direction:column;gap:12px}
+body[data-workspace="em"] #em-course-root :is(label,input,select,button) {font-size:14px;min-width:0}
+body[data-workspace="em"] #em-course-root label {display:flex;flex-direction:column;gap:5px}
+body[data-workspace="em"] #em-course-root :is(input,select,button,summary) {min-height:42px}
+body[data-workspace="em"] #em-course-root :is(input,select) {width:100%;padding:8px}
+body[data-workspace="em"] #em-course-root fieldset {margin:0 0 12px;padding:10px;border:1px solid var(--line);border-radius:9px;min-width:0}
+body[data-workspace="em"] #em-course-root legend {font-size:14px;font-weight:600}
+body[data-workspace="em"] #em-course-root #em-course-parameters {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+body[data-workspace="em"] #em-course-root .em-course-probe-grid {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+body[data-workspace="em"] #em-course-root .em-course-actions {display:flex;gap:8px}
+body[data-workspace="em"] #em-course-root .em-course-actions button {flex:1}
+body[data-workspace="em"] #em-course-root :is(p,li) {margin:0;font-size:13px;line-height:1.65;overflow-wrap:anywhere}
+body[data-workspace="em"] #em-course-root ul {padding-left:20px;margin:6px 0}
+body[data-workspace="em"] #em-course-root .em-course-badge {padding:8px;border:1px solid var(--line);border-radius:8px}
+body[data-workspace="em"] #em-course-root :is(.em-course-stage-heading,.em-course-result-heading) {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+body[data-workspace="em"] #em-course-root .em-course-stage-heading label {width:100px}
+body[data-workspace="em"] #em-course-root #em-course-canvas {display:block;width:100%;height:380px;min-height:300px;flex:0 0 auto;border-radius:10px;touch-action:none;cursor:crosshair}
+body[data-workspace="em"] #em-course-root #em-course-values {display:grid;gap:7px;margin:0}
+body[data-workspace="em"] #em-course-root #em-course-values dt {font-size:13px;color:var(--em-muted)}
+body[data-workspace="em"] #em-course-root #em-course-values dd {font:14px/1.6 var(--mono);margin:0 0 8px;overflow-wrap:anywhere;border-bottom:1px solid var(--line);padding-bottom:8px}
+body[data-workspace="em"] #em-course-root #em-course-checks {display:grid;gap:10px}
+body[data-workspace="em"] #em-course-root .em-course-check {padding:10px;border:1px solid var(--line);border-radius:8px}
+body[data-workspace="em"] #em-course-root :is([data-status="pass"],[data-status="valid"]) {color:#82dab1}
+body[data-workspace="em"] #em-course-root :is([data-status="fail"],[data-status="invalid"],#em-course-error) {color:#ff9b88}
+body[data-workspace="em"] #em-course-root #em-course-formulas p {font-family:var(--mono);font-size:13px;margin-bottom:8px}
+body[data-workspace="em"] #em-course-root .em-course-roadmap {flex:0 0 auto}
+body[data-workspace="em"] #em-course-root a {color:#91baf4}
+@media(max-width:1180px){body[data-workspace="em"] #em-course-root .em-course-layout{grid-template-columns:minmax(250px,290px) minmax(0,1fr);flex:0 0 auto}body[data-workspace="em"] #em-course-root .em-course-results{grid-column:1/-1}body[data-workspace="em"] #em-course-root .em-course-header{flex-wrap:wrap}body[data-workspace="em"] #em-course-root .em-course-controls{max-height:740px}body[data-workspace="em"] #em-course-root .em-course-shell{height:auto}}
+@media(max-width:820px){body[data-workspace="em"] #em-course-root .em-course-layout{display:flex;flex-direction:column}body[data-workspace="em"] #em-course-root .em-course-stage{order:-1}body[data-workspace="em"] #em-course-root .em-course-header{align-items:stretch}body[data-workspace="em"] #em-course-root .em-course-header label{width:100%}body[data-workspace="em"] #em-course-root :is(input,select){font-size:16px}body[data-workspace="em"] #em-course-root #em-course-canvas{height:320px}body[data-workspace="em"] #em-course-root .em-course-controls{max-height:none}body[data-workspace="em"] #em-course-root .em-course-header button{width:100%}}
+</style>
+<style id="circuit-course-integration-styles-20261004">
+body[data-workspace="circuit"][data-circuit-experience="course"] .topbar :is(.top-status,.draft-notice,.cancel-analysis,.run-button) {display:none!important}
+#circuit-course-shell {position:fixed;top:var(--circuit-course-top,108px);left:0;right:0;bottom:0;overflow:auto;background:var(--bg);padding:12px;z-index:10}
+#circuit-course-shell[hidden],#circuit-course-host[hidden] {display:none!important}
+#circuit-course-shell .circuit-course-integration-header {max-width:1600px;margin:0 auto 12px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+#circuit-course-shell .circuit-course-integration-header button {min-height:42px;padding:8px 12px}
+@media(max-width:760px){#circuit-course-shell {padding:8px}#circuit-course-shell .circuit-course-integration-header{flex-wrap:wrap}#circuit-course-shell .circuit-course-integration-header button{min-height:44px}}
+</style>
+<style id="em-course-symbolic-styles-20261004">
+body[data-workspace="em"] #em-course-root .em-course-layout{grid-template-columns:minmax(320px,1.15fr) minmax(350px,1fr)}
+body[data-workspace="em"] #em-course-root .em-course-controls{border:0;padding:8px 0;background:none;overflow:visible}
+body[data-workspace="em"] #em-course-root .em-course-results{grid-column:auto}
+body[data-workspace="em"] #em-course-root #em-course-radial-canvas{display:block;width:100%;height:240px;touch-action:none;cursor:crosshair;border-radius:10px}
+body[data-workspace="em"] #em-course-root [hidden]{display:none!important}
+body[data-workspace="em"] #em-course-root .em-course-visual-controls{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center}
+body[data-workspace="em"] #em-course-root .em-course-visual-controls label{display:flex;flex-direction:row;align-items:center;gap:6px}
+body[data-workspace="em"] #em-course-root .em-course-visual-controls input[type="checkbox"]{width:20px;min-height:20px}
+body[data-workspace="em"] #em-course-root .em-course-visual-controls input[type="range"]{width:90px}
+body[data-workspace="em"] #em-course-root .em-course-visual-controls p,#em-course-illustration-context{font-size:13px;color:var(--em-muted);margin:0}
+body[data-workspace="em"] #em-course-root #em-course-active-branch{white-space:pre-wrap;padding:12px;border:1px solid #e5c163;border-radius:10px;position:sticky;top:0;background:var(--panel);z-index:1}
+body[data-workspace="em"] #em-course-root #em-course-active-branch:empty{display:none}
+body[data-workspace="em"] #em-course-root [data-active="true"]{border-color:#f0ca6c;background:#f0ca6c18}
+body[data-workspace="em"] #em-course-root #em-course-symbolic-controls{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+@media(max-width:820px){body[data-workspace="em"] #em-course-root .em-course-layout{display:flex;flex-direction:column}body[data-workspace="em"] #em-course-root .em-course-results{order:0}body[data-workspace="em"] #em-course-root .em-course-stage{order:-1}}
+</style><style id="em-course-simple-styles-20261004">
+body[data-workspace="em"] #em-course-root .em-course-layout{grid-template-columns:minmax(300px,1.35fr) minmax(250px,.85fr);gap:14px}
+body[data-workspace="em"] #em-course-root .em-course-header{padding:12px 16px;gap:16px;align-items:center;justify-content:space-between}
+body[data-workspace="em"] #em-course-root .em-course-header strong{font-size:20px}
+body[data-workspace="em"] #em-course-root .em-course-header p{margin:6px 0 0}
+body[data-workspace="em"] #em-course-root .em-course-header>div{min-width:0;flex:1}
+body[data-workspace="em"] #em-course-root #em-course-catalog{position:relative;flex:0 1 260px}
+body[data-workspace="em"] #em-course-root #em-course-catalog>summary{padding:8px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer}
+body[data-workspace="em"] #em-course-root #em-course-catalog[open]{display:grid;gap:10px}
+body[data-workspace="em"] #em-course-root .em-course-stage-heading{display:none}
+body[data-workspace="em"] #em-course-root .em-course-stage{overflow:visible;gap:10px}
+body[data-workspace="em"] #em-course-root #em-course-canvas{height:clamp(300px,calc(100vh - 430px),530px);min-height:300px;border:1px solid var(--line)}
+body[data-workspace="em"] #em-course-root #em-course-gesture{font-size:14px;margin:0;color:var(--em-muted)}
+body[data-workspace="em"] #em-course-root #em-course-radius-control{display:grid;gap:6px;padding:8px 4px}
+body[data-workspace="em"] #em-course-root #em-course-radius-control>label{display:flex;flex-direction:row;justify-content:space-between;font-weight:600}
+body[data-workspace="em"] #em-course-root #em-course-radius-control>label>span{font-size:12px;color:var(--em-muted);font-weight:400}
+body[data-workspace="em"] #em-course-root #em-course-radius{width:100%;padding:0;min-height:42px;cursor:ew-resize}
+body[data-workspace="em"] #em-course-root .em-course-radius-footer{display:flex;align-items:center;justify-content:space-between;gap:12px}
+body[data-workspace="em"] #em-course-root .em-course-radius-footer output{font-size:14px;color:var(--em-muted)}
+body[data-workspace="em"] #em-course-root .em-course-radius-footer button{font-size:13px;min-height:34px;padding:6px 10px}
+body[data-workspace="em"] #em-course-root .em-course-results{align-self:start;gap:12px;max-height:calc(100vh - 230px)}
+body[data-workspace="em"] #em-course-root #em-course-active-branch{position:static;font:20px/1.7 ui-monospace,monospace;min-height:140px;margin:12px 0 20px;padding:18px;border-color:#b6a05c;white-space:pre-wrap}
+body[data-workspace="em"] #em-course-root .em-course-symbolic-panel>h3{font-size:17px;margin:0}
+body[data-workspace="em"] #em-course-root :is(#em-course-solution,#em-course-condition-settings,#em-course-advanced)>summary{cursor:pointer;padding:10px 2px}
+body[data-workspace="em"] #em-course-root #em-course-symbolic-controls{padding-top:8px}
+body[data-workspace="em"] #em-course-root #em-course-advanced[open]{display:flex;flex-direction:column;gap:14px}
+@media(max-width:760px){body[data-workspace="em"] #em-course-root .em-course-layout{display:flex;flex-direction:column}body[data-workspace="em"] #em-course-root .em-course-header{align-items:flex-start;flex-wrap:wrap}body[data-workspace="em"] #em-course-root #em-course-catalog{flex:0 0 auto;width:100%}body[data-workspace="em"] #em-course-root #em-course-canvas{height:360px;min-height:320px}body[data-workspace="em"] #em-course-root .em-course-results{align-self:stretch;max-height:none}body[data-workspace="em"] #em-course-root #em-course-active-branch{font-size:17px;min-height:100px;margin-bottom:10px}}
+/* Shared field navigation: private signals course occupies the central panel. */
+body[data-workspace="signals"]{grid-template-rows:64px 44px minmax(0,1fr)}
+body[data-workspace="signals"]>:is(.toolbar,#panel-shelf,#panel-backdrop,main.workbench,footer),body[data-workspace="signals"] :is(.top-status,.draft-notice,.cancel-analysis,.run-button){display:none!important}
+#signals-workspace{grid-row:3;min-height:0;overflow:auto;background:var(--bg)}
+#signals-workspace[hidden]{display:none!important}
+@media(max-width:760px){body[data-workspace="signals"]{grid-template-rows:54px 48px minmax(0,1fr)}.workspace-tabs button{padding-inline:10px;white-space:nowrap}}
+</style></head>
+<body>
+<header class="topbar">
+<div class="brand">
+<span aria-hidden="true" class="brand-mark"><svg fill="none" stroke="currentColor" stroke-width="1.6" viewbox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"></path><circle cx="3" cy="12" r="1.6"></circle><circle cx="21" cy="12" r="1.6"></circle></svg></span>
+<div><strong>Circuit Lab</strong><span>회로를 만들고, 신호를 읽다</span></div>
+</div>
+<div aria-live="polite" class="top-status">
+<span class="status-dot ready" id="engine-status">해석 준비</span>
+<span class="badge stale hidden" id="stale-badge">오래된 결과</span>
+</div>
+<div class="draft-notice hidden" id="draft-notice"><span id="draft-count"></span><button id="discard-drafts-button" type="button">입력 취소</button></div>
+<select aria-label="화면 테마" class="appearance" id="appearance"><option value="dark">다크</option><option value="light">라이트</option><option value="system">시스템</option></select>
+<button class="cancel-analysis hidden" disabled="" id="cancel-analysis-button" type="button">계산 취소</button>
+<button class="primary run-button" id="run-button" type="button"><span>▶</span> 해석 실행</button>
+</header>
+<nav aria-label="학습 작업공간" class="workspace-tabs" role="tablist">
+<button aria-controls="workbench" aria-selected="true" data-workspace-tab="circuit" id="circuit-workspace-tab" role="tab" tabindex="0" type="button">회로</button>
+<button aria-controls="em-workspace" aria-selected="false" data-workspace-tab="em" id="em-workspace-tab" role="tab" tabindex="-1" type="button">전자기학</button>
+<button aria-controls="signals-workspace" aria-selected="false" data-workspace-tab="signals" id="signals-workspace-tab" role="tab" tabindex="-1" type="button">신호 및 시스템</button>
+</nav>
+<nav aria-label="회로 편집 도구" class="toolbar">
+<div class="tool-group">
+<button class="tool active" data-tool="select" title="선택·이동 (Esc)" type="button">↖ <span>선택</span></button>
+<button class="tool" data-tool="wire" title="핀 두 개를 클릭해 배선" type="button">⌁ <span>배선</span></button>
+<button class="tool" data-tool="voltage-probe" title="선이나 핀의 전압 측정" type="button">V● <span>전압 프로브</span></button>
+<button class="tool" data-tool="current-probe" title="부품 전류 측정" type="button">I● <span>전류 프로브</span></button>
+<button class="tool" data-tool="pan" title="부품을 움직이지 않고 회로 화면 이동" type="button">✥ <span>화면 이동</span></button></div>
+<div class="tool-divider"></div>
+<div class="tool-group compact">
+<button id="undo-button" title="실행 취소 (Ctrl+Z)" type="button">↶</button>
+<button id="redo-button" title="다시 실행 (Ctrl+Y)" type="button">↷</button>
+<button id="clone-button" title="선택 부품 복제 (Ctrl+D)" type="button">⧉</button>
+<button id="rotate-button" title="선택 부품 회전 (R)" type="button">↻</button>
+<button id="delete-button" title="선택 항목 삭제 (Delete)" type="button">⌫</button>
+</div>
+<div class="toolbar-spacer"></div>
+<select aria-label="예제 회로" id="example-select">
+<option value="">예제 불러오기…</option>
+</select>
+<button id="new-button" type="button">새 회로</button>
+<button id="save-button" type="button">저장</button>
+<button id="load-button" type="button">열기</button>
+<input accept="application/json,.json" hidden="" id="file-input" type="file"/>
+
+</nav><nav aria-label="패널 열기·숨기기" class="panel-shelf" id="panel-shelf"><span class="shelf-label">작업 공간</span><button data-panel-trigger="palette" type="button">부품</button><button data-panel-trigger="inspector" type="button">속성</button><button data-panel-trigger="analysis" type="button">관찰 설정</button><button data-panel-trigger="wave" type="button">파형</button><button data-panel-trigger="port" type="button">테브난·노턴</button><button data-panel-trigger="phasor" type="button">페이저</button><button id="circuit-course-open" type="button" aria-controls="circuit-course-shell">학부 AC·3상</button><button class="shelf-reset" id="workspace-reset" type="button">배치 초기화</button></nav><div aria-live="polite" class="visually-hidden" id="layout-announcement" role="status"></div>
+<button aria-label="열린 패널 닫기" class="panel-backdrop" hidden="" id="panel-backdrop" tabindex="-1" type="button"></button>
+<main aria-labelledby="circuit-workspace-tab" class="workbench" id="workbench" role="tabpanel"><div aria-label="왼쪽 패널" class="dock dock-left" id="dock-left"></div><div aria-label="오른쪽 패널" class="dock dock-right" id="dock-right"></div><div aria-label="아래 패널" class="dock dock-bottom" id="dock-bottom"></div><section class="workspace">
+
+
+<section aria-label="회로 캔버스 영역" class="canvas-panel panel">
+<div class="canvas-header">
+<div class="canvas-caption"><strong id="canvas-title">새 회로</strong><span id="canvas-subtitle">빈 캔버스에서 시작하세요</span></div>
+<div class="panel-access"><button aria-controls="palette-panel" aria-expanded="true" id="palette-open" type="button">＋ 부품</button><button aria-controls="inspector-panel" aria-expanded="true" id="inspector-open" type="button">속성</button><details class="interaction-help" id="interaction-help"><summary>조작 도움말</summary><div class="interaction-help-card">
+<div class="interaction-help-intro"><strong>회로 편집 조작</strong><span>마우스·터치·키보드 동작을 한곳에서 확인하세요.</span></div>
+<section><h3>선택·이동</h3><ul><li><b>마우스:</b> 항목을 눌러 선택하고 끌어 이동합니다. 빈 캔버스를 끌면 화면이 이동합니다.</li><li><b>터치:</b> 먼저 탭해 선택한 항목만 다시 끌어 이동합니다. 그 밖의 한 손가락 끌기는 화면 이동, 두 손가락은 확대·축소입니다.</li><li><b>키보드:</b> <kbd>R</kbd> 회전 · <kbd>Delete</kbd> 삭제 · <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>D</kbd> 복제 · <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd> 실행 취소 · <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Y</kbd> 다시 실행</li></ul></section>
+<section><h3>배선·값</h3><ul><li><b>배선:</b> 배선 도구에서 핀·접속점을 누르고, 빈 격자점을 눌러 꺾임을 고정한 뒤 다른 핀·배선·접속점에서 끝냅니다.</li><li><b>값 편집:</b> 부품의 값 글자를 두 번 누릅니다. <kbd>Enter</kbd>로 적용하고 <kbd>Esc</kbd>로 취소합니다.</li><li><kbd>Esc</kbd>는 진행 중인 배선이나 도구를 끝내고 선택 도구로 돌아갑니다.</li></ul></section>
+<section><h3>프로브·그래프</h3><ul><li><b>전압:</b> 핀·배선·접속점을 누릅니다. <b>전류:</b> 부품을 누릅니다. 프로브 우클릭 메뉴나 목록의 제거 버튼으로 해당 프로브만 지웁니다.</li><li>그래프를 누르면 커서를 고정하고, 좌우 방향키·<kbd>Home</kbd>·<kbd>End</kbd>로 표본을 이동합니다. 휠은 시간·주파수, <kbd>Shift</kbd>+휠은 왼쪽 축, <kbd>Alt</kbd>+휠은 오른쪽 축 배율을 바꿉니다.</li></ul></section>
+<section><h3>패널·입력</h3><ul><li>패널의 손잡이를 끌어 위치나 크기를 바꾸고, <b>배치</b> 메뉴와 작업 공간 막대에서 다시 열 수 있습니다. 구분선은 방향키로 조절하고 <kbd>Home</kbd>으로 초기화합니다.</li><li>입력 칸을 편집하는 동안 회전·삭제 같은 회로 단축키는 작동하지 않습니다.</li></ul></section>
+</div></details></div>
+<div class="canvas-tools"><span class="canvas-key"><span><i class="junction-sample"></i> 접속</span><span><i class="cross-sample"></i> 교차</span></span><button aria-label="회로 축소" id="zoom-out-button" type="button">−</button><button aria-label="회로 확대" id="zoom-in-button" type="button">＋</button><button id="fit-button" type="button">화면맞춤</button><button id="layout-reset-button" type="button">크기 초기화</button></div>
+</div>
+<div class="canvas-wrap" id="canvas-wrap">
+<svg aria-label="회로를 배치하고 배선하는 캔버스" id="circuit-canvas" role="application" viewbox="0 0 760 500">
+<defs>
+<pattern height="20" id="grid-small" patternunits="userSpaceOnUse" width="20">
+<path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(148,163,184,.13)" stroke-width="1"></path>
+</pattern>
+<pattern height="100" id="grid-large" patternunits="userSpaceOnUse" width="100">
+<rect fill="url(#grid-small)" height="100" width="100"></rect>
+<path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(148,163,184,.18)" stroke-width="1"></path>
+</pattern>
+</defs>
+<rect class="canvas-bg" fill="url(#grid-large)" height="200000" width="200000" x="-100000" y="-100000"></rect>
+<g id="wire-layer"></g>
+<g id="component-layer"></g>
+<g id="overlay-layer"></g>
+</svg>
+<input aria-label="화면 값 편집" autocomplete="off" class="inline-value-editor hidden" id="inline-value-editor"/>
+<div aria-label="프로브 제거 선택" class="probe-context-menu hidden" id="probe-context-menu" role="menu"></div>
+<div class="empty-hint" id="empty-hint"><b>빈 회로</b><span>부품을 선택하고 캔버스를 눌러 배치하세요.</span></div>
+</div>
+<div class="canvas-footer"><span id="tool-hint">탭으로 선택 · 선택한 부품 끌기로 이동 · 빈곳 끌기로 화면 이동</span><span id="connection-summary">접속 상태 없음</span><span id="circuit-count">부품 0 · 배선 0</span></div>
+</section>
+
+
+</section><div aria-label="왼쪽 패널 너비 조절" aria-orientation="vertical" class="splitter dock-splitter" id="palette-splitter" role="separator" tabindex="0"></div><div aria-label="오른쪽 패널 너비 조절" aria-orientation="vertical" class="splitter dock-splitter" id="results-splitter" role="separator" tabindex="0"></div><div aria-label="아래 패널 높이 조절" aria-orientation="horizontal" class="splitter dock-splitter" id="analysis-splitter" role="separator" tabindex="0"></div><aside aria-label="부품 라이브러리" class="palette panel" id="palette-panel">
+<div aria-label="부품 패널 높이 조절" aria-orientation="horizontal" class="splitter panel-height-splitter" id="palette-height-splitter" role="separator" tabindex="0"></div>
+<div class="panel-heading"><button aria-label="부품 패널 닫기" class="panel-toggle" id="palette-toggle" type="button">닫기</button></div>
+<div class="palette-list" id="palette-list"></div>
+<div class="mini-guide">
+<strong>빠른 사용법</strong>
+<ol>
+<li>부품을 골라 배치</li>
+<li>배선에서 핀 두 개 클릭</li>
+<li>값을 수정하고 해석 실행</li>
+<li>프로브로 파형 추가</li>
+</ol>
+</div>
+</aside><aside aria-label="부품 속성" class="inspector panel" id="inspector-panel"><small id="selection-label">선택 없음</small>
+<div aria-label="속성 패널 높이 조절" aria-orientation="horizontal" class="splitter panel-height-splitter" id="inspector-height-splitter" role="separator" tabindex="0"></div>
+<div class="panel-heading"><button aria-label="속성 패널 닫기" class="panel-toggle" id="inspector-toggle" type="button">닫기</button></div>
+<div class="inspector-content" id="inspector-content">
+<div class="inspector-empty"><span>⌁</span><p>부품을 선택하면 이름, 값, 파형과 초기조건을 수정할 수 있습니다.</p></div>
+</div>
+<div class="model-note">
+<strong>모델 안내</strong>
+<p>간략 OP AMP는 유한 개방루프 이득, 이상 OP AMP는 V+=V− MNA 제약입니다. 둘 다 전원·포화·대역폭이 없으며 안정성을 판정하지 않습니다.</p>
+</div>
+<div aria-label="속성 카드 높이 조절" aria-orientation="horizontal" class="splitter dock-splitter" id="inspector-splitter" role="separator" tabindex="0"></div></aside><section class="analysis panel" id="analysis-panel">
+<div aria-label="기본 회로 학습" class="learning-bar">
+<strong>예제</strong>
+<button data-learning-example="rc-lowpass" type="button">RC</button>
+<button data-learning-example="rl" type="button">RL</button>
+<button data-learning-example="rlc" type="button">RLC</button>
+<button data-learning-example="parallel-sine" type="button">SIN↔AC</button>
+<span id="auto-update-status">자유 편집 · 수동 실행</span>
+</div>
+<div class="workflow-bar">
+<label for="analysis-intent">관찰</label>
+<select aria-label="관찰할 내용" id="analysis-intent">
+<option value="auto">자동 판단</option><option value="dc">회로 상태</option>
+<option value="transient">시간 변화</option><option value="ac">주파수 응답</option>
+<option value="manual">직접 설정</option>
+</select>
+<label class="auto-toggle"><input checked="" id="auto-update" type="checkbox"/>자동 갱신</label>
+<span id="analysis-recommendation">회로에 맞는 해석을 안내합니다.</span>
+</div>
+<details id="advanced-analysis"><summary>고급 설정</summary><div class="analysis-controls">
+<label>해석 종류<select id="analysis-type"><option value="dc">DC 동작점</option><option value="transient">시간응답</option><option value="ac">AC 주파수</option></select></label>
+<div class="settings-row" id="analysis-settings"></div>
+<div class="analysis-note" id="analysis-note">C는 개방, L은 단락으로 계산합니다.</div>
+</div>
+</details>
+<div class="error-box hidden" id="error-box" role="alert"></div>
+</section><section class="wave-panel panel" id="wave-panel">
+
+<div class="wave-header">
+<div><strong>신호 관찰</strong><span id="result-summary">회로에서 프로브를 선택하고 해석을 실행하세요.</span></div>
+<div class="wave-actions">
+<div class="segmented hidden" id="ac-view-toggle"><button class="active" data-ac-view="magnitude" type="button">절대 크기 dBV/dBA</button><button data-ac-view="phase" type="button">위상 °</button></div>
+<button id="reset-view-button" type="button">자동 맞춤</button>
+<button disabled="" id="csv-button" type="button">CSV 내보내기</button>
+</div>
+</div>
+<div class="probe-list" id="probe-list"><span class="probe-empty">추가된 프로브 없음</span></div>
+<div aria-label="오실로스코프 눈금 조절" class="scope-controls" id="scope-controls"></div>
+<div class="plot-wrap">
+<svg aria-describedby="cursor-readout" aria-label="프로브 파형 그래프. 시간응답에서 좌우 화살표로 원표본을 이동하고 Home과 End로 처음과 끝을 선택하며 Escape로 고정을 해제합니다." id="wave-plot" preserveaspectratio="none" tabindex="0" viewbox="0 0 1000 300"></svg>
+<div class="plot-empty" id="plot-empty"><span>V● 또는 I● 도구로 회로를 클릭하세요</span></div>
+</div>
+<div class="scope-zero-note hidden" id="scope-zero-note"></div>
+<div aria-live="polite" class="cursor-readout" id="cursor-readout" role="status">프로브를 추가하면 눈금이 자동으로 맞춰집니다.</div>
+
+</section><section aria-label="DC 테브난·노턴 포트" class="port-panel panel" id="port-panel">
+<div class="port-summary"><strong>DC 테브난·노턴 포트</strong><span class="port-status" id="port-status">DC 선형 회로 전용</span></div>
+<div class="port-controls">
+<button id="port-p-button" type="button">p 선택</button>
+<button id="port-n-button" type="button">n 선택</button>
+<button disabled="" id="port-load-button" type="button">선택 부하 제외</button>
+<button id="port-clear-button" type="button">선택 초기화</button>
+<button class="primary" disabled="" id="port-run-button" type="button">DC 등가 실행</button>
+</div>
+<div class="port-selection"><span id="port-selection">p: 미선택 · n: 미선택</span><span id="port-loads">제외 부하 없음</span></div>
+<div aria-live="polite" class="port-result" id="port-result"><span>p/n과 필요하면 외부 부하를 선택한 뒤 DC 등가 실행을 누르세요.</span></div>
+<p class="port-direction">V=Vp−Vn · I<sub>into</sub>는 p에서 원망으로 유입 · Norton 내부원 n→p · 단락전류 p→n</p>
+</section><section aria-label="단일 주파수 페이저 학습" class="phasor-panel panel" id="phasor-panel"><div aria-label="페이저 학습 보기" class="study-tabs" role="tablist"><button aria-controls="phasor-circuit-view" aria-selected="true" id="phasor-circuit-tab" role="tab" tabindex="0" type="button">회로 페이저</button><button aria-controls="phasor-practice-view" aria-selected="false" id="phasor-practice-tab" role="tab" tabindex="-1" type="button">복소수 연습</button></div><div aria-labelledby="phasor-circuit-tab" id="phasor-circuit-view" role="tabpanel"><div class="phasor-actions"><button id="phasor-ac-settings" type="button">AC 설정 열기</button><button class="primary" id="phasor-run" type="button">AC로 전환·해석</button></div><p class="study-notice" id="phasor-validity" role="status">AC 해석 전입니다. 계산되지 않은 값을 정답처럼 표시하지 않습니다.</p>
+<div class="phasor-header">
+<div><strong>단일 주파수 페이저 학습</strong><span id="phasor-summary">AC 해석을 실행하면 정확한 지정 주파수의 페이저를 계산합니다.</span></div>
+<span class="reference-badge">peak · cos 기준 · x(t)=Re{Xe<sup>jωt</sup>}</span>
+</div>
+<div class="phasor-guide"><span>전압: 접지 기준 · 전류: 회로의 기준 화살표</span><span>peak → RMS는 √2로 나눔</span><span>cos 기준 · sin 위상 − 90°</span></div>
+<div class="phasor-grid">
+<article class="phasor-card">
+<div class="card-heading"><strong>전압 복소평면</strong><span id="voltage-plane-unit">V</span></div>
+<svg aria-label="전압 페이저 복소평면" id="voltage-phasor-plot" viewbox="0 0 300 220"></svg>
+<div class="phasor-values" id="voltage-phasor-values"></div>
+</article>
+<article class="phasor-card">
+<div class="card-heading"><strong>전류 복소평면</strong><span id="current-plane-unit">A</span></div>
+<svg aria-label="전류 페이저 복소평면" id="current-phasor-plot" viewbox="0 0 300 220"></svg>
+<div class="phasor-values" id="current-phasor-values"></div>
+</article>
+<article class="phasor-card time-card">
+<div class="card-heading"><strong>대응 정상상태 정현파</strong><span id="phasor-time-units">시간 s</span></div>
+<svg aria-label="페이저 대응 코사인 시간파형" id="phasor-time-plot" viewbox="0 0 640 220"></svg>
+<p>두 주기 · 전압/전류 독립 Y축 · 같은 색은 같은 프로브입니다.</p>
+</article>
+<article class="phasor-card impedance-card">
+<div class="card-heading"><strong>선택 소자 임피던스</strong><span>V = ZI</span></div>
+<div class="impedance-learning" id="impedance-learning">회로에서 R, L 또는 C를 선택하세요.</div>
+</article>
+</div>
+<p class="small-signal-note">다이오드가 포함된 AC 결과는 DC 동작점 주위 소신호입니다. 간략 OP AMP는 유한 이득, 이상 OP AMP는 주파수 독립 V+=V− 제약입니다. 전원·포화·대역폭과 안정성 판정은 포함하지 않으며 PSpice 호환 모델이 아닙니다.</p>
+<section class="phase-compare"><strong>두 신호의 위상차</strong><div><label>비교 A <select aria-label="위상 비교 A" id="phase-reference-a"></select></label><label>기준 B <select aria-label="위상 기준 B" id="phase-reference-b"></select></label></div><output aria-live="polite" id="phase-comparison">같은 주파수에서 비교합니다. 크기 0인 신호의 위상은 미정입니다.</output></section></div><div aria-labelledby="phasor-practice-tab" hidden="" id="phasor-practice-view" role="tabpanel"><p class="study-notice">연습용 복소수입니다. 아래 입력은 실제 회로·전원·해석 결과를 바꾸지 않습니다. 덧셈·뺄셈은 같은 주파수와 같은 단위의 페이저에 적용하세요.</p><form id="phasor-practice-form"><fieldset><legend>A</legend><label class="practice-mode">입력 형식<select id="practice-a-mode"><option value="rect">직교형 (실수 + j허수)</option><option value="polar">극형 (크기 ∠ 위상°)</option></select></label><label><span id="practice-a-re-label">실수</span><input autocomplete="off" id="practice-a-re" inputmode="decimal" value="3"/></label><label><span id="practice-a-im-label">허수</span><input autocomplete="off" id="practice-a-im" inputmode="decimal" value="4"/></label></fieldset><fieldset><legend>B</legend><label class="practice-mode">입력 형식<select id="practice-b-mode"><option value="rect">직교형 (실수 + j허수)</option><option value="polar">극형 (크기 ∠ 위상°)</option></select></label><label><span id="practice-b-re-label">실수</span><input autocomplete="off" id="practice-b-re" inputmode="decimal" value="1"/></label><label><span id="practice-b-im-label">허수</span><input autocomplete="off" id="practice-b-im" inputmode="decimal" value="-2"/></label></fieldset><button type="submit">변환·연산</button></form><div aria-live="polite" class="practice-result" id="practice-result"></div><details class="practice-help"><summary>왜 이렇게 계산하나요?</summary><p>극형→직교형: a=X cos φ, b=X sin φ (입력 위상은 도 단위). 형식을 바꿀 때 기존 입력 숫자는 자동 변환하지 않으므로 새 형식에 맞춰 다시 입력하세요.</p><p>크기 = √(a²+b²), 위상 = atan2(b,a). atan(b/a)만 쓰면 사분면을 놓칠 수 있습니다.</p><p>A+B는 실수끼리·허수끼리 더합니다. 곱셈은 크기의 곱과 위상의 합, 나눗셈은 크기의 비와 위상의 차입니다. j²=−1입니다.</p><p>X∠φ가 peak·cos 기준이면 x(t)=X cos(2πft+φ), RMS는 X/√2입니다. 크기 0의 위상과 0으로 나누기는 정의하지 않습니다.</p></details></div></section></main>
+<section id="circuit-course-shell" hidden inert aria-label="학부 회로 교육 실험실"><header class="circuit-course-integration-header"><strong>학부 회로 · 교류·전력·3상</strong><button id="circuit-course-back" type="button">회로 편집기로 돌아가기</button></header><div id="circuit-course-host"></div></section>
+<main aria-labelledby="signals-workspace-tab" hidden id="signals-workspace" inert role="tabpanel"></main>
+<main aria-labelledby="em-workspace-tab" class="em-workspace" hidden id="em-workspace" inert role="tabpanel">
+<section id="em-course-root" hidden aria-label="대학 전자기학 실험실"></section>
+<section class="em-controls panel">
+<div><strong id="em-scene-title">점전하</strong><span>SI float64 · 오른손 xyz</span></div>
+<button id="em-course-open" type="button">문자 문제 풀이 · 동축 전류부터</button>
+<button data-em-scene="playground" type="button">자유실험실</button><details id="em-model-presets"><summary>기본 모델 · 점전하 / 선전하 / 파동</summary><div class="em-scene-tabs" role="group" aria-label="전자기학 기본 장면"><button class="active" data-em-scene="charge" type="button">점전하</button><button data-em-scene="dipole" type="button">쌍극자</button><button data-em-scene="line" type="button">직선전류</button><button data-em-scene="loop" type="button">전류고리</button><button data-em-scene="wave" type="button">평면파</button></div></details>
+<div class="em-playground-controls" hidden id="em-playground-controls">
+
+<div aria-label="점전하 목록" class="em-source-list" id="em-source-list" role="listbox"></div>
+<fieldset><legend>선택한 원천 (q: nC, λ: nC/m, 좌표: m)</legend><div class="em-field-grid" id="em-pg-source-fields"></div></fieldset>
+<div class="em-pg-toolbar"><button class="primary" id="em-pg-apply" type="button">입력 적용</button><button id="em-pg-cancel" type="button">입력 취소</button></div>
+
+
+
+
+
+<details id="em-calculus-settings"><summary>고급 · gradient / divergence / curl</summary><fieldset><legend>EM-C 미분·적분 프로브</legend><label>장 모드<select id="em-c-field-mode"><option value="electric">현재 전기장</option><option value="radial">수학장 F=αr</option><option value="rotational">수학장 F=(-αy,αx,0)</option></select></label><label>미분 표시<select id="em-c-differential-mode"><option value="analytic">물리 해석값 (source 밖 div/curl=0)</option><option value="numeric">중앙차분 수치잔차</option></select></label><label>α<input id="em-c-alpha" value="1"></label><label>미분 h (m) · 0.0002…0.1<input id="em-c-h" inputmode="decimal" aria-describedby="em-c-h-range" value="0.005"></label><label>구/루프 R (m)<input id="em-c-radius" value="1"></label><label>법선 nx<input id="em-c-normal-x" value="0"></label><label>ny<input id="em-c-normal-y" value="0"></label><label>nz<input id="em-c-normal-z" value="1"></label><button id="em-c-evaluate" type="button">div·curl·선속·순환 계산</button></fieldset><p class="em-field-note" id="em-c-h-range">h/2 수렴 비교를 포함하는 이 화면은 h=0.0002…0.1 m를 지원합니다. 더 작은 h는 현재 수치 예시에서 지원하지 않습니다.</p><p class="em-field-note" id="em-c-result">EM-C 계산 전</p><canvas aria-label="선택한 동일 장의 원래 벡터, div와 curl, 실제 구면 및 루프 적분 기여 비교" id="em-c-visual"></canvas></details><details id="em-project-settings"><summary>예제 · 저장 / 불러오기 · 색 범위</summary><fieldset><legend>EM-D 파일·학습 예제</legend><div class="em-pg-toolbar"><button id="em-d-save" type="button">EM 파일 저장</button><button id="em-d-load" type="button">EM 파일 열기</button><input accept="application/json,.json" hidden id="em-d-file" type="file"></div><label>전위 범례<select id="em-d-legend"><option value="auto">자동·공유</option><option value="fixed">고정</option></select></label><label>범례 min<input id="em-d-legend-min" value="-10"></label><label>범례 max<input id="em-d-legend-max" value="10"></label><label>예제<select id="em-d-example"><option value="positive">A · 양의 단일점</option><option value="negative">A · 음의 단일점</option><option value="sameSign">A · 동부호 다중점</option><option value="finite">B · 유한선</option><option value="infinite">B · 무한선</option><option value="mixed">B · 점+선 혼합</option><option value="electrostatic">C · 정전기 curl=0</option><option value="curl">C · 회전 수학장</option></select></label><button id="em-d-apply-example" type="button">예제 불러오기</button><p class="em-field-note" id="em-d-status">회로 파일과 별도인 EM version 1 · 확정 상태만 저장</p></fieldset></details>
+</div>
+<div class="em-field-grid" id="em-model-fields"></div><button class="primary" id="em-apply" type="button">장면 적용·측정</button><p class="em-error" hidden id="em-error" role="alert"></p>
+<fieldset><legend>측정점 (m)</legend><label>x<input data-em-point="x" value="1"></label><label>y<input data-em-point="y" value="0"></label><label>z<input data-em-point="z" value="0"></label></fieldset>
+<fieldset hidden id="em-wave-coordinates"><legend>파동 측정점 (r/λ, 각 −2…2)</legend><label>x/λ<input data-em-wave-point="x" value="0"></label><label>y/λ<input data-em-wave-point="y" value="0"></label><label>z/λ<input data-em-wave-point="z" value="0"></label></fieldset>
+
+
+</section>
+<section class="em-stage panel"><div class="em-slice-panel"><strong id="em-edit-title">전하를 움직여 전기장 보기</strong><p id="em-edit-help">점전하·선전하를 끌어 이동 · 빈 곳 클릭으로 측정점 이동</p><p id="em-selected-hint" aria-live="polite"></p><div id="em-stage-edit-tools"><div class="em-pg-toolbar"><button data-em-pg-add="1" type="button">+q 추가</button><button data-em-pg-add="-1" type="button">−q 추가</button><button id="em-pg-add-finite" type="button">유한선 추가</button><button id="em-pg-add-infinite" type="button">무한선 추가</button><button id="em-pg-clone" type="button">복제</button><button id="em-pg-delete" type="button">삭제</button></div><div class="em-pg-toolbar"><button id="em-pg-undo" type="button">실행 취소</button><button id="em-pg-redo" type="button">다시 실행</button></div><div class="em-field-grid"><label>이동 평면 <select id="em-pg-plane"><option value="xy">XY (z 고정)</option><option value="xz">XZ (y 고정)</option><option value="yz">YZ (x 고정)</option></select></label><label>표시 벡터 <select id="em-pg-vector"><option value="E">E</option><option value="gradV">∇V</option><option value="minusGradV">−∇V (= E)</option></select></label></div><div class="em-pg-toolbar"><button id="em-pg-compare" type="button">이동 전 저장</button><button id="em-pg-clear-compare" type="button">비교 지우기</button></div></div><div id="em-legacy-slice-tools"><label>단면 <select id="em-slice-select"><option value="xy">xy</option><option value="xz">xz</option><option value="yz">yz</option></select></label></div><canvas aria-label="단면 값 분포. 누르면 측정점이 이동합니다." id="em-slice"></canvas><p id="em-slice-note">단면 색은 장면 내부 상대값입니다. 전기 장면은 V, 자기·파동 장면은 벡터 크기이며 장면 사이 절대 색 비교가 아닙니다.</p><p class="em-field-note">빨강 +q · 파랑 −q · 흰 십자: 측정점 · 흰 테두리: 선택 · 화살표: 방향 · 배경색: 전위 V</p></div><details id="em-3d-details"><summary>3D 보기 · 카메라 회전 / 확대</summary><p class="em-field-note">전하·선전하: 끌어 이동 · 빈 공간: 끌어 카메라 회전 · 휠/핀치: 확대 · 방향키: 회전</p><div class="em-stage-bar"><span id="em-renderer-status">WebGL 준비 중</span><div><button data-em-view="x" type="button">+x</button><button data-em-view="y" type="button">+y</button><button data-em-view="z" type="button">+z</button><button data-em-view="reset" type="button">시점 초기화</button></div></div>
+<canvas aria-describedby="em-renderer-status" aria-label="전자기장 3D 보기. 빈 곳은 시점을 회전하고 자유실험실의 점전하는 선택 평면으로 끕니다." id="em-canvas" tabindex="0"></canvas>
+<div class="em-wave-controls" hidden id="em-wave-controls"><button id="em-play" type="button">재생</button><button id="em-step" type="button">한 단계</button><label>시간 0…2T<input id="em-time" max="2" min="0" step="0.005" type="range" value="0"></label><label>표시 속도<input id="em-speed" max="2" min="0.1" step="0.1" type="range" value="0.5"></label><span id="em-speed-label">0.5 주기/실제초</span></div></details></section>
+<aside class="em-results panel"><div><strong>같은 snapshot의 측정값</strong><span id="em-result-state">현재 측정</span></div><dl><dt>벡터 성분</dt><dd id="em-vector-value"></dd><dt>벡터 크기</dt><dd id="em-magnitude-value"></dd><dt>전위</dt><dd id="em-potential-value"></dd><dt>∇V / −∇V</dt><dd id="em-gradient-value">해당 없음</dd><dt>revision</dt><dd id="em-revision-value">기본 장면</dd><dt>계산</dt><dd id="em-integration-value"></dd></dl><p id="em-comparison-value" hidden></p><p id="em-wave-info" hidden></p><p id="em-line-endings"></p><details><summary>모델·화면 축척 안내</summary><p>점전하와 무한선은 1 mm, 고리는 max(1 mm, 0.02R) 안쪽을 모델 제외영역으로 둡니다. 화살표와 색은 보기용 정규화이며 세기를 바꾸지 않습니다. 장선은 방향 적분으로 제외영역·영점·장면 경계·최대 step에서 끝납니다.</p><p>진공 이상식만 다루며 재료·경계·유도전류·방사 근접장·회로 결합은 포함하지 않습니다. μ₀는 CODATA 2022 측정값, c는 정확값, ε₀와 K는 그 둘에서 파생합니다.</p></details></aside>
+</main>
+<footer>Circuit Lab · 회로와 전자기학 3D 학습 · 회로 수치 엔진 변경 없음</footer>
+<script type="module" src="/src/app.js"></script>
+</body>
+</html>

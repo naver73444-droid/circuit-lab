@@ -1,0 +1,37 @@
+{
+  "schema": "CIRCUIT-014-independent-expectations-v1",
+  "tolerances": {
+    "voltageAtol": 1e-9,
+    "voltageRtol": 1e-8,
+    "currentAtol": 1e-11,
+    "currentRtol": 1e-8,
+    "outputKclAbs": 1e-10,
+    "inputKclAbs": 1e-12,
+    "phaseDegrees": 1e-6,
+    "timeAbs": 1e-15
+  },
+  "dc": {
+    "controlVoltage": 2,
+    "vcvs": { "gain": 4, "loadOhms": 2000, "outputVoltage": 8, "sourceCurrent": -0.004, "loadCurrent": 0.004 },
+    "vccs": { "transconductance": 0.003, "loadOhms": 1000, "outputVoltage": -6, "sourceCurrent": 0.006, "loadCurrent": -0.006 }
+  },
+  "ac": {
+    "controlPeak": 2,
+    "phaseDegrees": 30,
+    "frequencies": [100, 1000],
+    "vcvsOutputPeak": 8,
+    "vcvsCurrentPeak": -0.004,
+    "vccsOutputPeak": -6,
+    "vccsCurrentPeak": 0.006
+  },
+  "transient": {
+    "amplitude": 2,
+    "frequency": 1000,
+    "start": 0,
+    "end": 0.001,
+    "step": 0.00025,
+    "sampleCount": 5
+  },
+  "feedback": { "gain": 2, "loadOhms": 1000, "outputVoltage": 0.6666666666666666, "sourceCurrent": -0.0006666666666666666 },
+  "inputLoading": { "sourceVoltage": 2, "seriesOhms": 1000, "shuntOhms": 5000, "controlNodeVoltage": 1.6666666666666667, "vcvsOutputVoltage": 6.666666666666667, "vccsOutputVoltage": -5 }
+}

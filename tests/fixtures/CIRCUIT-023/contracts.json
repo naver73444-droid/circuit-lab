@@ -1,0 +1,64 @@
+{
+  "source": "CIRCUIT-023 independent design contract; values derived before product implementation",
+  "constants": {
+    "c": 299792458,
+    "mu0": 0.00000125663706127,
+    "epsilon0": 8.854187818789433e-12,
+    "kCoulomb": 8987551786.181526
+  },
+  "tolerances": {
+    "relative": 1e-9,
+    "electricFieldAbsolute": 1e-9,
+    "potentialAbsolute": 1e-9,
+    "magneticFieldAbsolute": 1e-15,
+    "loopAbsolute": 1e-12,
+    "loopRelative": 0.0001,
+    "loopConvergenceRelative": 0.001
+  },
+  "pointCharge": {
+    "chargeC": 1e-9,
+    "at1m": { "point": [1, 0, 0], "electricField": [8.987551786181527, 0, 0], "potential": 8.987551786181527 },
+    "at2m": { "point": [2, 0, 0], "electricField": [2.246887946545382, 0, 0], "potential": 4.493775893090763 }
+  },
+  "dipole": {
+    "positive": { "chargeC": 1e-9, "position": [0.5, 0, 0] },
+    "negative": { "chargeC": -1e-9, "position": [-0.5, 0, 0] },
+    "point": [0, 0, 0],
+    "electricField": [-71.90041428945221, 0, 0],
+    "potential": 0
+  },
+  "straightCurrent": {
+    "currentA": 1,
+    "axis": [0, 0, 1],
+    "at1m": { "point": [1, 0, 0], "magneticField": [0, 1.9999999997359345e-7, 0] },
+    "at2m": { "point": [2, 0, 0], "magneticField": [0, 9.999999998679673e-8, 0] }
+  },
+  "loop": {
+    "currentA": 1,
+    "radiusM": 1,
+    "normal": [0, 0, 1],
+    "center": { "point": [0, 0, 0], "magneticField": [0, 0, 6.28318530635e-7] },
+    "axis1m": { "point": [0, 0, 1], "magneticField": [0, 0, 2.22144146878588e-7] },
+    "offAxis": { "point": [0.5, 0, 0.5], "sampleCounts": [64, 128, 256] }
+  },
+  "planeWave": {
+    "direction": [0, 0, 1],
+    "polarization": [1, 0, 0],
+    "peakElectricField": 3,
+    "frequencyHz": 1000000,
+    "phaseRad": 0,
+    "periodS": 0.000001,
+    "wavelengthM": 299.792458,
+    "originT0": { "electricField": [3, 0, 0], "magneticField": [0, 1.0006922855944561e-8, 0] }
+  },
+  "limits": {
+    "coordinateM": 20,
+    "chargeC": 0.000001,
+    "currentA": 100,
+    "loopRadiusM": [0.05, 5],
+    "dipoleSeparationM": [0.01, 10],
+    "frequencyHz": [1, 1000000000],
+    "electricPeakVm": [0, 1000],
+    "staticExclusionM": 0.001
+  }
+}
