@@ -11,7 +11,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   L, ctx, ev, until, waitFor, settle, navigate, state, component, pin, partSel, click, clickAt, clickPart, partPoint, dblclick, dragPart, press, typeInto, select, center,
-  MOD, moveTo, wheelAt, plotPoint, bgPoint, pinTip, sleep, openTab,
+  MOD, moveTo, wheelAt, plotPoint, bgPoint, pinTip, sleep, openTab, dragBetween, touchDrag,
   runAnalysis, nodeValue, request, startServer, startBrowser, stopAll, leftoverProcessIds, isAlive, assertNoProblems, resetProblems,
 } from "./harness.mjs";
 
@@ -726,7 +726,6 @@ describe("browser smoke", { timeout: 600000 }, () => {
   test("shortcuts: Shift+R, W/V, arrow nudges (+1 history each, Shift = 5), input focus, Ctrl+Enter, Ctrl+S download", async () => {
     await navigate("/?example=divider");
     await autoUpdateOff();
-    await ev(`document.activeElement.blur()`); // the checkbox that was just clicked would otherwise own the keyboard (see report)
     const downloads = [];
     const stopListening = ctx.cdp.on((message) => { if (message.method === "Page.downloadWillBegin") downloads.push(message.params.suggestedFilename); });
     await ctx.cdp.send("Page.setDownloadBehavior", { behavior: "deny" });
@@ -1256,7 +1255,6 @@ describe("browser smoke", { timeout: 600000 }, () => {
   test("drag + keyboard: R during an active drag commits the move first; undo then reverts the rotation and then the move", async () => {
     await navigate("/?example=divider");
     await autoUpdateOff();
-    await ev(`document.activeElement.blur()`);
     const start = await component("R2");
     const depth0 = (await state()).historyDepth;
     const grab = await partPoint("R2");
@@ -1293,12 +1291,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await navigate("/?example=rc-charge");
     await selectPart("R1");
     await runAnalysis("transient");
-    // The "B 커서" button is only shown once the scope reports a cursor change (it stays hidden right after a run, see the report),
-    // so place B from the keyboard first: click the plot (A), then Shift+Right.
-    const spot = await plotPoint(0.3);
-    await clickAt(spot.x, spot.y); await settle();
-    await press("ArrowRight", "ArrowRight", 39, MOD.shift);
-    await until(`!document.getElementById("cursor-b-button").classList.contains("hidden")`, "the B cursor button");
+    await until(`!document.getElementById("cursor-b-button").classList.contains("hidden")`, "the B cursor button right after the run");
     const placed = await component("R1");
     const depth = (await state()).historyDepth;
     for (const selector of ["#cursor-b-button", '#scope-controls [data-scale-step="1"]']) {
@@ -1315,6 +1308,328 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await press("ArrowRight", "ArrowRight", 39);
     assert.equal((await component("R1")).x, placed.x + GRID, "the same key moves the part once nothing owns the arrows");
     assert.equal((await state()).historyDepth, depth + 1);
+  });
+
+  // ---- multi-selection, group edit, clipboard, wire drawing, cursors, touch ------------------------------------------------------
+  const ctrlKey = (key, code, vk) => press(key, code, vk, MOD.ctrl);
+  const shiftClickPart = async (id) => { const p = await partPoint(id); await clickAt(p.x, p.y, { modifiers: MOD.shift }); await settle(); };
+  const componentIdsOf = async () => (await state()).circuit.components.map((item) => item.id);
+  const positionsOf = async (ids) => Object.fromEntries((await state()).circuit.components.filter((item) => ids.includes(item.id)).map((item) => [item.id, { x: item.x, y: item.y, rotation: item.rotation ?? 0 }]));
+  const layerHtml = `["wire-layer", "component-layer", "overlay-layer"].map((id) => document.getElementById(id).innerHTML)`;
+  const DIVIDER_IDS = ["V1", "R1", "R2", "G1"];
+
+  test("multi-select: Shift+click 3 parts shows '3개 선택' without a delete badge; Delete is one history step and one Ctrl+Z restores everything", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    const original = await state();
+    await selectPart("R1");
+    assert.equal(await ev(`document.querySelectorAll(".component-delete").length`), 1, "a single selected part shows its delete badge");
+    await shiftClickPart("R2");
+    await shiftClickPart("V1");
+    const picked = await state();
+    assert.deepEqual([...picked.selection].sort(), ["component:R1", "component:R2", "component:V1"], "three parts are selected");
+    assert.equal(await ev(`document.getElementById("selection-label").textContent.trim()`), "3개 선택");
+    assert.equal(await ev(`document.querySelectorAll(".component-delete").length`), 0, "no delete badge with several parts selected");
+    assert.match(await ev(`document.getElementById("inspector-content").innerText`), /부품 3/, "the inspector summarises the selection");
+    assert.equal(picked.historyDepth, original.historyDepth, "selecting is not an edit");
+
+    await press("Delete", "Delete", 46);
+    const deleted = await state();
+    assert.deepEqual(deleted.circuit.components.map((item) => item.id), ["G1"], "Delete removed all three parts");
+    assert.equal(deleted.circuit.wires.length, 0, "and every wire attached to them");
+    assert.equal(deleted.historyDepth, original.historyDepth + 1, "the whole delete is ONE history entry");
+    assert.deepEqual(deleted.selection, []);
+    await ctrlKey("z", "KeyZ", 90);
+    const restored = await state();
+    assert.deepEqual(restored.circuit, original.circuit, "one Ctrl+Z restores parts and wires exactly");
+    assert.equal(restored.historyDepth, original.historyDepth);
+  });
+
+  test("marquee: Shift+drag on the background selects the parts under the box (box visible only while dragging); a selected part drags the whole group rigidly in one history step", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await click("#fit-button");
+    const original = await state();
+    const marquee = () => ev(`(() => { const node = document.getElementById("marquee-rect"); return { hidden: node.classList.contains("hidden"), width: Number(node.getAttribute("width")), height: Number(node.getAttribute("height")) }; })()`);
+    assert.equal((await marquee()).hidden, true, "no box before the gesture");
+    const from = await bgPoint({ from: "top-left" }), to = await bgPoint({ from: "bottom-right" });
+    let during;
+    await dragBetween(from, to, { modifiers: MOD.shift, beforeRelease: async () => { during = await marquee(); } });
+    assert.equal(during.hidden, false, "the box is visible during the drag");
+    assert.ok(during.width > 50 && during.height > 50, `the box has an area: ${JSON.stringify(during)}`);
+    assert.equal((await marquee()).hidden, true, "the box is hidden after the release");
+    const boxed = await state();
+    assert.deepEqual(boxed.selection.filter((key) => key.startsWith("component:")).sort(), DIVIDER_IDS.map((id) => `component:${id}`).sort(), "the box selects all 4 parts");
+    assert.equal(boxed.selection.length, 4 + boxed.circuit.wires.length, "and the wires lying fully inside it");
+    assert.equal(boxed.historyDepth, original.historyDepth, "box selection is not an edit");
+    assert.equal(await ev(`document.getElementById("selection-label").textContent.trim()`), `${boxed.selection.length}개 선택`);
+
+    // Dragging one selected part moves everything by the same delta; the cheap drag frames match a full render.
+    const stats0 = await ev(`${L}.getCanvasStats()`);
+    const startAt = await positionsOf(DIVIDER_IDS);
+    await dragPart("R2", 60, 40);
+    const movedAt = await positionsOf(DIVIDER_IDS);
+    const deltas = DIVIDER_IDS.map((id) => [movedAt[id].x - startAt[id].x, movedAt[id].y - startAt[id].y]);
+    assert.ok(deltas[0][0] !== 0 || deltas[0][1] !== 0, `the group really moved: ${JSON.stringify(deltas)}`);
+    for (const delta of deltas) assert.deepEqual(delta, deltas[0], "every selected part moved by the same delta");
+    for (const id of DIVIDER_IDS) assert.equal(movedAt[id].rotation, startAt[id].rotation, `${id} was not rotated`);
+    const afterDrag = await state();
+    assert.equal(afterDrag.historyDepth, original.historyDepth + 1, "the group drag is one history entry");
+    assert.equal(afterDrag.selection.length, boxed.selection.length, "the selection survives the drag");
+    const stats = await ev(`${L}.getCanvasStats()`);
+    assert.equal(stats.dragFallback, stats0.dragFallback, "no group-drag frame fell back to a full render");
+    assert.ok(stats.drag > stats0.drag, "the cheap drag path ran for the group");
+    const [cheap, full] = await ev(`(() => { const cheap = ${layerHtml}; ${L}.forceCanvasRender(); return [cheap, ${layerHtml}]; })()`);
+    for (const [i, name] of ["wire-layer", "component-layer", "overlay-layer"].entries()) assert.equal(cheap[i], full[i], `${name} after the group drag equals a full render`);
+
+    await click("#undo-button");
+    assert.deepEqual(await positionsOf(DIVIDER_IDS), startAt, "one undo puts the whole group back");
+    assert.equal((await state()).historyDepth, original.historyDepth);
+  });
+
+  test("select all: Ctrl+A selects parts+wires+junctions; R, an arrow and Ctrl+D are one history step each; a plain click narrows to one item", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    const original = await state();
+    const total = original.circuit.components.length + original.circuit.wires.length + (original.circuit.junctions ?? []).length;
+    await ctrlKey("a", "KeyA", 65);
+    let now = await state();
+    assert.equal(now.selection.length, total, "Ctrl+A selects every part, wire and junction");
+    assert.equal(now.historyDepth, original.historyDepth, "select all is not an edit");
+
+    await clickPart("V1");
+    now = await state();
+    assert.deepEqual(now.selection, ["component:V1"], "a plain click on a member narrows the selection to that one item");
+    assert.deepEqual(now.selected, { kind: "component", id: "V1" });
+    await ctrlKey("a", "KeyA", 65);
+    assert.equal((await state()).selection.length, total);
+
+    const base = (await state()).historyDepth;
+    const before = await positionsOf(DIVIDER_IDS);
+    await press("r", "KeyR", 82);
+    now = await state();
+    assert.equal(now.historyDepth, base + 1, "R on the whole selection is one history step");
+    const rotated = await positionsOf(DIVIDER_IDS);
+    for (const id of DIVIDER_IDS) assert.equal(rotated[id].rotation, (before[id].rotation + 90) % 360, `${id} turned 90 degrees`);
+    await press("ArrowRight", "ArrowRight", 39);
+    now = await state();
+    assert.equal(now.historyDepth, base + 2, "an arrow press is one history step for the whole selection");
+    const nudged = await positionsOf(DIVIDER_IDS);
+    for (const id of DIVIDER_IDS) assert.deepEqual([nudged[id].x, nudged[id].y], [rotated[id].x + GRID, rotated[id].y], `${id} moved one grid step`);
+    await ctrlKey("d", "KeyD", 68);
+    now = await state();
+    assert.equal(now.historyDepth, base + 3, "Ctrl+D is one history step");
+    assert.equal(now.circuit.components.length, 8, "four parts were duplicated");
+    assert.equal(now.circuit.wires.length, 8, "with the four wires between them");
+    assert.equal(now.selection.length, 8, "the copy is what is selected now");
+    assert.equal(new Set(await componentIdsOf()).size, 8, "ids are unique");
+    for (let n = 0; n < 3; n += 1) await ctrlKey("z", "KeyZ", 90);
+    now = await state();
+    assert.deepEqual(now.circuit, original.circuit, "three undos bring the original circuit back");
+    assert.equal(now.historyDepth, original.historyDepth);
+  });
+
+  test("clipboard: Ctrl+C then Ctrl+V twice pastes unique copies at +40/+80 with only their internal wires; Ctrl+X then Ctrl+V restores the count", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await ev(`Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { window.__clip = text; }, readText: async () => window.__clip ?? "" } })`);
+    const original = await state();
+    const originals = Object.fromEntries(original.circuit.components.map((item) => [item.id, item]));
+    await selectPart("R1");
+    await shiftClickPart("R2");
+    await ctrlKey("c", "KeyC", 67);
+    const clip = JSON.parse(await until(`window.__clip`, "the system clipboard to receive the copy"));
+    assert.deepEqual(clip.components.map((item) => item.id).sort(), ["R1", "R2"]);
+    assert.deepEqual(clip.wires.map((item) => item.id), ["W2"], "only the wire between the two copied parts is copied");
+    assert.equal((await state()).historyDepth, original.historyDepth, "copy is not an edit");
+
+    const known = new Set(Object.keys(originals));
+    for (const offset of [40, 80]) {
+      const depth = (await state()).historyDepth;
+      await ctrlKey("v", "KeyV", 86);
+      const now = await state();
+      assert.equal(now.historyDepth, depth + 1, `paste (+${offset}) is one history step`);
+      const added = now.circuit.components.filter((item) => !known.has(item.id));
+      assert.equal(added.length, 2, `paste (+${offset}) added two parts`);
+      assert.equal(new Set(now.circuit.components.map((item) => item.id)).size, now.circuit.components.length, "every id is unique");
+      for (const copy of added) {
+        const source = Object.values(originals).find((item) => item.type === copy.type && item.props.ref === copy.props.ref);
+        assert.ok(source, `${copy.id} copies a clipboard part`);
+        assert.deepEqual([copy.x - source.x, copy.y - source.y], [offset, offset], `${copy.id} sits ${offset} away from its source`);
+        known.add(copy.id);
+      }
+      assert.deepEqual(now.selection.filter((key) => key.startsWith("component:")).sort(), added.map((item) => `component:${item.id}`).sort(), "the pasted parts are selected");
+      const addedIds = new Set(added.map((item) => item.id));
+      const touching = now.circuit.wires.filter((wire) => [wire.a, wire.b].some((end) => addedIds.has(end.componentId)));
+      assert.equal(touching.length, 1, "exactly the internal wire came along");
+      assert.ok(addedIds.has(touching[0].a.componentId) && addedIds.has(touching[0].b.componentId), "and it connects the two copies, not the originals");
+    }
+    const pasted = await state();
+    assert.equal(pasted.circuit.components.length, 8);
+    assert.equal(pasted.circuit.wires.length, 6);
+
+    // Cut the last pasted pair, then paste it back: the count is restored.
+    await ctrlKey("x", "KeyX", 88);
+    const cut = await state();
+    assert.equal(cut.circuit.components.length, 6, "Ctrl+X removed the selected pair");
+    assert.equal(cut.circuit.wires.length, 5);
+    assert.equal(cut.historyDepth, pasted.historyDepth + 1, "the cut is one history step");
+    await ctrlKey("v", "KeyV", 86);
+    const back = await state();
+    assert.equal(back.circuit.components.length, pasted.circuit.components.length, "Ctrl+V after Ctrl+X restores the part count");
+    assert.equal(back.circuit.wires.length, pasted.circuit.wires.length, "and the wire count");
+    assert.equal(back.historyDepth, cut.historyDepth + 1);
+    assert.equal(back.selection.length, 3, "two parts and their wire are selected");
+  });
+
+  test("wiring by drag: pin to pin, click-click, release on empty space keeps the wire pending (Esc cancels), release on a wire makes a junction", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await click("#fit-button");
+    const start = await state();
+    const wireIds = new Set(start.circuit.wires.map((wire) => wire.id));
+    const newWires = async () => (await state()).circuit.wires.filter((wire) => !wireIds.has(wire.id));
+    const pinEnd = (componentId, index) => ({ componentId, pin: index });
+
+    // (1) Release on a wire: the wire is split by a junction and the new wire ends there.
+    const onWire = await ev(`(() => {
+      const hit = document.querySelector('[data-wire-id="W2"] .wire-hit'); const middle = hit.getPointAtLength(hit.getTotalLength() / 2);
+      const p = new DOMPoint(middle.x, middle.y).matrixTransform(hit.getScreenCTM());
+      return { x: p.x, y: p.y, own: Boolean(document.elementFromPoint(p.x, p.y)?.closest('[data-wire-id="W2"]')) };
+    })()`);
+    assert.ok(onWire.own, "the middle of W2 is on the wire");
+    await dragBetween(await pinTip("G1", 0), onWire);
+    let now = await state();
+    assert.equal(now.pendingPin, null, "the wire was finished");
+    assert.equal((now.circuit.junctions ?? []).length, 1, "a junction was created on the wire");
+    const junction = now.circuit.junctions[0];
+    assert.equal(now.circuit.wires.length, start.circuit.wires.length + 2, "W2 was split in two and one new wire was added");
+    assert.ok(now.circuit.wires.some((wire) => wire.a.componentId === "G1" && wire.b.junctionId === junction.id), "the new wire runs from G1 to the junction");
+    assert.equal(now.historyDepth, start.historyDepth + 1, "drawing it is one history entry");
+    assert.deepEqual(now.selected, { kind: "junction", id: junction.id });
+    wireIds.clear(); for (const wire of now.circuit.wires) wireIds.add(wire.id);
+
+    // (2) Drag from a pin to another pin.
+    const depth2 = now.historyDepth;
+    await dragBetween(await pinTip("R1", 0), await pinTip("R2", 1));
+    now = await state();
+    assert.equal(now.pendingPin, null, "nothing is left pending after the drag");
+    let added = await newWires();
+    assert.equal(added.length, 1, "one wire was created");
+    assert.deepEqual([added[0].a, added[0].b], [pinEnd("R1", 0), pinEnd("R2", 1)], "its endpoints are the two pins");
+    assert.equal(now.historyDepth, depth2 + 1);
+    wireIds.add(added[0].id);
+
+    // (3) Click, then click: still works.
+    const tip = await pinTip("V1", 1);
+    await clickAt(tip.x, tip.y); await settle();
+    assert.deepEqual((await state()).pendingPin, pinEnd("V1", 1), "the first click starts the wire");
+    const end = await pinTip("R1", 1);
+    await clickAt(end.x, end.y); await settle();
+    now = await state();
+    assert.equal(now.pendingPin, null);
+    added = await newWires();
+    assert.equal(added.length, 1, "the second click finished one more wire");
+    assert.deepEqual([added[0].a, added[0].b], [pinEnd("V1", 1), pinEnd("R1", 1)]);
+    wireIds.add(added[0].id);
+
+    // (4) Release on empty space: the wire stays pending; Esc drops it.
+    const depth4 = (await state()).historyDepth;
+    await dragBetween(await pinTip("R2", 0), await bgPoint());
+    now = await state();
+    assert.deepEqual(now.pendingPin, pinEnd("R2", 0), "releasing on empty canvas keeps the wire pending");
+    assert.equal((await newWires()).length, 0, "no wire was made");
+    assert.equal(now.historyDepth, depth4);
+    await press("Escape", "Escape", 27);
+    assert.equal((await state()).pendingPin, null, "Esc cancels the pending wire");
+    assert.equal((await state()).historyDepth, depth4);
+  });
+
+  test("focus regression: after clicking the auto-update checkbox, clicking a part and pressing R rotates it (and an arrow moves it with the checkbox focused)", async () => {
+    await navigate("/?example=divider");
+    const wasOn = (await state()).autoUpdate;
+    await click("#auto-update");
+    assert.equal((await state()).autoUpdate, !wasOn, "the checkbox toggled");
+    assert.equal(await ev(`document.activeElement.id`), "auto-update", "the checkbox owns the focus after the click");
+    await selectPart("R1");
+    const before = await component("R1");
+    await press("r", "KeyR", 82);
+    assert.equal((await component("R1")).rotation, ((before.rotation ?? 0) + 90) % 360, "R rotates the clicked part");
+    await click("#auto-update");
+    assert.equal(await ev(`document.activeElement.id`), "auto-update");
+    const placed = await component("R1");
+    await press("ArrowRight", "ArrowRight", 39);
+    assert.equal((await component("R1")).x, placed.x + GRID, "an arrow nudges the part even while the checkbox has the focus");
+  });
+
+  test("scope + selection: the B cursor button shows right after a run; Esc on the plot clears cursor A only, the next Esc clears the selection", async () => {
+    await navigate("/?example=rc-charge");
+    await selectPart("R1");
+    await runAnalysis("transient");
+    await until(`!document.getElementById("cursor-b-button").classList.contains("hidden")`, "the B cursor button right after the run");
+    assert.equal(await ev(`document.getElementById("cursor-b-button").textContent.trim()`), "B 커서");
+    const spot = await plotPoint(0.3);
+    await clickAt(spot.x, spot.y); await settle();
+    assert.notEqual((await state()).scope.pinnedIndex, null, "a click on the plot pins cursor A");
+    assert.equal(await ev(`document.activeElement.id`), "wave-plot");
+    await press("Escape", "Escape", 27);
+    let now = await state();
+    assert.equal(now.scope.pinnedIndex, null, "the first Esc releases cursor A");
+    assert.deepEqual(now.selected, { kind: "component", id: "R1" }, "the part stays selected");
+    assert.deepEqual(now.selection, ["component:R1"]);
+    await press("Escape", "Escape", 27);
+    now = await state();
+    assert.equal(now.selected, null, "the second Esc clears the selection");
+    assert.deepEqual(now.selection, []);
+  });
+
+  test("Ctrl+Enter inside an inspector value field commits the draft and runs the analysis", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await selectPart("R2");
+    await click("#inspector-tab");
+    const depth = (await state()).historyDepth;
+    await typeInto(VALUE_INPUT, "2k");
+    assert.deepEqual(await draftsOf(), [{ kind: "prop", id: "R2", property: "value", value: "2k" }], "the typed value is only a draft");
+    assert.equal(await valueOf("R2"), "1k");
+    assert.notEqual((await state()).runState.status, "success", "no result yet");
+    await press("Enter", "Enter", 13, MOD.ctrl);
+    await until(`${L}.getState().runState.status === "success"`, "Ctrl+Enter to run the analysis");
+    const now = await state();
+    assert.equal(await valueOf("R2"), "2k", "the draft was committed first");
+    assert.deepEqual(now.drafts, []);
+    assert.equal(now.historyDepth, depth + 1, "the commit is one history step");
+    near(nodeValue(now.result, 0, "R2", 0), 10 * 2 / 3, 1e-6, "the run used the committed 2k (divider output 6.667 V)");
+  });
+
+  test("touch: with the wire tool a one-finger drag from pin to pin draws a wire; with the select tool a one-finger drag on the background pans (no box)", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await click("#fit-button");
+    await click('[data-tool="wire"]');
+    const start = await state();
+    const depth = start.historyDepth;
+    await touchDrag(await pinTip("R1", 0), await pinTip("R2", 1));
+    let now = await state();
+    assert.equal(now.circuit.wires.length, start.circuit.wires.length + 1, "the touch drag created one wire");
+    const wire = now.circuit.wires.at(-1);
+    assert.deepEqual([wire.a, wire.b], [{ componentId: "R1", pin: 0 }, { componentId: "R2", pin: 1 }], "between the two pins");
+    assert.equal(now.pendingPin, null);
+    assert.equal(now.historyDepth, depth + 1);
+
+    await click('[data-tool="select"]');
+    await selectPart("V1");
+    const view = (await state()).canvasView;
+    const from = await bgPoint();
+    await touchDrag(from, { x: from.x - 60, y: from.y - 40 });
+    now = await state();
+    const scale = await ev(`document.getElementById("circuit-canvas").getScreenCTM().a`);
+    near(now.canvasView.x - view.x, 60 / scale, 0.1, "the view panned with the finger (x)");
+    near(now.canvasView.y - view.y, 40 / scale, 0.1, "the view panned with the finger (y)");
+    assert.equal(now.canvasView.width, view.width, "panning does not zoom");
+    assert.equal(await ev(`document.getElementById("marquee-rect").classList.contains("hidden")`), true, "no selection box appeared");
+    assert.deepEqual(now.selection, ["component:V1"], "the selection is untouched by the pan");
+    assert.equal(now.historyDepth, depth + 1, "panning is not an edit");
   });
 
   test("new circuit after ?example=: a reload opens an empty editor and the example does not come back", async () => {

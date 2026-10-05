@@ -408,12 +408,13 @@ export async function plotPoint(fx, fy = 0.5) {
   return point;
 }
 
-/** An empty spot of the circuit canvas (the element under it is the background rect), searched from the lower right corner. */
-export async function bgPoint() {
+/** An empty spot of the circuit canvas (the element under it is the background rect). Searched from the lower right corner, or from the upper left one with { from: "top-left" }. */
+export async function bgPoint({ from = "bottom-right" } = {}) {
   const point = await ev(`(() => {
-    const r = document.getElementById("circuit-canvas").getBoundingClientRect();
+    const r = document.getElementById("circuit-canvas").getBoundingClientRect(); const topLeft = ${JSON.stringify(from)} === "top-left";
     for (let row = 0; row < 12; row += 1) for (let col = 0; col < 16; col += 1) {
-      const x = r.right - 14 - col * (r.width - 28) / 16, y = r.bottom - 10 - row * (r.height - 20) / 12;
+      const dx = 14 + col * (r.width - 28) / 16, dy = 10 + row * (r.height - 20) / 12;
+      const x = topLeft ? r.left + dx : r.right - dx, y = topLeft ? r.top + dy : r.bottom - dy;
       if (document.elementFromPoint(x, y)?.classList.contains("canvas-bg")) return { x, y };
     }
     return null;
@@ -433,4 +434,28 @@ export async function pinTip(id, index) {
   assert.ok(point, `missing pin ${id}:${index}`);
   assert.ok(point.ok, `the tip of pin ${id}:${index} is covered by something else`);
   return point;
+}
+
+/**
+ * Real mouse drag between two screen points (optionally with modifier keys held). `beforeRelease` runs after the last move and before the
+ * button goes up, so a test can look at what the app shows mid-gesture (a marquee box, a wire preview).
+ */
+export async function dragBetween(from, to, { steps = 6, modifiers = 0, beforeRelease = null } = {}) {
+  await mouse("mouseMoved", from.x, from.y, { modifiers });
+  await mouse("mousePressed", from.x, from.y, { button: "left", buttons: 1, clickCount: 1, modifiers });
+  for (let step = 1; step <= steps; step += 1) await mouse("mouseMoved", from.x + ((to.x - from.x) * step) / steps, from.y + ((to.y - from.y) * step) / steps, { buttons: 1, modifiers });
+  await settle();
+  if (beforeRelease) await beforeRelease();
+  await mouse("mouseReleased", to.x, to.y, { button: "left", buttons: 0, clickCount: 1, modifiers });
+  await settle();
+}
+
+/** One-finger touch drag with real Input.dispatchTouchEvent input (pointerType "touch" in the page). */
+export async function touchDrag(from, to, { steps = 6 } = {}) {
+  const touch = (type, touchPoints) => ctx.cdp.send("Input.dispatchTouchEvent", { type, touchPoints });
+  await touch("touchStart", [{ x: from.x, y: from.y }]);
+  for (let step = 1; step <= steps; step += 1) await touch("touchMove", [{ x: from.x + ((to.x - from.x) * step) / steps, y: from.y + ((to.y - from.y) * step) / steps }]);
+  await settle();
+  await touch("touchEnd", []);
+  await settle();
 }
