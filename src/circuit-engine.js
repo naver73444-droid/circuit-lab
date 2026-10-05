@@ -88,11 +88,28 @@ export function pinCount(type) {
   return TYPE_PINS[type] ?? 0;
 }
 
+// Successful string parses only (failures embed the caller's label in their
+// message, so they are never cached). Bounded; cleared wholesale when full.
+const PARSE_VALUE_CACHE_LIMIT = 1024;
+const parseValueCache = new Map();
+
 export function parseValue(input, label = "값") {
   if (typeof input === "number") {
     if (!Number.isFinite(input)) throw new CircuitError("INVALID_VALUE", `${label}이(가) 유한한 수가 아닙니다.`);
     return input;
   }
+  if (typeof input === "string") {
+    const cached = parseValueCache.get(input);
+    if (cached !== undefined) return cached;
+    const parsed = parseValueUncached(input, label);
+    if (parseValueCache.size >= PARSE_VALUE_CACHE_LIMIT) parseValueCache.clear();
+    parseValueCache.set(input, parsed);
+    return parsed;
+  }
+  return parseValueUncached(input, label);
+}
+
+function parseValueUncached(input, label) {
   const raw = String(input ?? "").trim().replaceAll("Ω", "ohm").replaceAll("µ", "u").replaceAll("μ", "u");
   const match = raw.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([A-Za-z]*)$/);
   if (!match) throw new CircuitError("INVALID_VALUE", `${label} '${input}'을(를) 해석할 수 없습니다.`, "예: 1k, 10u, 5, 2.2meg");
@@ -134,6 +151,11 @@ function positiveValue(input, label) {
   return value;
 }
 
+const COEFFICIENT_NUMBER = "[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?";
+const COEFFICIENT_DIMENSIONLESS = new RegExp(`^${COEFFICIENT_NUMBER}(?:meg|[TGMkmunpf])?$`);
+const COEFFICIENT_SIEMENS = new RegExp(`^${COEFFICIENT_NUMBER}(?:(?:meg|[TGMkmunpf])?S|meg|[TGMkmunpf])?$`);
+const COEFFICIENT_OHMS = new RegExp(`^${COEFFICIENT_NUMBER}(?:(?:meg|[TGMkmunpf])?(?:ohm)?|ohm)?$`);
+
 function controlledCoefficient(component) {
   const props = component.props ?? {};
   const specification = {
@@ -146,11 +168,7 @@ function controlledCoefficient(component) {
   const input = props[specification.key] ?? specification.fallback;
   const label = `${props.ref ?? component.id} ${specification.label}`;
   const normalized = String(input ?? "").trim().replaceAll("Ω", "ohm").replaceAll("µ", "u").replaceAll("μ", "u");
-  const number = "[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?";
-  const dimensionless = new RegExp(`^${number}(?:meg|[TGMkmunpf])?$`);
-  const siemens = new RegExp(`^${number}(?:(?:meg|[TGMkmunpf])?S|meg|[TGMkmunpf])?$`);
-  const ohms = new RegExp(`^${number}(?:(?:meg|[TGMkmunpf])?(?:ohm)?|ohm)?$`);
-  const pattern = specification.dimension === "dimensionless" ? dimensionless : specification.dimension === "siemens" ? siemens : ohms;
+  const pattern = specification.dimension === "dimensionless" ? COEFFICIENT_DIMENSIONLESS : specification.dimension === "siemens" ? COEFFICIENT_SIEMENS : COEFFICIENT_OHMS;
   if (!pattern.test(normalized)) {
     const hint = specification.dimension === "dimensionless" ? "예: 4, -2, 1k" : specification.dimension === "siemens" ? "예: 3m, 3mS, 20uS" : "예: 2k, 2kohm, 2kΩ";
     throw new CircuitError("INVALID_VALUE", `${label} '${input}'의 단위가 올바르지 않습니다.`, hint);
@@ -393,12 +411,25 @@ export function buildTopology(circuit) {
       throw new CircuitError("VOLTAGE_SOURCE_SHORT", `${component.props?.ref ?? component.id}의 두 단자가 같은 net인데 전압이 0이 아닙니다.`, "전압원 단락 또는 잘못된 배선을 확인하세요.");
     }
   }
+  // nodeFor is called per component, per pin, per solved point; memoize the
+  // string-key lookup (topology is immutable once built).
+  const nodeForCache = new Map();
   return {
     nodeCount: nextNode - 1,
     nodeIdByPin,
     nodeIdByJunction,
     nodeFor(componentId, pin) {
-      return nodeIdByPin[publicPinKey(componentId, pin)];
+      let pins = nodeForCache.get(componentId);
+      if (pins === undefined) {
+        pins = [];
+        nodeForCache.set(componentId, pins);
+      }
+      let node = pins[pin];
+      if (node === undefined) {
+        node = nodeIdByPin[publicPinKey(componentId, pin)];
+        if (node !== undefined) pins[pin] = node;
+      }
+      return node;
     },
   };
 }
@@ -611,13 +642,22 @@ function stampVoltage(A, b, a, z, branch, voltage) {
   b[branch] += voltage;
 }
 
+// A pivot is singular when it is negligible relative to the largest entry of
+// its ORIGINAL column (cancellation residue is ~1e-16 of that scale), so
+// uniformly tiny but well-conditioned systems (e.g. 1e15 ohm dividers) solve.
+// An all-zero column keeps an absolute floor and is always singular.
+const PIVOT_RELATIVE_TOLERANCE = 1e-12;
+const PIVOT_ABSOLUTE_FLOOR = 1e-300;
+
 function solveLinear(A, b) {
   const n = b.length;
   const matrix = A.map((row, index) => [...row, b[index]]);
+  const columnScale = Array(n).fill(0);
+  for (let row = 0; row < n; row += 1) for (let column = 0; column < n; column += 1) columnScale[column] = Math.max(columnScale[column], Math.abs(matrix[row][column]));
   for (let column = 0; column < n; column += 1) {
     let pivot = column;
     for (let row = column + 1; row < n; row += 1) if (Math.abs(matrix[row][column]) > Math.abs(matrix[pivot][column])) pivot = row;
-    if (Math.abs(matrix[pivot][column]) < 1e-14) throw new CircuitError("SINGULAR", "회로 방정식이 특이행렬입니다.", "떠 있는 노드, 이상적 전원 단락·모순, 병렬 이상 전원을 확인하세요.");
+    if (Math.abs(matrix[pivot][column]) <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "회로 방정식이 특이행렬입니다.", "떠 있는 노드, 이상적 전원 단락·모순, 병렬 이상 전원을 확인하세요.");
     [matrix[column], matrix[pivot]] = [matrix[pivot], matrix[column]];
     const divisor = matrix[column][column];
     for (let col = column; col <= n; col += 1) matrix[column][col] /= divisor;
@@ -643,6 +683,37 @@ function makeBranchMap(circuit, mode, nodeCount, skippedConstraints = new Set())
     if ((voltageBranch || inductorBranch || initialCapacitorBranch) && !skippedConstraints.has(component.id)) map.set(component.id, index++);
   }
   return { map, size: index };
+}
+
+// Per-simulation memo (keyed by the topology object built for one circuit):
+// branch maps without skipped constraints and the "has a diode" flag are
+// identical for every solved point, so compute them once.
+const topologySimulationCache = new WeakMap();
+
+function simulationCache(topology) {
+  let cache = topologySimulationCache.get(topology);
+  if (!cache) {
+    cache = { branchMaps: new Map(), hasDiode: undefined };
+    topologySimulationCache.set(topology, cache);
+  }
+  return cache;
+}
+
+function cachedBranchMap(circuit, mode, topology, skippedConstraints) {
+  if (skippedConstraints && skippedConstraints.size) return makeBranchMap(circuit, mode, topology.nodeCount, skippedConstraints);
+  const cache = simulationCache(topology);
+  let result = cache.branchMaps.get(mode);
+  if (!result) {
+    result = makeBranchMap(circuit, mode, topology.nodeCount);
+    cache.branchMaps.set(mode, result);
+  }
+  return result;
+}
+
+function cachedHasDiode(circuit, topology) {
+  const cache = simulationCache(topology);
+  if (cache.hasDiode === undefined) cache.hasDiode = circuit.components.some((component) => component.type === "D");
+  return cache.hasDiode;
 }
 
 function controlledBranch(component, branchMap) {
@@ -727,10 +798,10 @@ function valueAtNode(solution, node) {
 }
 
 function solveRealPoint(circuit, topology, mode, context) {
-  const { map: branchMap, size } = makeBranchMap(circuit, mode, topology.nodeCount, context.skippedConstraints);
+  const { map: branchMap, size } = cachedBranchMap(circuit, mode, topology, context.skippedConstraints);
   let guess = context.guess ? [...context.guess] : Array(size).fill(0);
   if (guess.length !== size) guess = Array(size).fill(0);
-  const hasDiode = circuit.components.some((component) => component.type === "D");
+  const hasDiode = cachedHasDiode(circuit, topology);
   const maxIterations = hasDiode ? 120 : 1;
   let solution = guess;
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
@@ -1155,10 +1226,12 @@ function stampComplexControlledSource(A, topology, component, branchMap) {
 function solveComplex(A, b) {
   const n = b.length;
   const matrix = A.map((row, index) => [...row.map((value) => ({ ...value })), { ...b[index] }]);
+  const columnScale = Array(n).fill(0);
+  for (let row = 0; row < n; row += 1) for (let column = 0; column < n; column += 1) columnScale[column] = Math.max(columnScale[column], cabs(matrix[row][column]));
   for (let column = 0; column < n; column += 1) {
     let pivot = column;
     for (let row = column + 1; row < n; row += 1) if (cabs(matrix[row][column]) > cabs(matrix[pivot][column])) pivot = row;
-    if (cabs(matrix[pivot][column]) < 1e-14) throw new CircuitError("SINGULAR", "AC 회로 방정식이 특이행렬입니다.", "떠 있는 노드와 이상적 전원 연결을 확인하세요.");
+    if (cabs(matrix[pivot][column]) <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "AC 회로 방정식이 특이행렬입니다.", "떠 있는 노드와 이상적 전원 연결을 확인하세요.");
     [matrix[column], matrix[pivot]] = [matrix[pivot], matrix[column]];
     const divisor = matrix[column][column];
     for (let col = column; col <= n; col += 1) matrix[column][col] = cdiv(matrix[column][col], divisor);
@@ -1176,7 +1249,7 @@ function solveComplex(A, b) {
 
 function solveACPoint(circuit, topology, frequency, dcBias) {
   const omega = 2 * Math.PI * frequency;
-  const { map: branchMap, size } = makeBranchMap(circuit, "ac", topology.nodeCount);
+  const { map: branchMap, size } = cachedBranchMap(circuit, "ac", topology);
   const A = complexZeros(size);
   const b = Array.from({ length: size }, () => complex());
   for (const component of circuit.components) {
