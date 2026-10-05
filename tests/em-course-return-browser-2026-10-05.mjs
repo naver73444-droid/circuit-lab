@@ -22,6 +22,7 @@ try{
   for(let i=0;i<60;i++){try{report.browser=await fetch('http://127.0.0.1:'+port+'/json/version').then(r=>r.json());break;}catch{await wait(100);}}assert.ok(report.browser);
   const target=await fetch('http://127.0.0.1:'+port+'/json/new?about:blank',{method:'PUT'}).then(r=>r.json());cdp=await bounded(connect(target.webSocketDebuggerUrl),'connect');
   const send=(method,params={})=>bounded(cdp.send(method,params),method),evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
+  const ensureWs=async name=>{const getter={em:'getEMState',signals:'getSignalsCourseState','circuit-course':'getCircuitCourseState'}[name];try{await evaluate('window.__CIRCUIT_LAB__.ensureWorkspace('+JSON.stringify(name)+').then(()=>true)');}catch{}for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.'+getter+'()'))===null;n++)await new Promise(r=>setTimeout(r,100));};const ensureEMCourse=async()=>{for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.getEMState()?.course??null'))===null;n++)await new Promise(r=>setTimeout(r,100));};
   await send('Page.enable');await send('Runtime.enable');
   const click=async selector=>{const b=await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw new Error('Missing '+${JSON.stringify(selector)});e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();if(!r.width||!r.height||!e.getClientRects().length)throw new Error('Hidden '+${JSON.stringify(selector)});return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);await send('Input.dispatchMouseEvent',{type:'mousePressed',...b,button:'left',buttons:1,clickCount:1});await send('Input.dispatchMouseEvent',{type:'mouseReleased',...b,button:'left',buttons:0,clickCount:1});await wait(50);};
   const key=async(k,code=k,virtual,modifiers=0)=>{for(const type of ['keyDown','keyUp'])await send('Input.dispatchKeyEvent',{type,key:k,code,modifiers,...(virtual?{windowsVirtualKeyCode:virtual}:{})});};
@@ -32,9 +33,9 @@ try{
   const screenshot=async name=>{const s=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile(join(out,name+'.png'),Buffer.from(s.data,'base64'));};
   for(const width of [1100,390]){
     await send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});const load=cdp.event('Page.loadEventFired');await send('Page.navigate',{url:base});await bounded(load,'load');await wait(500);
-    await click('[data-workspace-tab="em"]');const freeBefore=await evaluate("JSON.stringify(window.__CIRCUIT_LAB__.getEMState().playground.sources)");
+    await click('[data-workspace-tab="em"]');await ensureWs('em');const freeBefore=await evaluate("JSON.stringify(window.__CIRCUIT_LAB__.getEMState().playground.sources)");
     if(!before){await click('[data-em-source-select]');await type('[data-em-pg-draft="q"]','7.25');}
-    await click('#em-course-open');check('entered course '+width,await evaluate('window.__CIRCUIT_LAB__.getEMState().courseActive'));
+    await click('#em-course-open');await ensureWs('em');await ensureEMCourse();check('entered course '+width,await evaluate('window.__CIRCUIT_LAB__.getEMState().courseActive'));
     if(before){
       await evaluate("document.querySelector('#em-course-root').scrollTop=0");
       check('baseline back inside closed catalog '+width,await evaluate("document.querySelector('#em-course-back').closest('details')?.open===false"));
@@ -52,7 +53,7 @@ try{
     await click('#em-course-back');check('returned to free lab '+width,await evaluate('window.__CIRCUIT_LAB__.getEMState().courseActive'),false);
     check('free lab sources unchanged '+width,await evaluate("JSON.stringify(window.__CIRCUIT_LAB__.getEMState().playground.sources)"),freeBefore);
     check('free lab draft unchanged '+width,await evaluate("window.__CIRCUIT_LAB__.getEMState().playground.draft.q"),'7.25');
-    await click('#em-course-open');check('reentry keeps selected example '+width,await evaluate('window.__CIRCUIT_LAB__.getEMState().course.selectedId'),'loop-axis');
+    await click('#em-course-open');await ensureWs('em');await ensureEMCourse();check('reentry keeps selected example '+width,await evaluate('window.__CIRCUIT_LAB__.getEMState().course.selectedId'),'loop-axis');
     check('example draft preserved '+width,await evaluate("window.__CIRCUIT_LAB__.getEMState().course.records['loop-axis'].drafts.params.current"),'3.5');
     check('draft not silently applied '+width,await evaluate("JSON.stringify(window.__CIRCUIT_LAB__.getEMState().course.records['loop-axis'].result)"),resultBefore);
     check('no page overflow '+width,await evaluate('document.documentElement.scrollWidth<=innerWidth+1'));

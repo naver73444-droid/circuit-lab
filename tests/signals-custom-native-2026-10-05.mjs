@@ -5,10 +5,11 @@ let driver=await readFile(new URL('../../../../results/COMBINED-STUDENT-FLOW-202
 driver=driver.replace("'em-ux-20261004.css','server.mjs'","'em-ux-20261004.css','server.mjs','src/signals-course-model.js','src/signals-course-controller.js','src/signals-visual.js','src/signals-expression.js','src/signals-playback.js','src/signals-convolution-view.js'");
 process.argv[2] ||= repo+'results/SIGNALS-CUSTOM-SMOOTH-2026-10-05/attempt-1';process.argv[5]=fileURLToPath(new URL('../',import.meta.url));
 let scenario=String.raw`
+ const ensureWs=async name=>{const getter={em:'getEMState',signals:'getSignalsCourseState','circuit-course':'getCircuitCourseState'}[name];try{await evaluate('window.__CIRCUIT_LAB__.ensureWorkspace('+JSON.stringify(name)+').then(()=>true)');}catch{}for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.'+getter+'()'))===null;n++)await new Promise(r=>setTimeout(r,100));};const ensureEMCourse=async()=>{for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.getEMState()?.course??null'))===null;n++)await new Promise(r=>setTimeout(r,100));};
  const state=()=>evaluate('window.__CIRCUIT_LAB__.getSignalsCourseState()');
  const write=async(k,text)=>{await click('[data-signals-key="'+k+'"]');await key('a','KeyA',65,2);await send('Input.insertText',{text});};
  const choose=async value=>{const selector='[data-signals-control="family"]',index=await evaluate('Array.from(document.querySelector('+JSON.stringify(selector)+').options).findIndex(o=>o.value==='+JSON.stringify(value)+')');await click(selector);await key('Home','Home',36);for(let i=0;i<index;i++)await key('ArrowDown','ArrowDown',40);await key('Enter','Enter',13);};
- await navigate('/');await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await click('#signals-workspace-tab');await click('[data-signals-lesson="convolution"]');
+ await navigate('/');await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await click('#signals-workspace-tab');await ensureWs('signals');await click('[data-signals-lesson="convolution"]');
  check('CT direct inputs are default and open above graphs',await evaluate('document.querySelector("[data-signals-key=xExpression]").getClientRects().length>0&&document.querySelector("[data-signals-numeric-details]").open&&document.querySelector("[data-signals-numeric-details]").compareDocumentPosition(document.querySelector("[data-signals-visual-preview]"))===4'));
  await write('xExpression','u(t)-u(t-2)');await write('hExpression','u(t)-u(t-1)');await click('[data-signals-calculate]');
  check('CT applied output at t=1 matches independent fixture',(await state()).numeric.output.find(v=>v[0]===1)[1],1);
@@ -22,7 +23,7 @@ let scenario=String.raw`
  await click('[data-signals-play="play"]');
  const drag=await point('[data-signals-cursor]');const width=await evaluate('__slider.getBoundingClientRect().width');await send('Input.dispatchMouseEvent',{type:'mousePressed',x:drag.x-width*.15,y:drag.y,button:'left',buttons:1});for(const delta of [-.1,0,.1])await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:drag.x+width*delta,y:drag.y,buttons:1,button:'left'});await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:drag.x+width*.1,y:drag.y,button:'left',buttons:0});
  check('native drag preserves range identity and focus',await evaluate('document.activeElement===__slider&&__slider.isConnected&&__elementChanges===0'));
- await click('[data-signals-play="play"]');await click('#circuit-workspace-tab');check('deactivate cancels playback',(await state()).playing,false);await click('#signals-workspace-tab');
+ await click('[data-signals-play="play"]');await click('#circuit-workspace-tab');check('deactivate cancels playback',(await state()).playing,false);await click('#signals-workspace-tab');await ensureWs('signals');
  await click('[data-signals-play="play"]');await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});await wait(80);check('reduced motion cancels and disables autoplay',(await state()).playing===false&&await evaluate('document.querySelector("[data-signals-play=play]").disabled'));await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
  await write('hExpression','1/(t-0.123)');check('edited input immediately hides stale result',await evaluate('document.querySelectorAll("[data-signals-projection] svg").length'),0);await click('[data-signals-calculate]');check('hidden-pole expression is rejected',(await state()).numericStatus,'invalid');
  await choose('sequence');for(const[k,v]of Object.entries({x:'1,2,-1',h:'2,1',xStart:'-1',hStart:'2'}))await write(k,v);await click('[data-signals-calculate]');check('DT direct offset result is exact',(await state()).numeric.output,{start:1,values:[2,5,0,-1]});
@@ -35,7 +36,7 @@ let scenario=String.raw`
  report.snapshots.final=await state();report.status='PASS';
 `;
 if(process.argv[3]==='performance')scenario=String.raw`
- await navigate('/');await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await click('#signals-workspace-tab');await click('[data-signals-lesson="convolution"]');
+ await navigate('/');await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await click('#signals-workspace-tab');await ensureWs('signals');await click('[data-signals-lesson="convolution"]');
  const write=async(k,text)=>{await click('[data-signals-key="'+k+'"]');await key('a','KeyA',65,2);await send('Input.insertText',{text});};
  const expression=Array(32).fill('sin(t)').join('+');await write('xExpression',expression);await write('hExpression',expression);await write('dt',String(8/1024));await click('[data-signals-calculate]');
  check('bounded 95-node expression applies at 1024 cells',await evaluate('window.__CIRCUIT_LAB__.getSignalsCourseState().numeric?.cells'),1024);

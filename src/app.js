@@ -1,5 +1,3 @@
-import { createSignalsCourseController } from './signals-course-controller.js';
-import { createCircuitCourseController } from './circuit-course-controller.js';
 import { refreshInvalidatedPortPanel } from "./port-ui-state.js";
 export { refreshInvalidatedPortPanel } from "./port-ui-state.js";
 import {
@@ -56,8 +54,7 @@ import { createPanelController } from "./panel-controller.js";
 import { distanceToSegment } from "./touch-targets.js";
 import { initializePhasorPractice } from "./phasor-practice.js";
 import { currentArrowGeometry, currentDirectionDescriptor, currentDirectionGuide, currentProbeLabel } from "./current-direction.js";
-import { createWorkspaceTabs } from "./workspace-tabs.js";
-import { createEMController } from "./em-controller.js";
+import { createLazyController, createWorkspaceTabs } from "./workspace-tabs.js";
 
 const COLORS = ["#80bfff", "#f5bc79", "#c5a2f2", "#8ed4ad", "#ff969e", "#d7d783", "#83d2db", "#eea7d0"];
 const PALETTE = [
@@ -145,9 +142,11 @@ let workspaceSwitching = false;
 let discardingInputDrafts = false;
 let circuitRenderDeferred = false;
 let workspaceTabs = null;
-let emController = null;
-let circuitCourse = null;
-let signalsCourse = null;
+// Heavy workspace controllers (EM, circuit course, signals) load on first use.
+let emLazy = null;
+let circuitCourseLazy = null;
+let signalsLazy = null;
+let workspaceSeq = 0;
 let circuitCourseActive = false;
 const isCircuitUiActive = () => circuitWorkspaceActive && !workspaceSwitching && !discardingInputDrafts;
 
@@ -1934,19 +1933,29 @@ function setupCanvasTouch() {
 function updateCircuitCourseTop(){
   document.getElementById('circuit-course-shell').style.setProperty('--circuit-course-top',document.querySelector('.workspace-tabs').getBoundingClientRect().bottom+'px');
 }
+function activateCircuitCourse(){
+  const seq=++workspaceSeq;
+  circuitCourseLazy.whenReady(course=>{if(seq===workspaceSeq&&circuitCourseActive&&workspaceTabs.active==='circuit')course.activate();});
+}
+function activateLazyWorkspace(lazy,name){
+  const seq=++workspaceSeq;
+  lazy.whenReady(controller=>{if(seq===workspaceSeq&&workspaceTabs.active===name)controller.activate();});
+}
 function showCircuitCourse(value){
   workspaceSwitching=true;
   canvasTouch?.cancel();if(state.drag)finishCanvasPointer(state.drag.pointerId,'cancel');cancelPlotSession();panels.cancelInteractions();
   circuitCourseActive=value;circuitWorkspaceActive=!value;document.body.dataset.circuitExperience=value?'course':'editor';
   const workbench=document.getElementById('workbench'),shelf=document.getElementById('panel-shelf'),shell=document.getElementById('circuit-course-shell');
   workbench.hidden=value;workbench.inert=value;shelf.hidden=value;shell.hidden=!value;shell.inert=!value;
-  if(value){updateCircuitCourseTop();circuitCourse.activate();}
-  else{circuitCourse.deactivate();panels.synchronize();if(circuitRenderDeferred)renderAll();else{updateCanvasView();scopeView.render();renderPhasorLearning();}}
+  workspaceSeq++;
+  if(value){updateCircuitCourseTop();activateCircuitCourse();}
+  else{circuitCourseLazy.controller?.deactivate();panels.synchronize();if(circuitRenderDeferred)renderAll();else{updateCanvasView();scopeView.render();renderPhasorLearning();}}
   queueMicrotask(()=>{workspaceSwitching=false;});
 }
 function setupEvents() {
   document.getElementById('circuit-course-open').addEventListener('pointerdown',event=>{event.preventDefault();});
   document.getElementById('circuit-course-open').addEventListener('click',()=>showCircuitCourse(true));
+  for(const type of ['pointerenter','focus'])document.getElementById('circuit-course-open').addEventListener(type,()=>circuitCourseLazy.prefetch());
   document.getElementById('circuit-course-back').addEventListener('click',()=>showCircuitCourse(false));
   window.addEventListener('resize',()=>{if(circuitCourseActive&&workspaceTabs.active==='circuit')updateCircuitCourseTop();});
   const chooseAC = () => {
@@ -2179,6 +2188,16 @@ function setupEvents() {
   });
 }
 
+// Warm the lazy workspace modules once the page is idle so the first tab click
+// is instant. Skipped on Save-Data connections.
+function scheduleWorkspacePrefetch(lazies) {
+  if (navigator.connection?.saveData) return;
+  const warm = () => { for (const lazy of lazies) lazy.prefetch(); };
+  const whenIdle = () => (typeof requestIdleCallback === "function" ? requestIdleCallback(warm, { timeout: 4000 }) : setTimeout(warm, 0));
+  const start = () => setTimeout(whenIdle, 1500);
+  if (document.readyState === "complete") start(); else window.addEventListener("load", start, { once: true });
+}
+
 function initialize() {
   initializeAppearance(document.getElementById("appearance"), () => {
     renderCanvas(); renderProbes(); renderPhasorLearning(); scopeView.render();
@@ -2194,31 +2213,37 @@ function initialize() {
     onChange: () => { if (circuitWorkspaceActive) { updateCanvasView(); scopeView.render(); renderPhasorLearning(); } },
     isActive: () => circuitWorkspaceActive,
   });
-  emController = createEMController(document.getElementById("em-workspace"));
-  circuitCourse = createCircuitCourseController(document.getElementById("circuit-course-host"));
-  signalsCourse = createSignalsCourseController(document.getElementById("signals-workspace"));
+  emLazy = createLazyController({ host: document.getElementById("em-workspace"), load: (retry) => import("./em-controller.js" + retry), create: (module, host) => module.createEMController(host) });
+  circuitCourseLazy = createLazyController({ host: document.getElementById("circuit-course-host"), load: (retry) => import("./circuit-course-controller.js" + retry), create: (module, host) => module.createCircuitCourseController(host) });
+  signalsLazy = createLazyController({ host: document.getElementById("signals-workspace"), load: (retry) => import("./signals-course-controller.js" + retry), create: (module, host) => module.createSignalsCourseController(host) });
+  const lazyWorkspaces = { em: emLazy, signals: signalsLazy, circuitCourse: circuitCourseLazy };
+  const requestedWorkspace = new URLSearchParams(location.search).get("workspace");
+  const startupWorkspace = ["em", "signals"].includes(requestedWorkspace) ? requestedWorkspace : document.querySelector('[data-workspace-tab][aria-selected="true"]')?.dataset.workspaceTab;
+  lazyWorkspaces[startupWorkspace]?.prefetch();
   workspaceTabs = createWorkspaceTabs({
     onBeforeChange: (from) => {
       workspaceSwitching = true;
       if (from === "circuit") {
-        circuitCourse.deactivate();document.getElementById('circuit-course-shell').hidden=true;document.getElementById('circuit-course-shell').inert=true;
+        circuitCourseLazy.controller?.deactivate();document.getElementById('circuit-course-shell').hidden=true;document.getElementById('circuit-course-shell').inert=true;
         canvasTouch?.cancel();
         if (state.drag) finishCanvasPointer(state.drag.pointerId, "cancel");
         cancelPlotSession();
         panels.cancelInteractions();
         circuitWorkspaceActive = false;
         panels.synchronize();
-      } else if (from === "em") emController.deactivate();
-      else if (from === "signals") signalsCourse.deactivate();
+      } else if (from === "em") emLazy.controller?.deactivate();
+      else if (from === "signals") signalsLazy.controller?.deactivate();
     },
+    onIntent: (name) => lazyWorkspaces[name]?.prefetch(),
     onChange: (name) => {
-      if (name === "em") emController.activate();
-      else if (name === "signals") signalsCourse.activate();
+      if (name === "em") activateLazyWorkspace(emLazy, "em");
+      else if (name === "signals") activateLazyWorkspace(signalsLazy, "signals");
       else if(circuitCourseActive){
         circuitWorkspaceActive=false;const workbench=document.getElementById('workbench'),shell=document.getElementById('circuit-course-shell');
         workbench.hidden=true;workbench.inert=true;document.getElementById('panel-shelf').hidden=true;shell.hidden=false;shell.inert=false;
-        updateCircuitCourseTop();circuitCourse.activate();
+        updateCircuitCourseTop();activateCircuitCourse();
       } else {
+        workspaceSeq++;
         circuitWorkspaceActive = true;
         panels.synchronize();
         if (circuitRenderDeferred) renderAll(); else { updateCanvasView(); scopeView.render(); }
@@ -2243,11 +2268,18 @@ function initialize() {
     runPortAnalysis,
     getLayout: () => panels.inspect(),
     getWorkspace: () => workspaceTabs.active,
-    getEMState: () => emController.inspect(),
-    getCircuitCourseState: () => circuitCourse.inspect(),
-    getSignalsCourseState: () => signalsCourse.inspect(),
+    // Lazy controllers report null until loaded; await ensureWorkspace(name) first.
+    getEMState: () => emLazy.controller?.inspect() ?? null,
+    getCircuitCourseState: () => circuitCourseLazy.controller?.inspect() ?? null,
+    getSignalsCourseState: () => signalsLazy.controller?.inspect() ?? null,
+    ensureWorkspace: (name) => {
+      const key = name === "circuit-course" ? "circuitCourse" : name;
+      return lazyWorkspaces[key] ? lazyWorkspaces[key].ensure() : Promise.resolve(null);
+    },
     activateWorkspace: (name) => workspaceTabs.activate(name, false),
   };
+  if (["em", "signals"].includes(requestedWorkspace)) workspaceTabs.activate(requestedWorkspace, false);
+  scheduleWorkspacePrefetch([emLazy, circuitCourseLazy, signalsLazy]);
   const query = new URLSearchParams(location.search);
   const exampleId = query.get("example");
   if (exampleId && examples.some((example) => example.id === exampleId)) {

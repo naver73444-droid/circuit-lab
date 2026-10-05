@@ -7,7 +7,8 @@ driver=driver.replace("'em-ux-20261004.css','server.mjs'","'em-ux-20261004.css',
 process.argv[2] ||= repo+'results/SIGNALS-VISUAL-2026-10-05/math-direct-1';
 process.argv[5]=fileURLToPath(new URL('../',import.meta.url));
 const scenario=String.raw`
- await navigate('/');await click('#signals-workspace-tab');await click('[data-signals-lesson="fourier"]');
+ const ensureWs=async name=>{const getter={em:'getEMState',signals:'getSignalsCourseState','circuit-course':'getCircuitCourseState'}[name];try{await evaluate('window.__CIRCUIT_LAB__.ensureWorkspace('+JSON.stringify(name)+').then(()=>true)');}catch{}for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.'+getter+'()'))===null;n++)await new Promise(r=>setTimeout(r,100));};const ensureEMCourse=async()=>{for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.getEMState()?.course??null'))===null;n++)await new Promise(r=>setTimeout(r,100));};
+ await navigate('/');await click('#signals-workspace-tab');await ensureWs('signals');await click('[data-signals-lesson="fourier"]');
  check('direct Fourier answer contains a structured fraction',await evaluate('Boolean(document.querySelector("[data-signals-answer] math mfrac"))'));
  check('direct answer keeps exact source',await evaluate('document.querySelector("[data-signals-answer] .course-math-original pre").textContent'),'X(ω)=A/(α+jω)');
  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});

@@ -6,12 +6,13 @@ driver=driver.replace("'em-ux-20261004.css','server.mjs'","'em-ux-20261004.css',
 process.argv[2] ||= repo+'results/SIGNALS-VISUAL-2026-10-05/attempt-1';
 process.argv[5]=fileURLToPath(new URL('../',import.meta.url));
 const scenario=String.raw`
+ const ensureWs=async name=>{const getter={em:'getEMState',signals:'getSignalsCourseState','circuit-course':'getCircuitCourseState'}[name];try{await evaluate('window.__CIRCUIT_LAB__.ensureWorkspace('+JSON.stringify(name)+').then(()=>true)');}catch{}for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.'+getter+'()'))===null;n++)await new Promise(r=>setTimeout(r,100));};const ensureEMCourse=async()=>{for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.getEMState()?.course??null'))===null;n++)await new Promise(r=>setTimeout(r,100));};
  const state=()=>evaluate('window.__CIRCUIT_LAB__.getSignalsCourseState()');
  const choose=async(k,value)=>{const selector='[data-signals-control="'+k+'"]';const index=await evaluate('Array.from(document.querySelector('+JSON.stringify(selector)+').options).findIndex(o=>o.value==='+JSON.stringify(value)+')');if(index<0)throw Error('Missing choice');await click(selector);await key('Home','Home',36);for(let i=0;i<index;i++)await key('ArrowDown','ArrowDown',40);await key('Enter','Enter',13);};
  const write=async(k,text)=>{await click('[data-signals-key="'+k+'"]');await key('a','KeyA',65,2);await send('Input.insertText',{text});};
  const openFields=async()=>{if(!await evaluate('document.querySelector("[data-signals-numeric-details]").open'))await click('[data-signals-numeric-details]>summary');};
  const shotGraphs=async name=>{await evaluate('document.querySelector("[data-signals-visual-preview]").scrollIntoView({block:"start"})');await shot(name);};
- await navigate('/');await click('#signals-workspace-tab');
+ await navigate('/');await click('#signals-workspace-tab');await ensureWs('signals');
  check('first visit automatically shows CT comparison',(await state()).numericStatus==='valid'&&await evaluate('document.querySelectorAll("[data-signals-projection] polyline").length===2'));
  check('preview is outside collapsed numeric controls',await evaluate('!document.querySelector("[data-signals-projection]").closest("details")&&!document.querySelector("[data-signals-numeric-details]").open'));
  await shotGraphs('desktop-time');
@@ -23,7 +24,7 @@ const scenario=String.raw`
  await click('[data-signals-play="next"]');const afterStep=(await state()).cursor;check('rectangle step advances cursor',afterStep>1);
  await click('[data-signals-play="play"]');await wait(600);check('play advances cursor',(await state()).cursor>afterStep);
  await click('#circuit-workspace-tab');await wait(400);const hiddenState=await state();check('leaving Signals stops playback',hiddenState.playing,false);
- await click('#signals-workspace-tab');check('tab return preserves cursor',(await state()).cursor,hiddenState.cursor);
+ await click('#signals-workspace-tab');await ensureWs('signals');check('tab return preserves cursor',(await state()).cursor,hiddenState.cursor);
  await choose('family','exp');check('exponential integral output uses existing model',(await state()).numericStatus,'valid');
  await shotGraphs('desktop-exp-convolution');
  await choose('family','sequence');await openFields();

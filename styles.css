@@ -577,3 +577,8 @@ body[data-workspace="em"]>.em-workspace { grid-row:3; }
 
 .practice-mode { grid-column: 1 / -1; }
 .practice-mode select { width: 100%; min-width: 0; }
+
+/* Lazy workspace status: shown while a workspace module loads or fails to load. */
+.workspace-loading { grid-column: 1 / -1; display: grid; justify-items: center; gap: 10px; padding: 48px 16px; color: var(--muted); text-align: center; }
+.workspace-loading p { margin: 0; }
+[data-workspace-loading] > :not(.workspace-loading) { display: none !important; }

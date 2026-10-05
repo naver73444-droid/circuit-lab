@@ -1,4 +1,3 @@
-import { createEMCourseController } from './em-course-controller.js';
 import { createEMState } from './em-state.js';
 import { C, loopFieldAtN, loopWireDistance, norm3, scale3, sceneMeasurement } from './em-physics.js';
 import { EMView } from './em-view.js';
@@ -33,12 +32,24 @@ function deriveFields(name, raw, model) {
   return {amplitude:parseEMNumber(raw.amplitude),frequency:parseEMNumber(raw.frequency),phase:((parseEMNumber(raw.phaseDeg)%360)+360)%360*Math.PI/180,direction,polarization};
 }
 
+// The course (lesson registry + topic modules, ~290KB) loads only when it is opened.
+// A failed module fetch is cached by the browser, so a retry adds a cache-busting suffix.
+let courseModulePromise = null, courseModuleFailures = 0;
+function loadEMCourseModule() {
+  if (!courseModulePromise) {
+    const promise = import('./em-course-controller.js' + (courseModuleFailures ? '?retry=' + courseModuleFailures : ''));
+    courseModulePromise = promise;
+    promise.catch(() => { if (courseModulePromise === promise) { courseModulePromise = null; courseModuleFailures += 1; } });
+  }
+  return courseModulePromise;
+}
+export function prefetchEMCourse() { loadEMCourseModule().catch(() => {}); }
 export function createEMController(root) {
   const store=createEMState(), s=store.state, $=selector=>root.querySelector(selector);
   const playground=createPointChargeEditor(), pg=playground.state;
   const view=new EMView($('#em-canvas'),$('#em-renderer-status')),events=new AbortController(),listen={signal:events.signal};
   const diagnostics={lineRuns:0,sliceRuns:0,suspends:0,lastLines:null,lastSlice:null};
-  let raf=null,lastFrame=0,destroyed=false,cachedLines=[],lineTask=0,cachedSlice=null,sliceTask=0,isPlayground=true,courseActive=false,cachedPlaygroundSlice=null,playgroundDragOffset=null,playgroundVectorMode='E',playgroundLegend={mode:'auto'},playgroundSliceDrag=null,suppressPlaygroundSliceClick=false,calculusDisplay=null,emLoadGeneration=0,frameId=null,frameDirty=0,lastSourceStructure=null,cachedLinesKey=null,pendingLinesKey=null,cachedSliceKey=null,pendingSliceKey=null;
+  let raf=null,lastFrame=0,destroyed=false,cachedLines=[],lineTask=0,cachedSlice=null,sliceTask=0,isPlayground=true,courseActive=false,workspaceActive=false,course=null,coursePending=null,courseStatus=null,cachedPlaygroundSlice=null,playgroundDragOffset=null,playgroundVectorMode='E',playgroundLegend={mode:'auto'},playgroundSliceDrag=null,suppressPlaygroundSliceClick=false,calculusDisplay=null,emLoadGeneration=0,frameId=null,frameDirty=0,lastSourceStructure=null,cachedLinesKey=null,pendingLinesKey=null,cachedSliceKey=null,pendingSliceKey=null;
   const DIRTY_SCENE=1,DIRTY_PANELS=2,DIRTY_ALL=3;
   function publishDiagnostics(){root.dataset.emLineRuns=String(diagnostics.lineRuns);root.dataset.emSliceRuns=String(diagnostics.sliceRuns);root.dataset.emSuspends=String(diagnostics.suspends);root.dataset.emPointers=String(view.pointers.size);if(diagnostics.lastSlice){root.dataset.emSliceLocations=String(diagnostics.lastSlice.locations);root.dataset.emSliceSourceTerms=String(diagnostics.lastSlice.sourceTerms);}}
   // One rAF per frame: every request in the same frame is merged into a single render (flags OR-ed together).
@@ -280,10 +291,29 @@ export function createEMController(root) {
     if(courseActive===value)return;courseActive=value;
     $('#em-course-root').hidden=!value;
     for(const selector of ['.em-controls','.em-stage','.em-results'])$(selector).hidden=value;
-    if(value){suspend();store.setActive(false);course.activate();}
-    else{course.deactivate();store.setActive(true);resume();}
+    if(value){suspend();store.setActive(false);requestCourse();}
+    else{course?.deactivate();store.setActive(true);resume();}
   }
-  const course=createEMCourseController($('#em-course-root'),{onClose:()=>switchCourse(false)});
+  function activateCourseIfNeeded(){if(!destroyed&&courseActive&&workspaceActive&&course)course.activate();}
+  function showCourseStatus(failed){
+    courseStatus?.remove();
+    const node=document.createElement('div');node.className='workspace-loading';node.setAttribute('role',failed?'alert':'status');
+    const text=document.createElement('p');text.textContent=failed?'전자기학 문제 풀이를 불러오지 못했습니다. 연결을 확인한 뒤 다시 시도하세요. 계속 실패하면 작업을 저장하고 페이지를 새로고침하세요.':'불러오는 중…';node.append(text);
+    if(failed){const retry=document.createElement('button');retry.type='button';retry.textContent='다시 시도';retry.addEventListener('click',requestCourse);node.append(retry);}
+    $('#em-course-root').prepend(node);courseStatus=node;
+  }
+  function requestCourse(){
+    if(course){activateCourseIfNeeded();return;}
+    if(coursePending)return;
+    showCourseStatus(false);
+    const pending=coursePending=loadEMCourseModule().then(module=>{
+      if(destroyed)return;
+      courseStatus?.remove();courseStatus=null;
+      course=module.createEMCourseController($('#em-course-root'),{onClose:()=>switchCourse(false)});
+      coursePending=null;activateCourseIfNeeded();
+    }).catch(()=>{if(coursePending===pending)coursePending=null;if(!destroyed)showCourseStatus(true);});
+  }
+  $('#em-course-open').addEventListener('pointerenter',prefetchEMCourse,listen);$('#em-course-open').addEventListener('focus',prefetchEMCourse,listen);
   publishDiagnostics();update();
-  return {activate(){if(courseActive){course.activate();return;}store.setActive(true);if(isPlayground){renderPlayground();}else{scheduleLines();scheduleSlice();render();}},deactivate(){course.deactivate();suspend();store.setActive(false);},inspect(){return{...store.inspect(),playground:playground.inspect(),playgroundActive:isPlayground,courseActive,course:course.inspect(),diagnostics:structuredClone(diagnostics)};},destroy(){if(destroyed)return;destroyed=true;course.destroy();suspend();events.abort();store.destroy();view.dispose();root.dataset.emDestroyed='true';}};
+  return {activate(){workspaceActive=true;if(courseActive){if(course)course.activate();else requestCourse();return;}store.setActive(true);if(isPlayground){renderPlayground();}else{scheduleLines();scheduleSlice();render();}},deactivate(){workspaceActive=false;course?.deactivate();suspend();store.setActive(false);},inspect(){return{...store.inspect(),playground:playground.inspect(),playgroundActive:isPlayground,courseActive,course:course?course.inspect():null,diagnostics:structuredClone(diagnostics)};},destroy(){if(destroyed)return;destroyed=true;course?.destroy();suspend();events.abort();store.destroy();view.dispose();root.dataset.emDestroyed='true';}};
 }

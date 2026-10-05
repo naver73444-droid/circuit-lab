@@ -32,6 +32,7 @@ try {
   cdp = await bounded(connect(target.webSocketDebuggerUrl), 'CDP connect');
   const send = (method, params = {}) => bounded(cdp.send(method, params), method);
   const evaluate = async expression => { const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails)); return r.result.value; };
+  const ensureWs=async name=>{const getter={em:'getEMState',signals:'getSignalsCourseState','circuit-course':'getCircuitCourseState'}[name];try{await evaluate('window.__CIRCUIT_LAB__.ensureWorkspace('+JSON.stringify(name)+').then(()=>true)');}catch{}for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.'+getter+'()'))===null;n++)await new Promise(r=>setTimeout(r,100));};const ensureEMCourse=async()=>{for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.getEMState()?.course??null'))===null;n++)await new Promise(r=>setTimeout(r,100));};
   await send('Page.enable'); await send('Runtime.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   const loaded = cdp.event('Page.loadEventFired'); await send('Page.navigate', { url: base }); await bounded(loaded, 'load');
@@ -54,7 +55,7 @@ try {
   };
   const select=async(key,value)=>evaluate("(()=>{const e=document.querySelector('#circuit-course-host [data-circuit-course-key="+JSON.stringify(key)+"]');e.value="+JSON.stringify(value)+";e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   const apply=()=>click('#circuit-course-host [data-circuit-course-apply]');
-  await click('#circuit-course-open');
+  await click('#circuit-course-open');await ensureWs('circuit-course');
   check('normal AC entry active',(await snap()).active);
   check('default phasor symbolic',(await snap()).result.symbolic);
   check('phasor shared renderer',await evaluate("Boolean(document.querySelector('#circuit-course-host .course-symbolic .course-symbolic-answer'))"));
@@ -114,7 +115,7 @@ try {
   check('typed 3phase symbol answer',(await snap()).result.solution.answers[0].text.includes('Z_p'));
   check('3phase symbolic 30° relation',(await snap()).result.solution.canonical.Van.includes('e^(−jπ/6)'));
   const before=await snap();
-  await click('[data-workspace-tab="em"]');check('course suspended on EM',(await snap()).active,false);
+  await click('[data-workspace-tab="em"]');await ensureWs('em');check('course suspended on EM',(await snap()).active,false);
   await click('[data-workspace-tab="circuit"]');check('course restored after EM',(await snap()).active);
   check('typed worksheet retained after tabs',(await snap()).drafts,before.drafts);
   for(const width of[1440,900,390]){
@@ -127,7 +128,7 @@ try {
   }
   await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
   await click('#circuit-course-back');check('normal back deactivates',(await snap()).active,false);
-  await click('#circuit-course-open');check('normal reentry retains problem',(await snap()).experimentId,'problem');
+  await click('#circuit-course-open');await ensureWs('circuit-course');check('normal reentry retains problem',(await snap()).experimentId,'problem');
 
 } catch (error) {
   report.errors.push(String(error.stack || error)); process.exitCode = 1;

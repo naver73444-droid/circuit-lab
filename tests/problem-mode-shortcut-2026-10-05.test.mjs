@@ -10,9 +10,10 @@ const scenario=String.raw`
  const field=k=>'[data-circuit-course-key="'+k+'"]';
  const choose=async(k,value)=>{const selector=field(k);const index=await evaluate('Array.from(document.querySelector('+JSON.stringify(selector)+').options).findIndex(o=>o.value==='+JSON.stringify(value)+')');if(index<0)throw Error('Missing choice');await click(selector);await key('Home','Home',36);for(let i=0;i<index;i++)await key('ArrowDown','ArrowDown',40);await key('Enter','Enter',13);};
  const write=async(k,value)=>{await click(field(k));await key('a','KeyA',65,2);if(value)await send('Input.insertText',{text:value});else await key('Backspace','Backspace',8);};
+ const ensureWs=async name=>{const getter={em:'getEMState',signals:'getSignalsCourseState','circuit-course':'getCircuitCourseState'}[name];try{await evaluate('window.__CIRCUIT_LAB__.ensureWorkspace('+JSON.stringify(name)+').then(()=>true)');}catch{}for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.'+getter+'()'))===null;n++)await new Promise(r=>setTimeout(r,100));};const ensureEMCourse=async()=>{for(let n=0;n<80&&(await evaluate('window.__CIRCUIT_LAB__.getEMState()?.course??null'))===null;n++)await new Promise(r=>setTimeout(r,100));};
  const state=()=>evaluate('window.__CIRCUIT_LAB__.getCircuitCourseState()');
  await navigate('/');await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});
- await click('#circuit-course-open');await click('[data-circuit-course-experiment="problem"]');
+ await click('#circuit-course-open');await ensureWs('circuit-course');await click('[data-circuit-course-experiment="problem"]');
  await write('symbolVoltage','V_test');await write('symbolR','R_load');await write('problemText','shortcut memo 390');
  await click('[data-circuit-course-apply]');
  check('symbolic answer applied',(await state()).status,'valid');
