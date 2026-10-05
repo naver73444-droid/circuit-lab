@@ -1,211 +1,54 @@
 // End-to-end smoke: real server + headless Edge driven over the Chrome DevTools Protocol.
-// Node only (global fetch/WebSocket), no npm packages. Run with `npm run test:browser`.
+// Node only (global fetch/WebSocket, Node >= 22), no npm packages. Run with `npm run test:browser`.
 //
-// It starts `node server.mjs 0`, launches Edge with a throw-away profile, and walks the main
-// user paths. Any console error, uncaught exception or failed request fails the scenario.
-// If Edge cannot be found the test FAILS (set EDGE_PATH to override); it is never skipped.
-import { describe, test, before, after } from "node:test";
+// It starts `node server.mjs 0`, launches Edge with a throw-away profile, and walks the main user paths with real
+// mouse/keyboard input. Any console error, uncaught exception or failed request fails the scenario that caused it
+// (the problem buffer is cleared before and asserted after every test). If Edge cannot be found the test FAILS
+// (set EDGE_PATH to override); it is never skipped. Set CIRCUIT_LAB_ROOT to run against another checkout.
+import { describe, test, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import http from "node:http";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  L, ctx, ev, until, waitFor, settle, navigate, state, component, pin, partSel, click, clickAt, clickPart, partPoint, dblclick, dragPart, press, typeInto, select, center,
+  runAnalysis, nodeValue, request, startServer, startBrowser, stopAll, leftoverProcessIds, isAlive, assertNoProblems, resetProblems,
+} from "./harness.mjs";
 
-const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const L = "window.__CIRCUIT_LAB__";
+const VALUE_INPUT = '#inspector-content [data-prop="value"]';
+const STEP_INPUT = '#analysis-settings [data-setting="step"]';
+const discardVisible = `(() => { const b = document.getElementById("discard-drafts-button"); const notice = document.getElementById("draft-notice"); return !notice.classList.contains("hidden") && b.offsetParent !== null; })()`;
+const draftsOf = async () => (await state()).drafts.map(({ kind, id, property, value }) => ({ kind, id, property, value }));
+const valueOf = async (id) => (await component(id)).props.value;
+const inlineEditorHidden = () => ev(`document.getElementById("inline-value-editor").classList.contains("hidden")`);
 
-function findBrowser() {
-  if (process.env.EDGE_PATH) {
-    if (existsSync(process.env.EDGE_PATH)) return process.env.EDGE_PATH;
-    throw new Error(`EDGE_PATH is set to ${process.env.EDGE_PATH}, but that file does not exist, so the browser smoke cannot run.`);
-  }
-  const candidates = [
-    "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-    "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    "/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable",
-  ];
-  const found = candidates.find((path) => existsSync(path));
-  if (!found) {
-    throw new Error(`Microsoft Edge was not found, so the browser smoke cannot run. Install Edge or set EDGE_PATH to the msedge executable. Looked in: ${candidates.join(", ")}`);
-  }
-  return found;
+async function selectPart(id) {
+  await clickPart(id);
+  assert.equal((await state()).selected?.id, id, `${id} should be selected`);
 }
-
-function killTree(child) {
-  if (!child || child.exitCode !== null || !child.pid) return;
-  if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-  else child.kill("SIGKILL");
+/** Keep background re-runs from re-rendering the canvas in the middle of a long scripted gesture loop. */
+async function autoUpdateOff() {
+  if ((await state()).autoUpdate) await click("#auto-update");
+  assert.equal((await state()).autoUpdate, false);
+}
+async function openSettings() {
+  if (!(await ev(`document.getElementById("advanced-analysis").open`))) await click("#advanced-analysis summary");
 }
 
-function request(port, { method = "GET", path = "/", headers = {} } = {}) {
-  return new Promise((resolve, reject) => {
-    const req = http.request({ host: "127.0.0.1", port, method, path, headers }, (res) => {
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
-    });
-    req.on("error", reject);
-    req.end();
-  });
-}
-
-class Cdp {
-  constructor(url) {
-    this.ws = new WebSocket(url);
-    this.nextId = 0;
-    this.pending = new Map();
-    this.listeners = [];
-  }
-  async open() {
-    await new Promise((resolve, reject) => { this.ws.onopen = resolve; this.ws.onerror = () => reject(new Error("DevTools socket failed")); });
-    this.ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.id && this.pending.has(message.id)) { this.pending.get(message.id)(message); this.pending.delete(message.id); }
-      else for (const listener of this.listeners) listener(message);
-    };
-  }
-  send(method, params = {}) {
-    return new Promise((resolve, reject) => {
-      const id = ++this.nextId;
-      this.pending.set(id, (message) => (message.error ? reject(new Error(`${method}: ${message.error.message}`)) : resolve(message.result)));
-      this.ws.send(JSON.stringify({ id, method, params }));
-    });
-  }
-  on(listener) { this.listeners.push(listener); }
-  close() { try { this.ws.close(); } catch { /* already closed */ } }
-}
-
-let server, edge, cdp, profile, base, port;
-const problems = [];
-
-async function startServer() {
-  server = spawn(process.execPath, [join(ROOT, "server.mjs"), "0"], { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-  let log = "";
-  server.stdout.on("data", (chunk) => { log += chunk; });
-  server.stderr.on("data", (chunk) => { log += chunk; });
-  for (let n = 0; n < 100; n += 1) {
-    const match = log.match(/http:\/\/127\.0\.0\.1:(\d+)/);
-    if (match) { port = Number(match[1]); base = match[0]; return; }
-    if (server.exitCode !== null) break;
-    await sleep(100);
-  }
-  throw new Error(`server.mjs did not report a URL: ${log}`);
-}
-
-async function startBrowser() {
-  const executable = findBrowser();
-  profile = mkdtempSync(join(tmpdir(), "circuit-lab-smoke-"));
-  edge = spawn(executable, [
-    "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-extensions",
-    "--disable-background-networking", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank",
-  ], { stdio: "ignore", windowsHide: true });
-  let debugPort = null;
-  for (let n = 0; n < 150 && debugPort === null; n += 1) {
-    const file = join(profile, "DevToolsActivePort");
-    if (existsSync(file)) debugPort = Number(readFileSync(file, "utf8").split(/\r?\n/)[0]);
-    else await sleep(100);
-  }
-  assert.ok(debugPort, "Edge did not open a DevTools port");
-  let page;
-  for (let n = 0; n < 100 && !page; n += 1) {
-    try { page = (await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json()).find((target) => target.type === "page"); } catch { /* not ready */ }
-    if (!page) await sleep(100);
-  }
-  assert.ok(page, "Edge did not expose a page target");
-  cdp = new Cdp(page.webSocketDebuggerUrl);
-  await cdp.open();
-  cdp.on(({ method, params }) => {
-    if (method === "Runtime.consoleAPICalled" && ["error", "warning", "assert"].includes(params.type)) problems.push(`console.${params.type}: ${params.args.map((arg) => arg.value ?? arg.description).join(" ").slice(0, 300)}`);
-    if (method === "Runtime.exceptionThrown") problems.push(`exception: ${params.exceptionDetails.exception?.description ?? params.exceptionDetails.text}`.slice(0, 400));
-    if (method === "Log.entryAdded" && params.entry.level === "error") problems.push(`log: ${params.entry.text} ${params.entry.url ?? ""}`.slice(0, 300));
-    if (method === "Network.loadingFailed" && !params.canceled) problems.push(`network failure: ${params.errorText} ${params.requestId}`);
-  });
-  for (const domain of ["Page", "Runtime", "Log", "Network", "DOM"]) await cdp.send(`${domain}.enable`);
-  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
-}
-
-// ---- page helpers --------------------------------------------------------------------------------------------
-async function ev(expression) {
-  const result = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-  if (result.exceptionDetails) throw new Error(`evaluate failed: ${(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text).slice(0, 400)}\n${expression.slice(0, 200)}`);
-  return result.result.value;
-}
-async function until(expression, what, ms = 15000) {
-  const started = Date.now();
-  let last;
-  while (Date.now() - started < ms) {
-    try { last = await ev(expression); if (last) return last; } catch (error) { last = error.message; }
-    await sleep(50);
-  }
-  assert.fail(`timed out waiting for ${what} (${String(last).slice(0, 200)})`);
-}
-async function navigate(path, { width = 1440, height = 900, mobile = false } = {}) {
-  await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
-  const loaded = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`page load timed out: ${path}`)), 30000);
-    const listener = (message) => { if (message.method === "Page.loadEventFired") { clearTimeout(timer); cdp.listeners.splice(cdp.listeners.indexOf(listener), 1); resolve(); } };
-    cdp.on(listener);
-  });
-  await cdp.send("Page.navigate", { url: base + path });
-  await loaded;
-  await until(`Boolean(${L})`, "the app to expose its debug hook");
-  await sleep(150);
-}
-const state = () => ev(`${L}.getState()`);
-async function clickPoint(x, y) {
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 });
-  await sleep(100);
-}
-async function center(selector) {
-  const point = await ev(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null; e.scrollIntoView({ block: "nearest", inline: "nearest" }); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height }; })()`);
-  assert.ok(point && point.w > 0 && point.h > 0, `missing or hidden element: ${selector}`);
-  return point;
-}
-async function click(selector) { await sleep(60); const point = await center(selector); await clickPoint(point.x, point.y); }
-const pin = (id, index) => `.component[data-id="${id}"] .pin[data-pin="${index}"]`;
-async function select(selector, value) {
-  const applied = await ev(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); e.value = ${JSON.stringify(value)}; e.dispatchEvent(new Event("change", { bubbles: true })); return e.value; })()`);
-  assert.equal(applied, value, `${selector} should accept ${value}`);
-}
-async function press(key, code, vk, modifiers = 0) {
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: vk, modifiers });
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk, modifiers });
-  await sleep(60);
-}
-async function runAnalysis(kind) {
-  await select("#analysis-intent", kind);
-  await click("#run-button");
-  await until(`${L}.getState().runState.status === "success" && ${L}.getState().result.analysis === ${JSON.stringify(kind)}`, `${kind} analysis to succeed`);
-}
-function nodeValue(result, pointIndex, componentId, pinIndex) {
-  return result.points[pointIndex].nodeVoltages[result.topology.nodeIdByPin[`${componentId}:${pinIndex}`]];
-}
-function noProblems(label) {
-  const found = problems.splice(0);
-  assert.deepEqual(found, [], `${label}: console/network problems`);
-}
-
-// ---- scenarios ---------------------------------------------------------------------------------------------
-describe("browser smoke", { timeout: 240000 }, () => {
+describe("browser smoke", { timeout: 600000 }, () => {
+  let startedPids = [];
   before(async () => { await startServer(); await startBrowser(); });
+  beforeEach(() => resetProblems());
+  // Asserted per test, so a failure is attributed to the scenario that produced it and the last scenario is checked too.
+  afterEach(async () => { await assertNoProblems("console/network"); });
   after(async () => {
-    const started = [edge?.pid, server?.pid].filter(Boolean);
-    cdp?.close();
-    killTree(edge);
-    killTree(server);
-    server?.stdout?.destroy(); server?.stderr?.destroy();
-    await sleep(500);
-    if (profile) { try { rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* profile is in the OS temp directory */ } }
-    for (const pid of started) assert.throws(() => process.kill(pid, 0), /ESRCH/, `process ${pid} should have been stopped`);
+    startedPids = [ctx.edge?.pid, ctx.server?.pid].filter(Boolean);
+    const stopped = await stopAll();
+    for (const pid of new Set([...startedPids, ...stopped])) assert.equal(isAlive(pid), false, `process ${pid} should have been stopped`);
+    assert.deepEqual(leftoverProcessIds(), [], "no process may still carry the throw-away Edge profile");
   });
 
   test("server serves only the app, with security headers", async () => {
+    const { port } = ctx;
     const index = await request(port);
     assert.equal(index.status, 200);
     assert.equal(index.headers["x-content-type-options"], "nosniff");
@@ -223,7 +66,6 @@ describe("browser smoke", { timeout: 240000 }, () => {
     assert.ok(Array.isArray(loaded.circuit.components));
     assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true, "no horizontal page overflow");
     assert.equal(await ev(`[${L}.getEMState(), ${L}.getCircuitCourseState(), ${L}.getSignalsCourseState()].every((value) => value === null)`), true, "heavy workspaces are not loaded yet");
-    noProblems("default editor");
   });
 
   test("transient: RLC example runs and draws a probe trace that matches the closed form", async () => {
@@ -240,7 +82,6 @@ describe("browser smoke", { timeout: 240000 }, () => {
     assert.ok(Math.abs(nodeValue(result, index, "C1", 0) - expected) < 0.01, `v_C(${t}) = ${nodeValue(result, index, "C1", 0)} vs ${expected}`);
     await until(`document.querySelectorAll("#wave-plot path.plot-line").length > 0`, "a waveform path");
     assert.equal(await ev(`!document.getElementById("csv-button").disabled`), true, "CSV export is enabled after a result");
-    noProblems("transient");
   });
 
   test("ac: sweep succeeds and the result pane shows phasor vectors", async () => {
@@ -262,7 +103,21 @@ describe("browser smoke", { timeout: 240000 }, () => {
     assert.ok(Math.abs(Math.hypot(output.re, output.im) - expected) < 1e-9, `|V(C1)| at ${frequency} Hz`);
     assert.ok(Math.abs(Math.atan2(output.im, output.re) + Math.atan(2 * Math.PI * frequency * 1e-3)) < 1e-9, "phase lag");
     assert.ok(settings.analysis === "ac");
-    noProblems("ac");
+  });
+
+  test("ac: a zero-amplitude source reads as 'phase undefined' (미정), not as 0 degrees", async () => {
+    await navigate("/?example=rc-lowpass");
+    await selectPart("V1");
+    await click("#inspector-tab");
+    await typeInto('#inspector-content [data-prop="acMagnitude"]', "0");
+    await press("Enter", "Enter", 13);
+    await waitFor(async () => (await component("V1")).props.acMagnitude === "0", "the 0 V amplitude to commit");
+    await runAnalysis("ac");
+    await click("#results-tab");
+    await until(`document.getElementById("phasor-validity").dataset.status === "ready"`, "phasor validity ready");
+    const text = await ev(`document.getElementById("voltage-phasor-values").innerText`);
+    assert.match(text, /미정/, `zero-magnitude phasors must say the phase is undefined, got: ${text}`);
+    assert.doesNotMatch(text, /∠\s*0\s*°/, "a zero phasor must not claim a 0 degree phase");
   });
 
   test("port: divider Thevenin equivalent is 5 V behind 500 ohm", async () => {
@@ -281,14 +136,12 @@ describe("browser smoke", { timeout: 240000 }, () => {
     const equivalent = port.result.equivalent;
     assert.ok(Math.abs(equivalent.vth.value - 5) < 1e-9, `Vth ${equivalent.vth.value}`);
     assert.ok(Math.abs(equivalent.rth.value - 500) < 1e-6, `Rth ${equivalent.rth.value}`);
-    noProblems("port");
   });
 
-  test("editing: delete, undo, redo, keyboard shortcuts and the history cap", async () => {
+  test("editing: delete, undo, redo and keyboard shortcuts", async () => {
     await navigate("/?example=divider");
     await click("[data-tool=\"select\"]");
-    await click('.component[data-id="R1"] .component-hit, .component[data-id="R1"]');
-    assert.equal((await state()).selected?.id, "R1");
+    await selectPart("R1");
     await click("#delete-button");
     assert.equal((await state()).circuit.components.some((c) => c.id === "R1"), false);
     await click("#undo-button");
@@ -300,55 +153,415 @@ describe("browser smoke", { timeout: 240000 }, () => {
     await press("y", "KeyY", 89, 2);
     assert.equal((await state()).circuit.components.some((c) => c.id === "R1"), false, "Ctrl+Y redoes");
     await press("z", "KeyZ", 90, 2);
-    await click('.component[data-id="R2"] .component-hit, .component[data-id="R2"]');
-    assert.equal((await state()).selected?.id, "R2");
-    const before = (await state()).circuit.components.find((c) => c.id === "R2").rotation;
+    await selectPart("R2");
+    const before = (await component("R2")).rotation;
     await press("r", "KeyR", 82);
-    assert.notEqual((await state()).circuit.components.find((c) => c.id === "R2").rotation, before, "R rotates the selection");
-    // 110 more rotations, dispatched as key events inside the page (real key presses above prove the shortcut itself).
-    await ev(`(() => { for (let n = 0; n < 110; n += 1) window.dispatchEvent(new KeyboardEvent("keydown", { key: "r", code: "KeyR", bubbles: true })); })()`);
-    assert.ok((await state()).historyDepth <= 100, "undo history is capped at 100 entries");
-    noProblems("editing");
+    assert.notEqual((await component("R2")).rotation, before, "R rotates the selection");
+
+    // The Delete key removes the selection, and one undo brings it back.
+    const count = (await state()).circuit.components.length;
+    await selectPart("R2");
+    await press("Delete", "Delete", 46);
+    assert.equal((await state()).circuit.components.some((c) => c.id === "R2"), false, "Delete removes the selected part");
+    assert.equal((await state()).circuit.components.length, count - 1);
+    await press("z", "KeyZ", 90, 2);
+    assert.equal((await state()).circuit.components.length, count, "undo restores the deleted part");
+
+    // Ctrl+D duplicates the selection (a new id, same type and value) as one undoable step.
+    await selectPart("R2");
+    const depth = (await state()).historyDepth;
+    await press("d", "KeyD", 68, 2);
+    const duplicated = await state();
+    assert.equal(duplicated.circuit.components.length, count + 1, "Ctrl+D adds one part");
+    assert.equal(duplicated.historyDepth, depth + 1, "the duplicate is one undo step");
+    const copy = duplicated.circuit.components.find((c) => !["V1", "R1", "R2", "G1"].includes(c.id));
+    assert.equal(copy.type, "R");
+    assert.equal(copy.props.value, "1k");
+    await press("z", "KeyZ", 90, 2);
+    assert.equal((await state()).circuit.components.length, count, "undo removes the duplicate");
   });
 
-  test("drafts: discard keeps the committed value; Tab commits and stays in the inspector", async () => {
+  test("history cap (edits): exactly 100 undo steps, and undo/redo walk the whole window", async () => {
     await navigate("/?example=divider");
-    await click('.component[data-id="R2"] .component-hit, .component[data-id="R2"]');
+    await selectPart("R2");
+    const r0 = (await component("R2")).rotation ?? 0;
+    // 110 rotations dispatched as key events inside the page (the real key press is covered above).
+    await ev(`(() => { for (let n = 0; n < 110; n += 1) window.dispatchEvent(new KeyboardEvent("keydown", { key: "r", code: "KeyR", bubbles: true })); })()`);
+    const after110 = await state();
+    assert.equal(after110.historyDepth, 100, "history keeps exactly the last 100 steps");
+    assert.equal((await component("R2")).rotation, (r0 + 110 * 90) % 360);
+    // Drain the undo stack: exactly 100 steps are available, the oldest 10 were dropped.
+    await ev(`(() => { const b = document.getElementById("undo-button"); for (let n = 0; n < 100; n += 1) b.click(); })()`);
+    let drained = await state();
+    assert.equal(drained.historyDepth, 0, "100 undos empty the stack");
+    assert.equal((await component("R2")).rotation, (r0 + 10 * 90) % 360, "the 10 oldest steps are gone, so undo stops 10 rotations in");
+    await ev(`document.getElementById("undo-button").click()`);
+    assert.equal((await state()).historyDepth, 0, "undo past the cap is a no-op");
+    // Redo restores all 100 (the future stack is capped at the same size), and the history is exactly 100 again.
+    await ev(`(() => { const b = document.getElementById("redo-button"); for (let n = 0; n < 100; n += 1) b.click(); })()`);
+    const redone = await state();
+    assert.equal(redone.historyDepth, 100, "100 redos refill the history to exactly 100");
+    assert.deepEqual(redone.circuit, after110.circuit, "redo returns to the exact pre-undo circuit");
+    await ev(`document.getElementById("redo-button").click()`);
+    assert.equal((await state()).historyDepth, 100, "redo past the end is a no-op");
+    // Undo/redo cycles at the cap never grow the stack.
+    await ev(`(() => { const u = document.getElementById("undo-button"), r = document.getElementById("redo-button"); for (let n = 0; n < 30; n += 1) { u.click(); r.click(); } })()`);
+    assert.equal((await state()).historyDepth, 100, "undo/redo cycles keep the depth at 100");
+    // A fresh edit after undoing drops the redo branch.
+    await ev(`document.getElementById("undo-button").click()`);
+    await press("r", "KeyR", 82);
+    await ev(`document.getElementById("redo-button").click()`);
+    assert.equal((await state()).historyDepth, 100, "editing after undo clears the redo branch and stays capped");
+  });
+
+  test("history cap (probes): adding and removing probes pushes undo steps, capped at exactly 100", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    const baseline = (await state()).probes.length;
+    const baseDepth = (await state()).historyDepth;
+    await click('[data-tool="voltage-probe"]');
+    await click("#results-tab");
+    let expected = 0;
+    for (let cycle = 0; cycle < 52; cycle += 1) {
+      await click(pin("R1", 0));
+      expected += 1;
+      assert.equal((await state()).probes.length, baseline + 1, `cycle ${cycle}: the probe was added`);
+      await click(`#probe-list [data-remove-probe="V:R1:0"]`);
+      expected += 1;
+      assert.equal((await state()).probes.length, baseline, `cycle ${cycle}: the probe was removed`);
+      assert.equal((await state()).historyDepth, Math.min(100, baseDepth + expected), `cycle ${cycle}: probe edit steps are recorded`);
+    }
+    assert.equal(expected, 104);
+    assert.equal((await state()).historyDepth, 100, "104 probe edits leave exactly 100 steps");
+  });
+
+  test("history cap (drag): 105 real component drags leave exactly 100 steps, and undo reverts a drag", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await click('[data-tool="select"]');
+    const start = await component("R2");
+    const baseDepth = (await state()).historyDepth;
+    let lostGestures = 0;
+    for (let n = 0; n < 105; n += 1) {
+      const dx = n % 2 === 0 ? 40 : -40;
+      const wantedX = (await component("R2")).x + dx;
+      // Occasionally the browser drops the pointer capture right after a synthetic press (seen about once per 100 drags,
+      // never with a human-speed gesture); a dropped gesture commits nothing, so it is repeated and counted.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await dragPart("R2", dx, 0);
+        if ((await component("R2")).x === wantedX) break;
+        lostGestures += 1;
+      }
+      const depth = (await state()).historyDepth;
+      assert.equal(depth, Math.min(100, baseDepth + n + 1), `drag ${n}: one undo step per committed drag`);
+    }
+    assert.ok(lostGestures <= 5, `too many dropped drag gestures: ${lostGestures}`);
+    const moved = await component("R2");
+    assert.equal(moved.x, start.x + 40, "105 alternating drags end 40 px right of the start");
+    assert.equal((await state()).historyDepth, 100);
+    await click("#undo-button");
+    const undone = await component("R2");
+    assert.equal(undone.x, start.x, "undo reverts exactly the last drag");
+    assert.equal((await state()).historyDepth, 99);
+  });
+
+  test("drafts: discard drops a VALID inspector draft without committing it", async () => {
+    await navigate("/?example=divider");
+    await selectPart("R2");
     await click("#inspector-tab");
     const depth = (await state()).historyDepth;
-    await ev(`(() => { const e = document.querySelector('#inspector-content [data-prop="value"]'); e.focus(); e.value = "1e"; e.dispatchEvent(new Event("input", { bubbles: true })); })()`);
-    await until(`!document.getElementById("discard-drafts-button").classList.contains("hidden") && !document.getElementById("discard-drafts-button").hidden`, "the discard button");
+    await typeInto(VALUE_INPUT, "2k");
+    assert.deepEqual(await draftsOf(), [{ kind: "prop", id: "R2", property: "value", value: "2k" }], "typing registers one draft");
+    assert.equal(await valueOf("R2"), "1k", "typing alone does not commit");
+    await until(discardVisible, "the discard button");
+    // Real mouse click: its pointerdown must keep focus in the field, otherwise the blur would commit "2k" first.
     await click("#discard-drafts-button");
-    await sleep(200);
+    await waitFor(async () => (await draftsOf()).length === 0, "the draft to be dropped");
     const after = await state();
-    assert.equal(after.circuit.components.find((c) => c.id === "R2").props.value, "1k", "discard must not commit the draft");
+    assert.equal(after.circuit.components.find((c) => c.id === "R2").props.value, "1k", "discard must not commit the valid draft");
     assert.equal(after.historyDepth, depth, "discard must not add an undo entry");
-    assert.deepEqual(after.drafts, []);
-
-    await click('.component[data-id="R2"] .component-hit, .component[data-id="R2"]');
-    await ev(`(() => { const e = document.querySelector('#inspector-content [data-prop="ref"]'); e.focus(); e.value = "Rb"; e.dispatchEvent(new Event("input", { bubbles: true })); })()`);
-    await press("Tab", "Tab", 9);
-    await sleep(250);
-    assert.equal((await state()).circuit.components.find((c) => c.id === "R2").props.ref, "Rb", "Tab commits the edited reference");
-    assert.equal(await ev(`Boolean(document.activeElement?.closest("#inspector-content"))`), true, "focus stays inside the inspector after the re-render");
-    noProblems("drafts");
+    assert.equal(await ev(`document.querySelector(${JSON.stringify(VALUE_INPUT)}).value`), "1k", "the field shows the committed value again");
+    assert.equal(await ev(`document.getElementById("draft-notice").classList.contains("hidden")`), true, "the draft notice goes away");
+    await settle(); await settle();
+    const later = await state();
+    assert.equal(later.historyDepth, depth, "nothing commits later either");
+    assert.equal(later.circuit.components.find((c) => c.id === "R2").props.value, "1k");
   });
 
-  test("save and reopen round-trip through the file input", async () => {
+  test("drafts: Tab commits a valid draft and focus stays in the inspector", async () => {
+    await navigate("/?example=divider");
+    await selectPart("R2");
+    await click("#inspector-tab");
+    const depth = (await state()).historyDepth;
+    await typeInto('#inspector-content [data-prop="ref"]', "Rb");
+    await press("Tab", "Tab", 9);
+    await waitFor(async () => (await component("R2")).props.ref === "Rb", "Tab to commit the edited reference");
+    assert.equal((await state()).historyDepth, depth + 1, "the commit is one undo step");
+    assert.equal(await ev(`Boolean(document.activeElement?.closest("#inspector-content"))`), true, "focus stays inside the inspector after the re-render");
+    assert.deepEqual(await draftsOf(), []);
+  });
+
+  test("drafts: inline value editor (double-click on the label) - Enter commits, Escape and discard do not", async () => {
+    await navigate("/?example=divider");
+    await click('[data-tool="select"]');
+    const label = '.component[data-id="R2"] .value-label';
+    const depth = (await state()).historyDepth;
+
+    await dblclick(label);
+    await until(`!document.getElementById("inline-value-editor").classList.contains("hidden")`, "the inline editor");
+    await ev(`document.getElementById("inline-value-editor").focus()`);
+    await ctx.cdp.send("Input.insertText", { text: "3k" });
+    await settle();
+    assert.deepEqual(await draftsOf(), [{ kind: "prop", id: "R2", property: "value", value: "3k" }]);
+    await press("Escape", "Escape", 27);
+    assert.equal(await inlineEditorHidden(), true, "Escape closes the inline editor");
+    assert.equal(await valueOf("R2"), "1k", "Escape does not commit");
+    assert.deepEqual(await draftsOf(), []);
+    assert.equal((await state()).historyDepth, depth, "Escape adds no undo entry");
+
+    // Discard button while the inline editor holds a VALID draft.
+    await dblclick(label);
+    await until(`!document.getElementById("inline-value-editor").classList.contains("hidden")`, "the inline editor again");
+    await ev(`document.getElementById("inline-value-editor").focus()`);
+    await ctx.cdp.send("Input.insertText", { text: "2k" });
+    await settle();
+    assert.deepEqual(await draftsOf(), [{ kind: "prop", id: "R2", property: "value", value: "2k" }]);
+    await until(discardVisible, "the discard button");
+    await click("#discard-drafts-button");
+    await waitFor(async () => (await draftsOf()).length === 0, "the draft to be dropped");
+    assert.equal(await inlineEditorHidden(), true, "discard closes the inline editor");
+    assert.equal(await valueOf("R2"), "1k", "discard must not commit the inline draft");
+    assert.equal((await state()).historyDepth, depth, "discard adds no undo entry");
+    // state.inlineEdit is not exposed, so prove it is null by behaviour: a run would otherwise pick the hidden editor's "2k" up.
+    await click("#run-button");
+    await until(`${L}.getState().runState.status === "success"`, "the run to finish");
+    assert.equal(await valueOf("R2"), "1k", "a stale inline edit must not be committed by the next run");
+    assert.equal((await state()).historyDepth, depth, "the run adds no undo entry");
+
+    // Enter commits as one undo step.
+    await dblclick(label);
+    await until(`!document.getElementById("inline-value-editor").classList.contains("hidden")`, "the inline editor a third time");
+    await ev(`document.getElementById("inline-value-editor").focus()`);
+    await ctx.cdp.send("Input.insertText", { text: "3k" });
+    await press("Enter", "Enter", 13);
+    await waitFor(async () => (await valueOf("R2")) === "3k", "Enter to commit");
+    assert.equal((await state()).historyDepth, depth + 1);
+    assert.equal(await inlineEditorHidden(), true);
+  });
+
+  test("drafts: a settings draft is discarded together with an invalid inspector draft; nothing else changes", async () => {
     await navigate("/?example=rlc");
+    await openSettings();
+    const before = await state();
+    const stepBefore = before.settings.step;
+    // An invalid ("1e") inspector draft survives losing focus; a valid settings draft is typed after it.
+    await selectPart("R1");
+    await click("#inspector-tab");
+    await typeInto(VALUE_INPUT, "1e");
+    await typeInto(STEP_INPUT, "2u");
+    assert.equal((await draftsOf()).length, 2, "an invalid inspector draft and a settings draft are both pending");
+    assert.equal((await state()).settings.step, stepBefore, "the settings draft is not committed while typing");
+    await until(discardVisible, "the discard button");
+    await click("#discard-drafts-button");
+    await waitFor(async () => (await draftsOf()).length === 0, "all drafts to be dropped");
+    const after = await state();
+    assert.equal(after.settings.step, stepBefore, "discard must not commit the valid settings draft");
+    assert.deepEqual(after.settings, before.settings, "no other setting changed");
+    assert.deepEqual(after.circuit, before.circuit, "no component changed");
+    assert.equal(after.historyDepth, before.historyDepth, "discard adds no undo entry");
+    assert.equal(await ev(`document.querySelector(${JSON.stringify(STEP_INPUT)}).value`), stepBefore, "the step field shows the committed value");
+    assert.equal(await ev(`document.querySelector(${JSON.stringify(VALUE_INPUT)}).value`), "100", "the value field shows the committed value");
+
+    // Discarding only a settings draft leaves the circuit alone too, and committing the same draft by blur is a real undo step.
+    await typeInto(STEP_INPUT, "2u");
+    assert.deepEqual(await draftsOf(), [{ kind: "setting", id: null, property: "step", value: "2u" }]);
+    await click("#discard-drafts-button");
+    await waitFor(async () => (await draftsOf()).length === 0, "the settings draft to be dropped");
+    assert.equal((await state()).settings.step, stepBefore);
+    assert.equal((await state()).historyDepth, before.historyDepth);
+
+    await typeInto(STEP_INPUT, "2u");
+    await press("Tab", "Tab", 9);
+    await waitFor(async () => (await state()).settings.step === "2u", "blur to commit a valid settings draft");
+    assert.equal((await state()).historyDepth, before.historyDepth + 1, "the committed setting is one undo step");
+    assert.deepEqual(await draftsOf(), []);
+  });
+
+  test("drafts: pointercancel keeps a pending draft (canvas drag cancelled, touch on the discard button cancelled)", async () => {
+    await navigate("/?example=divider");
+    await click('[data-tool="select"]');
+    await selectPart("R2");
+    await click("#inspector-tab");
+    const depth = (await state()).historyDepth;
+    const startR1 = await component("R1");
+    // "1e" is not a number yet, so it stays a draft when a canvas press takes the focus away (a valid draft would be committed there).
+    await typeInto(VALUE_INPUT, "1e");
+    assert.deepEqual(await draftsOf(), [{ kind: "prop", id: "R2", property: "value", value: "1e" }]);
+
+    // (1) A canvas drag that the browser cancels: the part snaps back, nothing is committed, the draft survives.
+    const grab = await partPoint("R1");
+    await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: grab.x, y: grab.y });
+    await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: grab.x, y: grab.y, button: "left", buttons: 1, clickCount: 1 });
+    await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: grab.x + 30, y: grab.y + 20, buttons: 1 });
+    await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: grab.x + 50, y: grab.y + 40, buttons: 1 });
+    await settle();
+    const dragging = await state();
+    assert.notEqual(dragging.pointerOwnerId, null, "a canvas drag is in progress");
+    // pointercancel for the owning pointer, dispatched like the browser does when it takes over the gesture.
+    await ev(`document.getElementById("circuit-canvas").dispatchEvent(new PointerEvent("pointercancel", { pointerId: ${JSON.stringify(dragging.pointerOwnerId)}, bubbles: true }))`);
+    await settle();
+    await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: grab.x + 50, y: grab.y + 40, button: "left", buttons: 0, clickCount: 1 });
+    await settle();
+    const cancelled = await state();
+    assert.equal(cancelled.pointerOwnerId, null, "the cancelled gesture released the pointer");
+    assert.equal(cancelled.drag, null);
+    assert.deepEqual({ x: cancelled.circuit.components.find((c) => c.id === "R1").x, y: cancelled.circuit.components.find((c) => c.id === "R1").y }, { x: startR1.x, y: startR1.y }, "the part is back where it started");
+    assert.equal(cancelled.historyDepth, depth, "a cancelled drag adds no undo step");
+    assert.equal(cancelled.circuit.components.find((c) => c.id === "R2").props.value, "1k", "the draft was not committed by the cancelled drag");
+    assert.deepEqual(await draftsOf(), [{ kind: "prop", id: "R2", property: "value", value: "1e" }], "the draft survives a cancelled pointer gesture");
+    await selectPart("R2"); // the press selected R1; back on R2 the field must show the pending text again
+    assert.equal(await ev(`document.querySelector(${JSON.stringify(VALUE_INPUT)}).value`), "1e", "the field still shows the typed text");
+    assert.deepEqual(await draftsOf(), [{ kind: "prop", id: "R2", property: "value", value: "1e" }]);
+
+    await typeInto(VALUE_INPUT, "2k");
+    assert.deepEqual(await draftsOf(), [{ kind: "prop", id: "R2", property: "value", value: "2k" }]);
+    // (2) A touch that lands on the discard button and is cancelled (the page scrolls) is not a click: the draft stays.
+    await until(discardVisible, "the discard button");
+    const button = await center("#discard-drafts-button");
+    await ev(`window.__ptr = []; for (const type of ["pointerdown", "pointercancel", "pointerup", "click"]) document.getElementById("discard-drafts-button").addEventListener(type, (e) => window.__ptr.push(type + ":" + e.pointerType));`);
+    await ctx.cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: button.x, y: button.y }] });
+    await ctx.cdp.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+    await settle();
+    const seen = await ev("window.__ptr");
+    assert.ok(seen.includes("pointerdown:touch") && seen.includes("pointercancel:touch") && !seen.some((entry) => entry.startsWith("click")), `the touch really produced pointerdown + pointercancel and no click, got ${seen}`);
+    assert.deepEqual(await draftsOf(), [{ kind: "prop", id: "R2", property: "value", value: "2k" }], "a cancelled touch on the discard button keeps the draft");
+    assert.equal((await state()).circuit.components.find((c) => c.id === "R2").props.value, "1k");
+    assert.equal((await state()).historyDepth, depth);
+  });
+
+  test("save and reopen round-trip through the file input keeps circuit, settings and probes identical", async () => {
+    await navigate("/?example=rlc");
+    // Make the project differ from the example in all three parts: a circuit edit, a setting and an extra probe.
+    await selectPart("R1");
+    await press("r", "KeyR", 82);
+    await openSettings();
+    await typeInto(STEP_INPUT, "2u");
+    await press("Tab", "Tab", 9);
+    await waitFor(async () => (await state()).settings.step === "2u", "the step setting to commit");
+    await click('[data-tool="current-probe"]');
+    await clickPart("L1");
+    await click('[data-tool="select"]');
+    const before = await state();
+    assert.ok(before.probes.some((probe) => probe.kind === "current" && probe.componentId === "L1"), "the added current probe exists");
     await ev(`window.__blobs = []; URL.createObjectURL = (blob) => { window.__blobs.push(blob); return "blob:smoke"; }; window.__downloads = []; HTMLAnchorElement.prototype.click = function () { window.__downloads.push(this.download); };`);
     await click("#save-button");
     await until(`window.__blobs.length === 1 && window.__downloads.length === 1`, "a download");
     assert.match(await ev(`window.__downloads[0]`), /\.json$/);
-    const saved = join(profile, "saved.json");
+    const saved = join(ctx.profile, "saved.json");
     writeFileSync(saved, await ev(`window.__blobs[0].text()`));
     await click("#new-button");
     assert.equal((await state()).circuit.components.length, 0);
-    const { root } = await cdp.send("DOM.getDocument");
-    const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: "#file-input" });
-    await cdp.send("DOM.setFileInputFiles", { files: [saved], nodeId });
+    const { root } = await ctx.cdp.send("DOM.getDocument");
+    const { nodeId } = await ctx.cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: "#file-input" });
+    await ctx.cdp.send("DOM.setFileInputFiles", { files: [saved], nodeId });
     await until(`${L}.getState().circuit.components.length === 5`, "the project to be restored");
-    noProblems("save/open");
+    const reopened = await state();
+    assert.deepEqual(reopened.circuit, before.circuit, "circuit survives save/reopen unchanged");
+    assert.deepEqual(reopened.settings, before.settings, "settings survive save/reopen unchanged");
+    assert.deepEqual(reopened.probes, before.probes, "probes survive save/reopen unchanged");
+  });
+
+  test("stale result race: a run that finishes after an edit is never adopted as the current result", async () => {
+    // The worker is wrapped so its first reply is held back; the test decides when that "late" reply is delivered.
+    const holdFirstWorkerReply = `(() => {
+      const Original = window.Worker; window.__held = []; let first = true; let handler = null;
+      window.Worker = class extends Original {
+        constructor(...args) {
+          super(...args);
+          if (!first) return;
+          first = false;
+          Object.defineProperty(this, "onmessage", { get: () => handler, set: (fn) => { handler = fn; } });
+          this.addEventListener("message", (event) => window.__held.push(event));
+        }
+      };
+      window.__releaseHeld = () => { const events = window.__held.splice(0); window.__lastHeld = events[0]?.data ?? null; for (const event of events) handler?.(event); return events.length; };
+    })()`;
+    const heldResult = () => ev(`window.__lastHeld?.value?.result ?? null`);
+
+    // Part 1: auto-update off. The edit leaves the app with no result; the late reply must not become one.
+    await navigate("/?example=rlc");
+    await click("#auto-update");
+    assert.equal((await state()).autoUpdate, false);
+    await ev(holdFirstWorkerReply);
+    await select("#analysis-intent", "transient");
+    await click("#run-button");
+    await until(`window.__held.length === 1`, "the worker to answer (held back)");
+    assert.equal((await state()).runState.status, "running", "the app is still waiting for the held reply");
+    await selectPart("R1");
+    await click("#inspector-tab");
+    await typeInto(VALUE_INPUT, "400");
+    await press("Enter", "Enter", 13);
+    await waitFor(async () => (await component("R1")).props.value === "400", "the edit to commit");
+    let current = await state();
+    assert.notEqual(current.runState.status, "success");
+    assert.equal(current.result, null);
+    assert.equal(await ev(`window.__releaseHeld()`), 1, "the late reply is delivered now");
+    await settle(); await settle();
+    current = await state();
+    assert.equal(current.result, null, "the late result was not adopted");
+    assert.notEqual(current.runState.status, "success", "the late run is not reported as a success");
+    assert.notEqual(current.runState.status, "running");
+    assert.equal(await ev(`document.getElementById("run-button").disabled`), false, "the Run button is usable again");
+
+    // Part 2: a fresh run for the edited circuit succeeds and differs from the (never adopted) late result.
+    const late = await heldResult();
+    assert.ok(late, "the held reply carried a result");
+    await click("#run-button");
+    await until(`${L}.getState().runState.status === "success"`, "the new run to succeed");
+    const fresh = await state();
+    assert.equal(fresh.runState.generation, fresh.generation, "the success belongs to the current generation");
+    const probeIndex = fresh.result.xValues.length - 1;
+    assert.notEqual(nodeValue(fresh.result, Math.min(probeIndex, 100), "C1", 0), nodeValue(late, Math.min(probeIndex, 100), "C1", 0), "the new result is for R=400, not for the late R=100 run");
+
+    // Part 3: auto-update on. The edit starts a newer run; the older run's late reply must not overwrite it.
+    await navigate("/?example=rlc");
+    await click("#auto-update"); // off while the hook is installed, so the load itself cannot take the held slot
+    await ev(holdFirstWorkerReply);
+    await select("#analysis-intent", "transient");
+    await click("#run-button");
+    await until(`window.__held.length === 1`, "the worker to answer (held back)");
+    await click("#auto-update"); // back on
+    assert.equal((await state()).autoUpdate, true);
+    await selectPart("R1");
+    await click("#inspector-tab");
+    await typeInto(VALUE_INPUT, "400");
+    await press("Enter", "Enter", 13);
+    await until(`${L}.getState().runState.status === "success" && ${L}.getState().circuit.components.find((c) => c.id === "R1").props.value === "400"`, "the automatic re-run to succeed");
+    const newer = await state();
+    const newerSnapshot = JSON.stringify(newer.result);
+    assert.equal(await ev(`window.__releaseHeld()`), 1);
+    await settle(); await settle();
+    const afterLate = await state();
+    assert.equal(JSON.stringify(afterLate.result), newerSnapshot, "the late reply did not replace the newer result");
+    assert.equal(afterLate.runState.status, "success");
+    assert.equal(afterLate.runState.generation, afterLate.generation);
+
+    // Part 4: an edit that does not go through a text draft (a key press rotates the part) takes the other stale path.
+    await navigate("/?example=rlc");
+    await click("#auto-update");
+    await ev(holdFirstWorkerReply);
+    await select("#analysis-intent", "transient");
+    await click("#run-button");
+    await until(`window.__held.length === 1`, "the worker to answer (held back)");
+    await selectPart("R1");
+    await press("r", "KeyR", 82);
+    assert.equal((await component("R1")).rotation, 90, "the rotation was applied while the run was pending");
+    assert.equal(await ev(`window.__releaseHeld()`), 1);
+    await settle(); await settle();
+    const rotated = await state();
+    assert.equal(rotated.result, null, "a reply that arrives after a rotation is not adopted");
+    assert.notEqual(rotated.runState.status, "success");
+    assert.equal(await ev(`document.getElementById("run-button").disabled`), false);
   });
 
   test("help card opens and closes with Escape; theme toggles", async () => {
@@ -361,7 +574,6 @@ describe("browser smoke", { timeout: 240000 }, () => {
     await select("#appearance", "light");
     assert.equal(await ev(`document.documentElement.dataset.theme`), "light");
     await select("#appearance", "dark");
-    noProblems("help/theme");
   });
 
   test("EM workspace loads lazily and draws", async () => {
@@ -391,7 +603,6 @@ describe("browser smoke", { timeout: 240000 }, () => {
     await until(`${L}.getEMState().course?.active === true && Boolean(document.querySelector("#em-course-select"))`, "the EM course");
     await click("#em-course-back");
     await until(`${L}.getEMState().courseActive === false`, "return to the playground");
-    noProblems("em");
   });
 
   test("signals workspace renders the convolution lesson", async () => {
@@ -403,8 +614,29 @@ describe("browser smoke", { timeout: 240000 }, () => {
     await until(`${L}.getSignalsCourseState().lessonId === "convolution"`, "the convolution lesson");
     const lesson = await ev(`${L}.getSignalsCourseState()`);
     assert.equal(lesson.symbolic.status, "supported");
-    assert.equal(await ev(`${L}.getEMState()?.active ?? false`), false, "leaving a workspace deactivates it");
-    noProblems("signals");
+  });
+
+  test("leaving a workspace deactivates it, and returning reactivates it", async () => {
+    await navigate("/");
+    // Load EM for real (this page never opened it before), so a null controller cannot make the checks pass vacuously.
+    await click("#em-workspace-tab");
+    assert.equal(await ev(`${L}.ensureWorkspace("em").then((controller) => typeof controller.inspect)`), "function");
+    await until(`${L}.getEMState()?.active === true`, "EM to be active");
+    assert.equal(await ev(`${L}.getWorkspace()`), "em");
+    assert.equal(await ev(`${L}.getSignalsCourseState()?.active ?? false`), false, "signals is not active while EM is");
+
+    await click("#signals-workspace-tab");
+    await until(`${L}.getSignalsCourseState()?.active === true`, "signals to be active");
+    assert.equal(await ev(`${L}.getWorkspace()`), "signals");
+    const emAfterLeaving = await ev(`${L}.getEMState()`);
+    assert.ok(emAfterLeaving, "EM stays loaded after it is left (so this check is not vacuous)");
+    assert.equal(emAfterLeaving.active, false, "leaving EM deactivates it");
+    assert.equal(await ev(`document.getElementById("em-workspace").hidden || document.getElementById("em-workspace").inert`), true, "the EM pane is hidden");
+
+    await click("#em-workspace-tab");
+    await until(`${L}.getEMState()?.active === true`, "EM to be active again");
+    assert.equal((await ev(`${L}.getSignalsCourseState()`)).active, false, "leaving signals deactivates it");
+    assert.equal(await ev(`${L}.getWorkspace()`), "em");
   });
 
   test("circuit course opens and lists its experiments", async () => {
@@ -416,22 +648,20 @@ describe("browser smoke", { timeout: 240000 }, () => {
     await click('[data-circuit-course-experiment="problem"]');
     const field = (key) => `#circuit-course-host [data-circuit-course-key="${key}"]`;
     const set = (key, value) => ev(`(() => { const e = document.querySelector(${JSON.stringify(field(key))}); e.value = ${JSON.stringify(value)}; e.dispatchEvent(new Event("input", { bubbles: true })); })()`);
-    const typeInto = async (key, text) => { await click(field(key)); await press("a", "KeyA", 65, 2); await cdp.send("Input.insertText", { text }); await sleep(50); };
     await set("elements", "RL");
     await set("singleGoal", "current");
     await set("solutionMode", "numeric");
     await click("#circuit-course-host [data-circuit-course-apply]");
     assert.equal(await ev(`${L}.getCircuitCourseState().result.status`), "invalid", "blank numeric conditions are rejected");
-    await typeInto("voltage", "100 V");
-    await typeInto("frequencyHz", "50 Hz");
-    await typeInto("r", "3 Ω");
-    await typeInto("l", "12.732395447351627 mH");
+    await typeInto(field("voltage"), "100 V");
+    await typeInto(field("frequencyHz"), "50 Hz");
+    await typeInto(field("r"), "3 Ω");
+    await typeInto(field("l"), "12.732395447351627 mH");
     await click("#circuit-course-host [data-circuit-course-apply]");
     const answer = await ev(`${L}.getCircuitCourseState().result.solution.answers[0].value`);
     assert.ok(Math.abs(answer - 20) < 1e-9, `numeric current ${answer}`);
     await click("#circuit-course-back");
     await until(`!document.getElementById("workbench").hidden && document.getElementById("circuit-course-shell").hidden`, "the editor to return");
-    noProblems("circuit course");
   });
 
   test("phone layout (390x844): one panel at a time, transient and AC still run", async () => {
@@ -446,6 +676,5 @@ describe("browser smoke", { timeout: 240000 }, () => {
     await click('.view-tabs [data-view="results"]');
     await until(`!document.getElementById("phasor-panel").hidden`, "the phasor pane on the phone");
     assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true, "still no overflow after results");
-    noProblems("phone");
   });
 });

@@ -804,7 +804,9 @@ describe("project boundaries", () => {
     close(point.componentCurrents.V1, -0.0025, IABS, IREL);
     const csv = parseCSV(buildResultsCSV(dc, seriesFor(dc, f0.probes)));
     assert.equal(csv.length, 2);
-    assert.equal(Number(csv[1][0]), 0);
+    // Independent expectation (5 V across 1 k + 1 k): operating_point, V(n) = 2.5 V, I(R2) = 2.5 mA, V(V1+) = 5 V.
+    assert.deepEqual(csv[0], ["operating_point", "V(n)_V", "I(R2, 1→2)_A", "V(V1+)_V"]);
+    assert.deepEqual(csv[1], ["0", "2.5", "0.0025", "5"]);
 
     const transient = simulateTransient(f0.circuit, { start: 0, end: "20u", step: "10u" });
     assert.deepEqual(transient.xValues, [0, 1e-5, 2e-5]);
@@ -816,6 +818,8 @@ describe("project boundaries", () => {
     const ac = simulateACAtFrequency(f0.circuit, 1);
     cclose(node(ac, ac.points[0], "R2", 0), { re: 0.5, im: 0 });
     cclose(ac.points[0].componentCurrents.R2, { re: 0.0005, im: 0 });
+    // Same sign convention as the DC check above: the source current is negative while it delivers power (1 V / 2 k = 0.5 mA).
+    cclose(ac.points[0].componentCurrents.V1, { re: -0.0005, im: 0 });
   });
 
   test("explicit 2k recovery computes the new result, not the old 1k result", () => {
