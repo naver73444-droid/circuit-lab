@@ -59,7 +59,8 @@ export function createEMState() {
       if (!value) state.point = previous;
       return value;
     },
-    setTime(cycles) { state.timeCycles = Math.max(0, Math.min(2, Number(cycles))); return evaluate(); },
+    // Non-finite input (NaN/Infinity from a bad slider/field value) is ignored: it would otherwise store NaN as timeCycles.
+    setTime(cycles) { const value = Number(cycles); if (!Number.isFinite(value)) return state.lastValid; state.timeCycles = Math.max(0, Math.min(2, value)); return evaluate(); },
     setActive(active) { state.active = Boolean(active); if (!active) state.playing = false; revision += 1; state.revision = revision; },
     stop() { state.playing = false; revision += 1; state.revision = revision; },
     destroy() { state.active = false; state.playing = false; state.destroyed = true; revision += 1; state.revision = revision; },

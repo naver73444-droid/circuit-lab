@@ -106,12 +106,16 @@ export function infiniteLineChargeField(source, point) {
   return { status: 'valid', E: rhoVector.map(value => 2 * factor * value / (rho * rho)), potential: -2 * factor * Math.log(rho / source.sRef) };
 }
 
-export function evaluatePointChargeWorld(sources, point) {
-  const validated = validatePointSources(sources);
-  const p = validatePoint(point, '측정점');
+// Core evaluation over already-validated sources (output of validatePointSources).
+// The arithmetic order is the same for every caller, so default and fast paths give bit-identical E/potential.
+// wantJacobian=true adds the 3x3 dE_i/dx_j. That Jacobian is analytic for point charges only: when any enabled
+// line source (finite/infinite) contributes, no analytic line Jacobian exists here, so jacobian is returned as
+// null instead of a silently incomplete (points-only) matrix.
+function evaluateValidatedWorld(validated, p, wantJacobian) {
   const E = [0, 0, 0];
-  const jacobian = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  const jacobian = wantJacobian ? [[0, 0, 0], [0, 0, 0], [0, 0, 0]] : null;
   let potential = 0;
+  let hasLineSource = false;
   for (const source of validated) {
     const strength = source.type === 'point' ? source.q : source.lambda;
     if (!source.enabled || strength === 0) continue;
@@ -120,6 +124,7 @@ export function evaluatePointChargeWorld(sources, point) {
       if (contribution.status !== 'valid') return { ...contribution, E: null, potential: null, gradV: null, jacobian: null };
       for (let axis = 0; axis < 3; axis += 1) E[axis] += contribution.E[axis];
       potential += contribution.potential;
+      hasLineSource = true;
       continue;
     }
     const R = p.map((value, index) => value - source.position[index]);
@@ -136,14 +141,18 @@ export function evaluatePointChargeWorld(sources, point) {
       };
     }
     const invR3 = 1 / r ** 3;
-    const invR5 = 1 / r ** 5;
     const factor = K * source.q;
     potential += factor / r;
-    for (let i = 0; i < 3; i += 1) {
-      E[i] += factor * R[i] * invR3;
-      for (let j = 0; j < 3; j += 1) {
-        jacobian[i][j] += factor * ((i === j ? invR3 : 0) - 3 * R[i] * R[j] * invR5);
+    if (wantJacobian) {
+      const invR5 = 1 / r ** 5;
+      for (let i = 0; i < 3; i += 1) {
+        E[i] += factor * R[i] * invR3;
+        for (let j = 0; j < 3; j += 1) {
+          jacobian[i][j] += factor * ((i === j ? invR3 : 0) - 3 * R[i] * R[j] * invR5);
+        }
       }
+    } else {
+      for (let i = 0; i < 3; i += 1) E[i] += factor * R[i] * invR3;
     }
   }
   return {
@@ -151,13 +160,28 @@ export function evaluatePointChargeWorld(sources, point) {
     E,
     potential,
     gradV: E.map(value => -value),
-    jacobian,
+    jacobian: hasLineSource ? null : jacobian,
   };
 }
 
-export function pointChargePlaneSample(sources, plane, fixedCoordinate, { grid = 25, span = 2 } = {}) {
+// options.jacobian (default true): false skips the unused 3x3 Jacobian (result.jacobian is then null).
+// options.validated (default false): true only when `sources` is already the output of validatePointSources,
+// so a caller that evaluates many points (e.g. 40,960 sphere-flux samples) validates once instead of per call.
+export function evaluatePointChargeWorld(sources, point, { jacobian = true, validated = false } = {}) {
+  const checked = validated ? sources : validatePointSources(sources);
+  return evaluateValidatedWorld(checked, validatePoint(point, '측정점'), jacobian);
+}
+
+// Validates once and returns point => result (same numbers as evaluatePointChargeWorld; Jacobian off by default).
+export function createPointChargeEvaluator(sources, { jacobian = false } = {}) {
+  const checked = validatePointSources(sources);
+  return point => evaluateValidatedWorld(checked, validatePoint(point, '측정점'), jacobian);
+}
+
+export function pointChargePlaneSample(sources, plane, fixedCoordinate, { grid = 25, span = 2, jacobian = true } = {}) {
   if (!['xy', 'xz', 'yz'].includes(plane)) throw new PointChargeInputError('편집 평면은 XY, XZ, YZ 중 하나여야 합니다.');
   const fixed = finite(fixedCoordinate, '평면 고정 좌표');
+  const evaluate = createPointChargeEvaluator(sources, { jacobian });
   const values = [];
   let maxAbsPotential = 0;
   let maxField = 0;
@@ -166,7 +190,7 @@ export function pointChargePlaneSample(sources, plane, fixedCoordinate, { grid =
       const a = -span + 2 * span * column / (grid - 1);
       const b = span - 2 * span * row / (grid - 1);
       const point = plane === 'xy' ? [a, b, fixed] : plane === 'xz' ? [a, fixed, b] : [fixed, a, b];
-      const result = evaluatePointChargeWorld(sources, point);
+      const result = evaluate(point);
       const item = { point, result };
       values.push(item);
       if (result.status === 'valid') {

@@ -1,5 +1,13 @@
 const axesFor = plane => plane === 'xz' ? [0, 2] : plane === 'yz' ? [1, 2] : [0, 1];
 const magnitude = vector => Math.hypot(...vector);
+// Assigning canvas.width/height clears the backing store and reallocates it, so only do it when the pixel size really changes.
+// When the size is unchanged, reset the 2D state by hand (transform, dash, alpha, text, width) so every render starts clean.
+function prepareCanvas(canvas, ctx, dpr) {
+  const width = Math.round(canvas.clientWidth * dpr), height = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+  else { ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.lineWidth = 1; ctx.lineCap = 'butt'; ctx.lineJoin = 'miter'; ctx.globalCompositeOperation = 'source-over'; ctx.shadowBlur = 0; ctx.lineDashOffset = 0; ctx.font = '10px sans-serif'; ctx.fillStyle = '#000000'; ctx.strokeStyle = '#000000'; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
 export function createCourseView(canvas, onProbe) {
   const events = new AbortController();
   let current = null, active = false, dragging = false;
@@ -17,8 +25,7 @@ export function createCourseView(canvas, onProbe) {
   function render() {
     if (!active || !current || !canvas.clientWidth || !canvas.clientHeight) return;
     const ctx = canvas.getContext('2d'), dpr = Math.min(1.5, devicePixelRatio || 1);
-    canvas.width = Math.round(canvas.clientWidth * dpr); canvas.height = Math.round(canvas.clientHeight * dpr);
-    ctx.scale(dpr, dpr);
+    prepareCanvas(canvas, ctx, dpr);
     const w = canvas.clientWidth, h = canvas.clientHeight, { axes, extent, axisOnly,profileMode } = geometry();
     const scale=Math.min(w,h)/(2*extent);
     const map = point => [w / 2 + point[axes[0]]*scale, h / 2 - point[axes[1]]*scale];
@@ -140,8 +147,11 @@ export function createCourseView(canvas, onProbe) {
     onProbe(point);
   };
   canvas.addEventListener('pointerdown', event => { if (!active || event.button !== 0) return; dragging = true; canvas.setPointerCapture(event.pointerId); move(event); }, { signal: events.signal });
-  canvas.addEventListener('pointermove', event => { if (dragging) move(event); }, { signal: events.signal });
-  const end = () => { dragging = false; };
+  // Pointer moves are merged to one probe update per animation frame; the last position is flushed when the drag ends.
+  let pendingMove = null, moveFrame = null;
+  const flushMove = () => { if (moveFrame !== null) { cancelAnimationFrame(moveFrame); moveFrame = null; } const pending = pendingMove; pendingMove = null; if (pending && dragging && active && current) move(pending); };
+  canvas.addEventListener('pointermove', event => { if (!dragging) return; pendingMove = { clientX: event.clientX, clientY: event.clientY }; if (moveFrame === null) moveFrame = requestAnimationFrame(() => { moveFrame = null; flushMove(); }); }, { signal: events.signal });
+  const end = () => { flushMove(); dragging = false; };
   for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, end, { signal: events.signal });
   canvas.addEventListener('keydown', event => {
     if (!active || !current || !['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home'].includes(event.key)) return;
@@ -154,7 +164,7 @@ export function createCourseView(canvas, onProbe) {
     point[axis]+=sign*extent*.05;onProbe(point);
   },{signal:events.signal});
   window.addEventListener('resize', render, { signal: events.signal });
-  return { update(value) { current = value; render(); }, activate() { active = true; render(); }, deactivate() { active = false; dragging = false; }, destroy() { events.abort(); active = false; }, inspect() { return { active, dragging }; } };
+  return { update(value) { current = value; render(); }, activate() { active = true; render(); }, deactivate() { pendingMove = null; if (moveFrame !== null) { cancelAnimationFrame(moveFrame); moveFrame = null; } active = false; dragging = false; }, destroy() { events.abort(); pendingMove = null; if (moveFrame !== null) { cancelAnimationFrame(moveFrame); moveFrame = null; } active = false; }, inspect() { return { active, dragging }; } };
 }
 
 
@@ -164,7 +174,7 @@ export function createRadialProfileView(canvas,onRadius){
   function render(){
     if(!active||!current||canvas.hidden||!canvas.clientWidth||!canvas.clientHeight)return;
     const ctx=canvas.getContext('2d'),dpr=Math.min(1.5,devicePixelRatio||1),w=canvas.clientWidth,h=canvas.clientHeight;
-    canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);ctx.scale(dpr,dpr);ctx.fillStyle='#101925';ctx.fillRect(0,0,w,h);
+    prepareCanvas(canvas,ctx,dpr);ctx.fillStyle='#101925';ctx.fillRect(0,0,w,h);
     const series=current.profiles?.find(p=>p.key==='Bphi'),points=series?.points||[];if(!points.length){canvas.dataset.profileSeries='0';return;}
     factor=current.normalized?current.params.a:1;
     const mu=current.result.scalars?.find(s=>s.key==='permeability')?.value;

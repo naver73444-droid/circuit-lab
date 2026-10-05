@@ -47,16 +47,26 @@ export class EMView {
     const gl = canvas.getContext('webgl', { alpha: false, antialias: true });
     if (!gl) { message.textContent = 'WebGL을 만들 수 없습니다. 브라우저 그래픽 가속을 확인한 뒤 다시 여세요. 수치 결과만 사용할 수 있습니다.'; this.gl = null; return; }
     this.gl = gl;
+    this.lost = false; this.lastRender = null;
     try {
-      const vs = shader(gl, gl.VERTEX_SHADER, vertexShader), fs = shader(gl, gl.FRAGMENT_SHADER, fragmentShader);
-      const program = gl.createProgram(); gl.attachShader(program, vs); gl.attachShader(program, fs); gl.linkProgram(program);
-      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
-      this.program = program; this.vs = vs; this.fs = fs; this.buffer = gl.createBuffer();
-      this.position = gl.getAttribLocation(program, 'a_position'); this.color = gl.getAttribLocation(program, 'a_color'); this.matrix = gl.getUniformLocation(program, 'u_matrix');
-      message.textContent = 'native WebGL · 실제 xyz 깊이 투영 · 화면 화살표 길이는 물리 크기와 독립 정규화';
-      canvas.addEventListener('webglcontextlost', this.onLost = event => { event.preventDefault(); message.textContent = 'WebGL 컨텍스트가 손실되었습니다. 페이지를 다시 열어 재시도하세요. 수치 결과는 보존됩니다.'; });
+      this.initProgram();
+      canvas.addEventListener('webglcontextlost', this.onLost = event => { event.preventDefault(); this.lost = true; message.textContent = 'WebGL 컨텍스트가 손실되었습니다. 복구되면 자동으로 다시 그립니다. 수치 결과는 보존됩니다.'; });
+      canvas.addEventListener('webglcontextrestored', this.onRestored = () => {
+        // All GL objects died with the old context: rebuild program/buffer and redraw the last frame.
+        try { this.initProgram(); this.lost = false; if (this.lastRender && !this.disposed) this.render(this.lastRender); }
+        catch (error) { message.textContent = `WebGL 복구 실패: ${error.message}`; }
+      });
       this.installInput();
     } catch (error) { message.textContent = `WebGL 초기화 실패: ${error.message}`; this.dispose(); }
+  }
+
+  initProgram() {
+    const gl = this.gl, vs = shader(gl, gl.VERTEX_SHADER, vertexShader), fs = shader(gl, gl.FRAGMENT_SHADER, fragmentShader);
+    const program = gl.createProgram(); gl.attachShader(program, vs); gl.attachShader(program, fs); gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+    this.program = program; this.vs = vs; this.fs = fs; this.buffer = gl.createBuffer();
+    this.position = gl.getAttribLocation(program, 'a_position'); this.color = gl.getAttribLocation(program, 'a_color'); this.matrix = gl.getUniformLocation(program, 'u_matrix');
+    this.message.textContent = 'native WebGL · 실제 xyz 깊이 투영 · 화면 화살표 길이는 물리 크기와 독립 정규화';
   }
 
   installInput() {
@@ -79,7 +89,8 @@ export class EMView {
 
   render({ camera, scene, point, vector, fieldLines = [], wave = null, gridVectors = [] }) {
     const gl = this.gl; if (!gl || this.disposed) return false;
-    this.camera = camera;
+    this.camera = camera; this.lastRender = { camera, scene, point, vector, fieldLines, wave, gridVectors };
+    if (this.lost || gl.isContextLost?.()) return false;
     const dpr = Math.min(1.5, devicePixelRatio || 1), rect = this.canvas.getBoundingClientRect(), width = Math.max(2, Math.round(rect.width*dpr)), height = Math.max(2, Math.round(rect.height*dpr));
     if (this.canvas.width !== width || this.canvas.height !== height) { this.canvas.width = width; this.canvas.height = height; }
     gl.viewport(0,0,width,height); gl.clearColor(.025,.035,.065,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
@@ -107,6 +118,7 @@ export class EMView {
     if (this.disposed) return; this.disposed = true; this.cancelPointers();
     const gl=this.gl; if(gl){ if(this.buffer)gl.deleteBuffer(this.buffer); if(this.program)gl.deleteProgram(this.program); if(this.vs)gl.deleteShader(this.vs); if(this.fs)gl.deleteShader(this.fs); }
     if (this.onLost) this.canvas.removeEventListener('webglcontextlost',this.onLost);
+    if (this.onRestored) this.canvas.removeEventListener('webglcontextrestored',this.onRestored);
     if (this.down) { this.canvas.removeEventListener('pointerdown',this.down); this.canvas.removeEventListener('pointermove',this.move); this.canvas.removeEventListener('pointerup',this.up); this.canvas.removeEventListener('pointercancel',this.up); this.canvas.removeEventListener('lostpointercapture',this.up); this.canvas.removeEventListener('wheel',this.wheel); }
   }
 }
