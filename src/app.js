@@ -14,6 +14,8 @@ import { createAnalysisRunner, createRunState } from "./analysis-runner.js";
 import { createInspector } from "./inspector.js";
 import { createEditorInput, createInputState } from "./editor-input.js";
 import { createProjectIO } from "./project-io.js";
+import { createHoverReadout } from "./hover-readout.js";
+import { hasShareHash } from "./share-url.js";
 
 const elements = Object.fromEntries([
   "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "empty-hint",
@@ -25,6 +27,7 @@ const elements = Object.fromEntries([
   "clone-button", "zoom-out-button", "zoom-in-button", "fit-button", "inline-value-editor",
   "connection-summary", "probe-context-menu", "phasor-validity", "small-signal-note",
   "scope-controls", "analysis-intent", "analysis-recommendation", "auto-update", "advanced-analysis",
+  "share-button", "canvas-notices", "hover-tip",
   "port-panel", "port-p-button", "port-n-button", "port-load-button", "port-clear-button", "port-run-button", "port-selection", "port-loads", "port-result", "port-status",
 ].map((id) => [id, document.getElementById(id)]));
 
@@ -63,6 +66,7 @@ const session = createEditorSession({
   scheduleAutoRun: () => analysis.scheduleAutoRun(),
   closeProbeContextMenu: () => input.closeProbeContextMenu(),
   confirmDiscardDrafts: () => inspector.confirmDiscardDrafts(),
+  onCommitted: () => projectIO.noteCommitted(),
 });
 const renderer = createCanvasRenderer({
   state, elements, workspace, currentConnections: session.currentConnections,
@@ -84,9 +88,11 @@ const inspector = createInspector({
   synchronizeIntent: analysis.synchronizeIntent, cancelScheduledRun: analysis.cancelScheduledRun, markInputDirty: analysis.markInputDirty,
   scheduleAutoRun: analysis.scheduleAutoRun, renderPhasorLearning: analysis.renderPhasorLearning,
 });
+const hover = createHoverReadout({ state, elements, workspace, scopeView });
 const input = createEditorInput({
-  state, elements, workspace, scopeView, renderAll, setStatus, showInspector, showCanvas, isCircuitUiActive,
-  mutate: session.mutate, snapshot: session.snapshot, commitMove: session.commitMove, undo: session.undo, redo: session.redo,
+  state, elements, workspace, scopeView, renderAll, setStatus, showInspector, showCanvas, isCircuitUiActive, hover,
+  runAnalysis: () => analysis.runAnalysis(), saveProject: () => projectIO.saveProject(),
+  mutate: session.mutate, mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, snapshot: session.snapshot, commitMove: session.commitMove, undo: session.undo, redo: session.redo,
   addVoltageProbe: session.addVoltageProbe, addVoltageProbeEndpoint: session.addVoltageProbeEndpoint, addCurrentProbe: session.addCurrentProbe, removeProbe: session.removeProbe,
   renderCanvas: renderer.renderCanvas, renderOverlay: renderer.renderOverlay, scheduleCanvasRender: renderer.scheduleCanvasRender, scheduleOverlayRender: renderer.scheduleOverlayRender,
   updateCanvasView: renderer.updateCanvasView, endpointPosition: renderer.endpointPosition, pinPosition: renderer.pinPosition, routeForWireId: renderer.routeForWireId,
@@ -156,6 +162,7 @@ function renderAll() {
   elements["rotate-button"].disabled = state.selected?.kind !== "component";
   elements["clone-button"].disabled = state.selected?.kind !== "component";
   elements["delete-button"].disabled = !state.selected;
+  hover.refresh();
   elements["stale-badge"].classList.toggle("hidden", !(state.stale || state.runState.status === "stale"));
   analysis.updateAnalysisControls();
 }
@@ -196,6 +203,7 @@ function setupEvents() {
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && help.open) { help.open = false; help.querySelector("summary").focus(); } });
   inspector.attach();
   input.attach();
+  hover.attach();
   analysis.attach();
   projectIO.attach();
 }
@@ -268,6 +276,9 @@ function initialize() {
     loadExample: projectIO.loadExample,
     runAnalysis: analysis.runAnalysis,
     runPortAnalysis: analysis.runPortAnalysis,
+    flushAutosave: projectIO.flushAutosave,
+    getAutosaveStatus: projectIO.autosaveStatus,
+    getHoverReadout: hover.inspect,
     getLayout: () => panels.inspect(),
     getWorkspace: () => workspaceTabs.active,
     // Lazy controllers report null until loaded; await ensureWorkspace(name) first.
@@ -284,8 +295,14 @@ function initialize() {
   scheduleWorkspacePrefetch([emLazy, circuitCourseLazy, signalsLazy]);
   const query = new URLSearchParams(location.search);
   const exampleId = query.get("example");
-  if (exampleId && examples.some((example) => example.id === exampleId)) {
-    projectIO.loadExample(exampleId);
+  const exampleRequested = Boolean(exampleId && examples.some((example) => example.id === exampleId));
+  if (hasShareHash(location.hash)) {
+    // A share link wins over ?example and over the restore offer; a link that cannot be opened falls back to the restore offer.
+    projectIO.openShareHash(location.hash).then((opened) => { if (!opened) projectIO.offerRestore(); });
+  } else if (exampleRequested) {
+    projectIO.loadExample(exampleId, { silent: true });
+  } else {
+    projectIO.offerRestore();
   }
   if (query.get("run") === "1") setTimeout(analysis.runAnalysis, 0);
 }

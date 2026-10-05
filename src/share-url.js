@@ -183,8 +183,16 @@ function extractPayload(input, maxHashChars = SHARE_MAX_HASH_CHARS) {
   return { payload: null, tooLarge: false };
 }
 
-/** 해시/URL에 공유 데이터가 들어 있는지(검증 없이). 해시가 SHARE_MAX_HASH_CHARS를 넘으면 false. */
+/**
+ * 해시/URL이 공유 링크인지(검증 없이). '#p=' 로 시작하면(데이터가 비어 있거나 너무 커도) true — 열기를 시도해
+ * 디코더가 이유("너무 커서…" 등)를 보여 주게 한다. 그 밖의 해시에서는 '&' 뒤의 p= 파라미터를 찾는다
+ * (해시가 SHARE_MAX_HASH_CHARS를 넘으면 스캔하지 않는다).
+ */
 export function hasShareHash(input) {
+  if (typeof input !== "string") return false;
+  const hashIndex = input.indexOf("#");
+  const start = hashIndex >= 0 ? hashIndex + 1 : 0;
+  if (input.startsWith(`${SHARE_PARAM}=`, start)) return true;
   const { payload } = extractPayload(input);
   return payload !== null && payload.length > 0;
 }

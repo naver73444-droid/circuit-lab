@@ -7,7 +7,9 @@ import {
   retargetWireProbes,
   splitWireAtJunction,
 } from "./circuit-edit.js";
-import { appendFixedWaypoint, snapPoint } from "./circuit-geometry.js";
+import { GRID_SIZE, appendFixedWaypoint, snapPoint } from "./circuit-geometry.js";
+import { shortcutFor } from "./editor-shortcuts.js";
+import { stepSeriesText } from "./value-series.js";
 import { probeKeysForTarget } from "./ui-model.js";
 import { beginPointerSession, finishPointerSession, ownsPointer } from "./pointer-session.js";
 import { advanceCursorPointerSession, isTapGesture } from "./cursor-label-model.js";
@@ -41,7 +43,7 @@ export function createInputState() {
 
 /** Tools, placement, wiring, probe placement and every canvas/plot pointer, wheel, touch and keyboard gesture. */
 export function createEditorInput(deps) {
-  const { state, elements, workspace, scopeView, mutate, snapshot, commitMove, undo, redo, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe,
+  const { state, elements, workspace, scopeView, mutate, mutateGrouped, closeEditGroup, snapshot, commitMove, undo, redo, runAnalysis, saveProject, hover, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe,
     renderCanvas, renderOverlay, scheduleCanvasRender, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
     renderAll, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
   let canvasTouch = null;
@@ -399,6 +401,72 @@ export function createEditorInput(deps) {
     setStatus(includeTarget ? "제어 대상·종속원 원자 복제 완료" : "부품 복제 완료 · 외부 제어 ID 유지", "ready");
   }
 
+  function rotateSelection(direction = 1) {
+    if (state.selected?.kind !== "component") return;
+    mutate(() => {
+      const component = state.circuit.components.find((item) => item.id === state.selected.id);
+      component.rotation = (((component.rotation ?? 0) + 90 * direction) % 360 + 360) % 360;
+    });
+  }
+
+  /** Arrow-key move by whole grid steps. A press is one history entry; held-key repeats extend that entry. */
+  function nudgeSelection({ dx, dy, steps, repeat }) {
+    const selected = state.selected;
+    if (!selected || !["component", "junction"].includes(selected.kind) || state.pointerOwnerId !== null || state.pendingPin || state.inlineEdit) return false;
+    const exists = selected.kind === "junction"
+      ? (state.circuit.junctions ?? []).some((junction) => junction.id === selected.id)
+      : state.circuit.components.some((component) => component.id === selected.id);
+    if (!exists) return false;
+    if (!repeat) closeEditGroup();
+    mutateGrouped("nudge", () => {
+      const item = selected.kind === "junction"
+        ? state.circuit.junctions.find((junction) => junction.id === selected.id)
+        : state.circuit.components.find((component) => component.id === selected.id);
+      Object.assign(item, snapPoint({ x: item.x + dx * steps * GRID_SIZE, y: item.y + dy * steps * GRID_SIZE }));
+    });
+    return true;
+  }
+
+  /** Arrow keys are canvas keys: leave them to focused tabs, plots, menus and form controls. */
+  function arrowKeysBelongToCanvas() {
+    const active = document.activeElement;
+    if (!active || active === document.body || active === document.documentElement) return true;
+    if (active.closest?.("#circuit-canvas, #canvas-wrap")) return true;
+    return active.tagName === "BUTTON" && !active.closest("[role=tablist], [role=tab]");
+  }
+
+  // Wheel over an R/C/L value label steps the value along the E12 series. Small trackpad deltas accumulate; a mouse notch is one step.
+  const WHEEL_STEP_DELTA = 50;
+  const wheelStep = { accumulated: 0, time: -Infinity };
+
+  /** Returns true when the wheel event was consumed by value stepping (so the canvas must not zoom). */
+  function wheelAdjustValue(event) {
+    const label = event.target.closest?.(".value-label");
+    if (!label || label.dataset.editProp !== "value") return false;
+    const componentId = label.closest(".component")?.dataset.id;
+    const component = state.circuit.components.find((item) => item.id === componentId);
+    if (!component || !["R", "C", "L"].includes(component.type)) return false;
+    if (state.inlineEdit?.componentId === component.id || state.pointerOwnerId !== null) return true;
+    const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1);
+    if (!delta) return true;
+    const now = performance.now();
+    if (now - wheelStep.time > 400 || Math.sign(delta) !== Math.sign(wheelStep.accumulated)) wheelStep.accumulated = 0;
+    wheelStep.time = now;
+    let direction = 0;
+    if (Math.abs(delta) >= WHEEL_STEP_DELTA) { direction = -Math.sign(delta); wheelStep.accumulated = 0; }
+    else {
+      wheelStep.accumulated += delta;
+      if (Math.abs(wheelStep.accumulated) >= WHEEL_STEP_DELTA) { direction = -Math.sign(wheelStep.accumulated); wheelStep.accumulated = 0; }
+    }
+    if (!direction) return true;
+    const next = stepSeriesText(component.props?.value, direction);
+    if (!next) return true;
+    mutateGrouped(`wheel:${component.id}`, () => {
+      state.circuit.components.find((item) => item.id === component.id).props.value = next.text;
+    });
+    return true;
+  }
+
   // ---- canvas view
 
   function zoomCanvas(factor, anchor = { x: state.canvasView.x + state.canvasView.width / 2, y: state.canvasView.y + state.canvasView.height / 2 }) {
@@ -569,6 +637,7 @@ export function createEditorInput(deps) {
       finish: finishCanvasPointer,
       tap: (event, target) => {
         const point = svgPoint(event); if(!target || !point || state.tool === "pan")return;
+        hover.showTouch(target, event.clientX, event.clientY);
         if(target.kind === "delete") { if(state.selected?.kind === "component" && state.selected.id === target.id) deleteSelection(); return; }
         if(target.kind === "properties") { state.selected={kind:"component",id:target.id}; renderAll(); showInspector(); return; }
         if(target.kind === "pin") { handlePinClick(target.id,target.pin); return; }
@@ -644,6 +713,7 @@ export function createEditorInput(deps) {
     elements["circuit-canvas"].addEventListener("lostpointercapture", (event) => finishCanvasPointer(event.pointerId, "lost-capture"));
     elements["circuit-canvas"].addEventListener("wheel", (event) => {
       event.preventDefault();
+      if (wheelAdjustValue(event)) return;
       const point = svgPoint(event);
       if (point) zoomCanvas(event.deltaY > 0 ? 1.18 : .84, point);
     }, { passive: false });
@@ -653,13 +723,7 @@ export function createEditorInput(deps) {
     elements["zoom-out-button"].addEventListener("click", () => zoomCanvas(1.2));
     elements["zoom-in-button"].addEventListener("click", () => zoomCanvas(.82));
     elements["fit-button"].addEventListener("click", fitCanvas);
-    elements["rotate-button"].addEventListener("click", () => {
-      if (state.selected?.kind !== "component") return;
-      mutate(() => {
-        const component = state.circuit.components.find((item) => item.id === state.selected.id);
-        component.rotation = ((component.rotation ?? 0) + 90) % 360;
-      });
-    });
+    elements["rotate-button"].addEventListener("click", () => rotateSelection(1));
     elements["delete-button"].addEventListener("click", deleteSelection);
     elements["wave-plot"].addEventListener("wheel", (event) => {
       if (!state.result) return;
@@ -716,11 +780,21 @@ export function createEditorInput(deps) {
         else if (state.inlineEdit) closeInlineEditor();
         else if (!typing) setTool("select");
       }
-      if (!typing && event.key === "Delete") deleteSelection();
-      if (!typing && event.key.toLowerCase() === "r") elements["rotate-button"].click();
-      if (!typing && !event.altKey && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") { event.preventDefault(); cloneSelection(); }
-      if (!typing && !event.isComposing && !event.altKey && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
-      if (!typing && !event.altKey && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); }
+      const shortcut = shortcutFor(event, { typing });
+      if (!shortcut) return;
+      if (shortcut.action === "nudge" && (!arrowKeysBelongToCanvas() || event.target.closest?.("#wave-plot"))) return;
+      const handled = {
+        save: () => { saveProject(); return true; },
+        run: () => { runAnalysis(); return true; },
+        delete: () => { deleteSelection(); return false; },
+        rotate: () => { rotateSelection(shortcut.direction); return false; },
+        clone: () => { cloneSelection(); return true; },
+        undo: () => { undo(); return true; },
+        redo: () => { redo(); return true; },
+        tool: () => { setTool(shortcut.tool); return false; },
+        nudge: () => nudgeSelection(shortcut),
+      }[shortcut.action]();
+      if (handled && (shortcut.preventDefault || shortcut.action === "nudge")) event.preventDefault();
     });
     setupCanvasTouch();
   }

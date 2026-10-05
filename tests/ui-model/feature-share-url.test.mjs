@@ -182,7 +182,7 @@ test("리뷰1: 인코딩된 페이로드 길이 상한(해시 64 KB) 초과는 �
   assert.equal(result.reason, SHARE_TOO_LARGE_REASON);
 });
 
-test("리뷰8: 유효한 해시 뒤에 '&' 100만 개 — 분할 없이 길이 상한으로 즉시 거부, hasShareHash도 false", async () => {
+test("리뷰8: 유효한 해시 뒤에 '&' 100만 개 — 분할 없이 길이 상한으로 즉시 거부, hasShareHash는 #p= 접두사라 true(열기를 시도해 너무 커서 안내)", async () => {
   const good = (await encodeProjectToHash(projectOf(examples[0]))).hash;
   const huge = `${good}${"&".repeat(1_000_000)}`;
   const originalSplit = String.prototype.split;
@@ -193,7 +193,8 @@ test("리뷰8: 유효한 해시 뒤에 '&' 100만 개 — 분할 없이 길이 �
     const result = await decodeProjectFromHash(huge);
     assert.equal(result.ok, false);
     assert.equal(result.reason, SHARE_TOO_LARGE_REASON);
-    assert.equal(hasShareHash(huge), false);
+    assert.equal(hasShareHash(huge), true);
+    assert.equal(hasShareHash(`#a=1${"&".repeat(1_000_000)}`), false, "#p= 접두사가 아니면 거대한 해시는 스캔하지 않고 false");
     assert.equal(splitCalls, 0, "split을 쓰면 안 된다");
     assert.ok(performance.now() - started < 500);
   } finally {
@@ -203,6 +204,11 @@ test("리뷰8: 유효한 해시 뒤에 '&' 100만 개 — 분할 없이 길이 �
   assert.equal((await decodeProjectFromHash(`#a=1&&b=2&${good.slice(1)}&c=3`)).ok, true);
   assert.equal(hasShareHash("#a=1&&p=x&"), true);
   assert.equal(hasShareHash("#a=1&&"), false);
+  assert.equal(hasShareHash("#p="), true, "비어 있어도 #p= 접두사면 true — 디코더가 이유를 보여 준다");
+  assert.equal(hasShareHash(`#p=z.${"A".repeat(70_000)}`), true);
+  assert.equal((await decodeProjectFromHash(`#p=z.${"A".repeat(70_000)}`)).reason, SHARE_TOO_LARGE_REASON);
+  assert.equal(hasShareHash("https://example.test/?p=1"), false);
+  assert.equal(hasShareHash(undefined), false);
 });
 
 test("리뷰9: 복원할 수 없는 입력('{}' 등)은 인코딩 단계에서 ok:false", async () => {

@@ -34,16 +34,17 @@
 <details class="file-menu" id="file-menu" open><summary>파일</summary><div class="file-actions">
 <select aria-label="예제 회로" id="example-select"><option value="">예제 불러오기…</option></select>
 <button id="new-button" type="button">새 회로</button>
-<button id="save-button" type="button">저장</button>
+<button id="save-button" title="JSON 파일로 저장 (Ctrl+S)" type="button">저장</button>
 <button id="load-button" type="button">열기</button>
+<button id="share-button" title="현재 회로를 주소(#p=…)에 담아 복사" type="button">링크 복사</button>
 <button aria-controls="circuit-course-shell" id="circuit-course-open" type="button">학부 AC·3상</button>
 <input accept="application/json,.json" hidden="" id="file-input" type="file"/>
 </div></details>
 </div>
 <div class="canvas-bar">
 <div aria-label="편집 도구" class="tool-group" role="group">
-<button class="tool active" data-tool="select" title="선택·이동 (Esc)" type="button">선택</button>
-<button class="tool" data-tool="wire" title="핀 두 개를 클릭해 배선" type="button">배선</button>
+<button class="tool active" data-tool="select" title="선택·이동 (V, Esc)" type="button">선택</button>
+<button class="tool" data-tool="wire" title="핀 두 개를 클릭해 배선 (W)" type="button">배선</button>
 <button class="tool" data-tool="voltage-probe" title="선이나 핀의 전압 측정" type="button">V 프로브</button>
 <button class="tool" data-tool="current-probe" title="부품 전류 측정" type="button">I 프로브</button>
 <button class="tool" data-tool="pan" title="부품을 움직이지 않고 회로 화면 이동" type="button">화면 이동</button>
@@ -52,7 +53,7 @@
 <button aria-label="실행 취소" id="undo-button" title="실행 취소 (Ctrl+Z)" type="button">↶</button>
 <button aria-label="다시 실행" id="redo-button" title="다시 실행 (Ctrl+Y)" type="button">↷</button>
 <button aria-label="선택 부품 복제" id="clone-button" title="선택 부품 복제 (Ctrl+D)" type="button">⧉</button>
-<button aria-label="선택 부품 회전" id="rotate-button" title="선택 부품 회전 (R)" type="button">↻</button>
+<button aria-label="선택 부품 회전" id="rotate-button" title="선택 부품 회전 (R · 반시계 Shift+R)" type="button">↻</button>
 <button aria-label="선택 항목 삭제" id="delete-button" title="선택 항목 삭제 (Delete)" type="button">⌫</button>
 </div>
 <div aria-label="화면 배율" class="tool-group compact" id="zoom-group" role="group">
@@ -62,16 +63,16 @@
 </div>
 <details class="interaction-help" id="interaction-help"><summary>조작 도움말</summary><div class="interaction-help-card">
 <ul>
-<li><b>선택·이동</b> 클릭으로 선택하고 끌어 이동합니다. 빈 곳을 끌면 화면 이동 (터치: 선택한 부품만 끌어 이동, 두 손가락은 확대·축소).</li>
-<li><b>배선·값</b> 배선 도구에서 핀 두 개를 차례로 누릅니다. 빈 격자점은 꺾임 고정. 값 글자를 두 번 누르면 수정 (<kbd>Enter</kbd> 적용 · <kbd>Esc</kbd> 취소).</li>
-<li><b>프로브·그래프</b> V 프로브는 핀·배선, I 프로브는 부품을 누릅니다. 그래프를 누르면 커서 고정, <kbd>←</kbd><kbd>→</kbd> 이동, 휠은 눈금 배율.</li>
-<li><b>단축키</b> <kbd>R</kbd> 회전 · <kbd>Delete</kbd> 삭제 · <kbd>Ctrl</kbd>+<kbd>D</kbd> 복제 · <kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> 취소·다시 · <kbd>Esc</kbd> 선택 도구.</li>
+<li><b>선택·이동</b> 클릭으로 선택하고 끌어 이동, 빈 곳을 끌면 화면 이동 (터치: 선택한 부품만 끌기 · 두 손가락 확대·축소).</li>
+<li><b>배선·값</b> 배선 도구로 핀 두 개를 차례로 누르고 빈 격자점은 꺾임 고정. 값 글자는 두 번 눌러 수정, R·C·L은 값 글자 위에서 휠로 E12 값 한 칸씩 변경.</li>
+<li><b>프로브·값 읽기</b> V 프로브는 핀·배선, I 프로브는 부품. 해석 뒤 핀·배선·부품에 마우스를 올리면(터치는 탭) 전압·전류·전력 표시. 그래프를 누르면 커서 고정, <kbd>←</kbd><kbd>→</kbd> 이동.</li>
+<li><b>단축키</b> <kbd>R</kbd>/<kbd>Shift+R</kbd> 회전 · <kbd>Delete</kbd> 삭제 · <kbd>Ctrl+D</kbd> 복제 · <kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> 취소·다시 · <kbd>W</kbd> 배선 · <kbd>V</kbd>/<kbd>Esc</kbd> 선택 · <kbd>←↑↓→</kbd> 이동(<kbd>Shift</kbd> 5칸) · <kbd>Ctrl+S</kbd> 저장 · <kbd>Ctrl+Enter</kbd> 해석.</li>
 </ul>
 </div></details>
 </div>
 <div class="analysis-bar">
 <label class="analysis-pick">해석 <select aria-label="해석 종류" id="analysis-intent"><option value="auto">자동</option><option value="dc">DC</option><option value="transient">시간응답</option><option value="ac">AC</option></select></label>
-<button class="primary run-button" id="run-button" type="button">▶ 해석 실행</button>
+<button class="primary run-button" id="run-button" title="해석 실행 (Ctrl+Enter)" type="button">▶ 해석 실행</button>
 <button class="cancel-analysis hidden" disabled="" id="cancel-analysis-button" type="button">계산 취소</button>
 <label class="auto-toggle"><input checked="" id="auto-update" type="checkbox"/>자동 갱신</label>
 <span aria-live="polite" class="status-dot ready" id="engine-status">해석 준비</span>
@@ -103,6 +104,7 @@
 <input aria-label="화면 값 편집" autocomplete="off" class="inline-value-editor hidden" id="inline-value-editor"/>
 <div aria-label="프로브 제거 선택" class="probe-context-menu hidden" id="probe-context-menu" role="menu"></div>
 <div class="canvas-corner" id="canvas-corner"></div>
+<div class="canvas-notices" id="canvas-notices"></div>
 <div class="empty-hint" id="empty-hint"><b>빈 회로</b><span>부품을 고르고 캔버스를 눌러 배치하세요.</span></div>
 </div>
 <div class="canvas-footer"><span id="tool-hint">탭으로 선택 · 선택한 부품 끌기로 이동 · 빈곳 끌기로 화면 이동</span><span id="connection-summary">접속 상태 없음</span><span id="circuit-count">부품 0 · 배선 0</span></div>
@@ -224,6 +226,7 @@
 <div class="em-wave-controls" hidden id="em-wave-controls"><button id="em-play" type="button">재생</button><button id="em-step" type="button">한 단계</button><label>시간 0…2T<input id="em-time" max="2" min="0" step="0.005" type="range" value="0"></label><label>표시 속도<input id="em-speed" max="2" min="0.1" step="0.1" type="range" value="0.5"></label><span id="em-speed-label">0.5 주기/실제초</span></div></details></section>
 <aside class="em-results panel"><div><strong>측정값</strong><span id="em-result-state">현재 측정</span></div><dl><dt>벡터 성분</dt><dd id="em-vector-value"></dd><dt>벡터 크기</dt><dd id="em-magnitude-value"></dd><dt>전위</dt><dd id="em-potential-value"></dd><dt>∇V / −∇V</dt><dd id="em-gradient-value">해당 없음</dd><dt hidden>적분 수렴</dt><dd hidden id="em-integration-value"></dd></dl><p id="em-comparison-value" hidden></p><p id="em-wave-info" hidden></p><p id="em-line-endings"></p><details><summary>모델·화면 축척 안내</summary><p>점전하와 무한선은 1 mm, 고리는 max(1 mm, 0.02R) 안쪽을 모델 제외영역으로 둡니다. 화살표와 색은 보기용 정규화이며 세기를 바꾸지 않습니다. 장선은 방향 적분으로 제외영역·영점·장면 경계·최대 step에서 끝납니다.</p><p>진공 이상식만 다루며 재료·경계·유도전류·방사 근접장·회로 결합은 포함하지 않습니다. μ₀는 CODATA 2022 측정값, c는 정확값, ε₀와 K는 그 둘에서 파생합니다.</p></details></aside>
 </main>
+<div class="hover-tip hidden" id="hover-tip" aria-hidden="true"></div>
 <script type="module" src="/src/app.js"></script>
 </body>
 </html>

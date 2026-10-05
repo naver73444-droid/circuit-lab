@@ -29,8 +29,15 @@ export function createEditorState() {
  * re-renders; restore()/undo()/redo() replay snapshots. Everything that reacts to a change is injected.
  */
 export function createEditorSession(deps) {
-  const { state, inputDrafts, synchronizeIntent, markStale, scheduleAutoRun, renderAll, resetProjectSession, refreshProbeViews, closeProbeContextMenu, confirmDiscardDrafts } = deps;
+  const { state, inputDrafts, synchronizeIntent, markStale, scheduleAutoRun, renderAll, resetProjectSession, refreshProbeViews, closeProbeContextMenu, confirmDiscardDrafts, onCommitted } = deps;
   let connectionCache = null;
+  // Open coalescing group (wheel ticks, held arrow keys): { key, generation, timer }.
+  let editGroup = null;
+
+  /** Tell the autosave (or anything else) that a committed edit just happened. Never throws into the editor. */
+  function committed() {
+    try { onCommitted?.(); } catch { /* a failing observer must not break editing */ }
+  }
 
   function pushCapped(list, entry) {
     list.push(entry);
@@ -73,9 +80,10 @@ export function createEditorSession(deps) {
     markStale();
     renderAll();
     scheduleAutoRun();
+    committed();
   }
 
-  function mutate(change, { history = true, auto = true } = {}) {
+  function mutate(change, { history = true, auto = true, autosave = true } = {}) {
     if (history) {
       pushCapped(state.history, snapshot());
       state.future = [];
@@ -87,6 +95,26 @@ export function createEditorSession(deps) {
     markStale();
     renderAll();
     if (auto) scheduleAutoRun();
+    if (autosave) committed();
+  }
+
+  /**
+   * mutate() that folds repeated calls with the same key into ONE history entry: the first call records history, later calls
+   * made within idleMs (and with no other edit in between) replay on top of it. Used for wheel value steps and held arrow keys.
+   */
+  function mutateGrouped(key, change, { idleMs = 400 } = {}) {
+    const open = editGroup !== null && editGroup.key === key && editGroup.generation === state.generation;
+    if (editGroup) clearTimeout(editGroup.timer);
+    mutate(change, { history: !open });
+    const group = { key, generation: state.generation, timer: null };
+    group.timer = setTimeout(() => { if (editGroup === group) editGroup = null; }, idleMs);
+    editGroup = group;
+  }
+
+  /** End the open coalescing group so the next grouped edit starts a new history entry. */
+  function closeEditGroup() {
+    if (editGroup) clearTimeout(editGroup.timer);
+    editGroup = null;
   }
 
   function addVoltageProbe(componentId, pin, wireId = null) {
@@ -96,6 +124,7 @@ export function createEditorSession(deps) {
     recordProbeEdit();
     state.probes.push({ key, kind: "voltage", componentId, pin, wireId, label: `V(${component?.props?.ref ?? componentId}.${pin + 1})`, color: nextAvailableProbeColor(PROBE_COLORS, state.probes) });
     refreshProbeViews();
+    committed();
   }
 
   function addVoltageProbeEndpoint(endpoint, wireId = null) {
@@ -107,6 +136,7 @@ export function createEditorSession(deps) {
     recordProbeEdit();
     state.probes.push({ key, kind: "voltage", junctionId: junction.id, wireId, label: `V(${junction.id})`, color: nextAvailableProbeColor(PROBE_COLORS, state.probes) });
     refreshProbeViews();
+    committed();
   }
 
   function addCurrentProbe(componentId) {
@@ -117,6 +147,7 @@ export function createEditorSession(deps) {
     recordProbeEdit();
     state.probes.push({ key, kind: "current", componentId, label: currentProbeLabel(component, circuitGeometryVersion(state.circuit)), color: nextAvailableProbeColor(PROBE_COLORS, state.probes) });
     refreshProbeViews();
+    committed();
   }
 
   function removeProbe(key) {
@@ -124,6 +155,7 @@ export function createEditorSession(deps) {
     state.probes = removeProbeByKey(state.probes, key);
     closeProbeContextMenu();
     refreshProbeViews();
+    committed();
   }
 
   function undo() {
@@ -150,7 +182,8 @@ export function createEditorSession(deps) {
     markStale();
     renderAll();
     scheduleAutoRun();
+    committed();
   }
 
-  return { currentConnections, snapshot, restore, mutate, bumpGeneration, commitMove, undo, redo, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe };
+  return { currentConnections, snapshot, restore, mutate, bumpGeneration, commitMove, mutateGrouped, closeEditGroup, undo, redo, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe };
 }
