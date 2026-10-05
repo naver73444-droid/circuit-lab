@@ -4,6 +4,7 @@ import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { controlReferenceModel, controlledSourceInputModel, passiveSliderModel } from "./ui-model.js";
 import { bindSweep, sweepMarkup } from "./sweep-panel.js";
+import { describeSelection, selectedItems, setSingleSelection } from "./selection-model.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
 const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원" };
@@ -76,7 +77,7 @@ export function createInspector(deps) {
         if (!elements["analysis-settings"].querySelector(`[data-setting="${update.key}"]`)) { state.settings.analysis = expected; state.intent = "manual"; synchronizeIntent(); renderAnalysisSettings(); }
         update.control = elements["analysis-settings"].querySelector(`[data-setting="${update.key}"]`);
       } else if (!update.control?.isConnected) {
-        state.selected = { kind: "component", id: update.id };
+        setSingleSelection(state, { kind: "component", id: update.id });
         showInspector();
         renderInspector();
         update.control = elements["inspector-content"].querySelector(`[data-prop="${update.key}"]`);
@@ -216,6 +217,16 @@ export function createInspector(deps) {
   function renderInspector() {
     if (!workspace.circuitActive) { workspace.renderDeferred = true; return; }
     const selected = state.selected;
+    const items = selectedItems(state);
+    if (items.length > 1) {
+      // Several items: only the actions that make sense for all of them. Values are edited one part at a time.
+      const summary = describeSelection(items);
+      const parts = [summary.components && `부품 ${summary.components}`, summary.wires && `배선 ${summary.wires}`, summary.junctions && `접속점 ${summary.junctions}`].filter(Boolean).join(" · ");
+      const movable = summary.components + summary.junctions;
+      elements["selection-label"].textContent = `${items.length}개 선택`;
+      elements["inspector-content"].innerHTML = `<div class="multi-selection"><p class="field-help">${parts}</p><div class="multi-actions"><button type="button" data-multi-action="clone"${summary.components ? "" : " disabled"} title="복제 (Ctrl+D)">복제</button><button type="button" data-multi-action="rotate"${movable ? "" : " disabled"} title="함께 회전 (R)">회전</button><button type="button" class="danger" data-multi-action="delete" title="삭제 (Delete)">삭제</button></div><p class="field-help">끌면 함께 이동 · 방향키로 이동 · Ctrl+C/X/V 복사·붙여넣기 · 빈 곳을 누르면 선택 해제</p></div>`;
+      return;
+    }
     if (!selected) {
       elements["selection-label"].textContent = "선택 없음";
       elements["inspector-content"].innerHTML = `<div class="inspector-empty"><p>부품을 선택하면 값을 수정할 수 있습니다.</p></div>`;

@@ -1,14 +1,10 @@
 import { componentDefaults, pinCount } from "./circuit-engine.js";
-import {
-  cloneComponentSet,
-  deleteJunctionFromCircuit,
-  deleteComponentFromCircuit,
-  endpointsEqual,
-  retargetWireProbes,
-  splitWireAtJunction,
-} from "./circuit-edit.js";
-import { GRID_SIZE, appendFixedWaypoint, snapPoint } from "./circuit-geometry.js";
-import { commitsActiveDrag, shortcutFor } from "./editor-shortcuts.js";
+import { endpointsEqual, retargetWireProbes, splitWireAtJunction } from "./circuit-edit.js";
+import { appendFixedWaypoint, snapPoint } from "./circuit-geometry.js";
+import { commitsActiveDrag, isTypingTarget, shortcutFor } from "./editor-shortcuts.js";
+import { clearSelection, isSelected, marqueeHits, normalizeRect, selectedItems, selectedKeys, setSelectionItems, setSingleSelection, toggleSelection } from "./selection-model.js";
+import { applyGroupOffset, captureGroupOrigins, groupFootprint, restoreGroupOrigins } from "./group-edit.js";
+import { createSelectionCommands } from "./selection-commands.js";
 import { stepSeriesText } from "./value-series.js";
 import { probeKeysForTarget } from "./ui-model.js";
 import { beginPointerSession, finishPointerSession, ownsPointer } from "./pointer-session.js";
@@ -45,7 +41,7 @@ export function createInputState() {
 export function createEditorInput(deps) {
   const { state, elements, workspace, scopeView, mutate, mutateGrouped, closeEditGroup, snapshot, commitMove, undo, redo, runAnalysis, saveProject, hover, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe,
     renderCanvas, renderOverlay, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
-    renderAll, renderSelection, scheduleDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
+    renderAll, renderSelection, applySelection, setMarquee, scheduleDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
   let canvasTouch = null;
 
   // ---- plot pointer session (the scope plot shares pointerOwnerId with the canvas)
@@ -121,9 +117,9 @@ export function createEditorInput(deps) {
   }
 
   const TOOL_HINTS = {
-    select: "클릭 선택 · 끌어서 이동 · 빈 곳 끌기로 화면 이동",
+    select: "클릭 선택 · Shift+클릭 다중 선택 · 끌어서 이동 · 빈 곳 끌기 화면 이동 · Shift+빈 곳 끌기 상자 선택",
     pan: "화면 이동 — 부품은 움직이지 않습니다.",
-    wire: "배선 — 핀을 누르고, 빈 격자점으로 꺾은 뒤 다른 핀·배선에서 끝냅니다.",
+    wire: "배선 — 핀에서 다른 핀·배선까지 끌거나, 핀을 누르고 빈 격자점으로 꺾은 뒤 다른 핀·배선에서 끝냅니다.",
     "voltage-probe": "V 프로브 — 핀이나 배선을 누르면 접지 기준 전압이 추가됩니다.",
     "current-probe": "I 프로브 — 부품을 누르면 기준 방향 전류가 추가됩니다.",
   };
@@ -166,7 +162,7 @@ export function createEditorInput(deps) {
     const index = Number(id.match(/\d+/)?.[0] ?? 1);
     mutate(() => {
       state.circuit.components.push({ id, type, ...snapPoint(point), rotation: 0, props: componentDefaults(type, index) });
-      state.selected = { kind: "component", id };
+      setSingleSelection(state, { kind: "component", id });
       state.title = state.title === "새 회로" ? "사용자 회로" : state.title;
       state.subtitle = "편집한 연결과 값으로 계산됩니다";
     });
@@ -231,7 +227,7 @@ export function createEditorInput(deps) {
       event.preventDefault();
       event.stopPropagation();
       const id = button.dataset.deleteComponent ?? button.dataset.showConnection;
-      state.selected = { kind: "component", id };
+      setSingleSelection(state, { kind: "component", id });
       if (button.dataset.deleteComponent) deleteSelection();
       else { showInspector(); renderAll(); }
     };
@@ -240,12 +236,20 @@ export function createEditorInput(deps) {
       const group = closestIn(event, ".component");
       if (!group || state.tool !== "select" || closestIn(event, `${PIN_SELECTOR}, .value-label`) || event.button !== 0) return;
       event.preventDefault();
+      releaseStaleFocus();
       const component = state.circuit.components.find((item) => item.id === group.dataset.id);
-      const point = svgPoint(event);
-      if (!component || !point) return;
-      if (!beginCanvasPointer(event, { kind: "component", id: component.id, start: point, origin: { x: component.x, y: component.y }, before: snapshot(), moved: false })) return;
-      state.selected = { kind: "component", id: component.id };
-      renderSelection();
+      if (!component) return;
+      beginItemDrag(event, { kind: "component", id: component.id }, component);
+    });
+    // Drag from a pin: pointerdown on a pin of a part starts a wire once the pointer has moved past the drag slop (mouse and pen; touch
+    // does it only with the wire tool, see setupCanvasTouch). A plain click on the pin still starts the click-click wire.
+    components.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.pointerType === "touch" || !["select", "wire"].includes(state.tool) || state.pendingPin || state.port.mode) return;
+      const group = closestIn(event, ".component");
+      const pin = closestIn(event, PIN_SELECTOR);
+      if (!group || !pin) return;
+      suppressPinClickUntil = 0; // a fresh press: only the click of a drag-wire release is ever swallowed
+      beginCanvasPointer(event, { kind: "wire", target: { componentId: group.dataset.id, pin: Number(pin.dataset.pin) }, started: false, moved: false }, { capture: false });
     });
     components.addEventListener("click", (event) => {
       const button = closestIn(event, "[data-show-connection], [data-delete-component]");
@@ -255,6 +259,7 @@ export function createEditorInput(deps) {
       const pin = closestIn(event, PIN_SELECTOR);
       if (pin) {
         event.stopPropagation();
+        if (performance.now() < suppressPinClickUntil) return;
         handlePinClick(group.dataset.id, Number(pin.dataset.pin));
         return;
       }
@@ -262,7 +267,8 @@ export function createEditorInput(deps) {
       const id = group.dataset.id;
       if (state.tool === "current-probe") addCurrentProbe(id);
       else if (state.tool === "select") {
-        state.selected = { kind: "component", id };
+        if (event.shiftKey) return; // Shift+press already toggled this part on pointerdown
+        setSingleSelection(state, { kind: "component", id });
         // Selection only toggles classes, so the clicked text node survives and a native second click can still raise dblclick.
         renderSelection();
       }
@@ -296,7 +302,8 @@ export function createEditorInput(deps) {
       if ((state.tool === "wire" || state.tool === "select") && state.pendingPin) createJunctionAndConnect(wire.id, svgPoint(event));
       else if (state.tool === "voltage-probe") addVoltageProbeEndpoint(wire.a.componentId !== undefined ? wire.a : wire.b, wire.id);
       else if (state.tool === "select") {
-        state.selected = { kind: "wire", id: wire.id };
+        if (event.shiftKey) toggleSelection(state, { kind: "wire", id: wire.id });
+        else setSingleSelection(state, { kind: "wire", id: wire.id });
         renderSelection();
       }
     });
@@ -318,7 +325,7 @@ export function createEditorInput(deps) {
       const group = closestIn(event, "[data-junction-id]");
       if (!group) return;
       event.stopPropagation();
-      if (performance.now() < state.ignoreClickUntil) return;
+      if (performance.now() < state.ignoreClickUntil || (event.shiftKey && state.tool === "select" && !state.pendingPin)) return;
       const junctionId = group.dataset.junctionId;
       if (state.tool === "voltage-probe") addVoltageProbeEndpoint({ junctionId });
       else handleEndpointClick({ junctionId });
@@ -328,12 +335,10 @@ export function createEditorInput(deps) {
       if (!group || state.tool !== "select" || state.port.mode || event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
+      releaseStaleFocus();
       const junction = (state.circuit.junctions ?? []).find((item) => item.id === group.dataset.junctionId);
-      const point = svgPoint(event);
-      if (!junction || !point) return;
-      if (!beginCanvasPointer(event, { kind: "junction", id: junction.id, start: point, origin: { x: junction.x, y: junction.y }, before: snapshot(), moved: false })) return;
-      state.selected = { kind: "junction", id: junction.id };
-      renderSelection();
+      if (!junction) return;
+      beginItemDrag(event, { kind: "junction", id: junction.id }, junction);
     });
     overlay.addEventListener("contextmenu", (event) => {
       const group = closestIn(event, "[data-junction-id]");
@@ -350,7 +355,7 @@ export function createEditorInput(deps) {
       const split = splitWireAtJunction(state.circuit, wireId, point, routeForWireId(wireId));
       state.circuit = split.circuit;
       state.probes = retargetWireProbes(state.probes, wireId, split.replacementWireId, split);
-      state.selected = split.endpoint.junctionId ? { kind: "junction", id: split.endpoint.junctionId } : { kind: "component", id: split.endpoint.componentId };
+      setSingleSelection(state, split.endpoint.junctionId ? { kind: "junction", id: split.endpoint.junctionId } : { kind: "component", id: split.endpoint.componentId });
     });
   }
 
@@ -368,7 +373,7 @@ export function createEditorInput(deps) {
       state.probes = retargetWireProbes(state.probes, wireId, split.replacementWireId, split);
       const duplicate = state.circuit.wires.some((wire) => (endpointsEqual(wire.a, start) && endpointsEqual(wire.b, split.endpoint)) || (endpointsEqual(wire.b, start) && endpointsEqual(wire.a, split.endpoint)));
       if (!endpointsEqual(start, split.endpoint) && !duplicate) state.circuit.wires.push({ id: `W${Date.now().toString(36)}${state.circuit.wires.length}`, a: start, b: split.endpoint, waypoints });
-      state.selected = split.endpoint.junctionId ? { kind: "junction", id: split.endpoint.junctionId } : { kind: "component", id: split.endpoint.componentId };
+      setSingleSelection(state, split.endpoint.junctionId ? { kind: "junction", id: split.endpoint.junctionId } : { kind: "component", id: split.endpoint.componentId });
     });
   }
 
@@ -412,72 +417,9 @@ export function createEditorInput(deps) {
   const undoEdit = () => { commitActiveDrag(); undo(); };
   const redoEdit = () => { commitActiveDrag(); redo(); };
 
-  function deleteSelection() {
-    commitActiveDrag();
-    if (!state.selected) return;
-    const selected = state.selected;
-    if (state.inlineEdit?.componentId === selected.id) { state.inlineEdit = null; elements["inline-value-editor"].classList.add("hidden"); }
-    mutate(() => {
-      if (selected.kind === "component") {
-        const deleted = deleteComponentFromCircuit(state.circuit, selected.id, state.probes);
-        state.circuit = deleted.circuit;
-        state.probes = deleted.probes;
-      } else if (selected.kind === "junction") {
-        const deleted = deleteJunctionFromCircuit(state.circuit, selected.id, state.probes);
-        state.circuit = deleted.circuit;
-        state.probes = deleted.probes;
-      } else {
-        state.circuit.wires = state.circuit.wires.filter((wire) => wire.id !== selected.id);
-        state.probes = state.probes.filter((probe) => probe.wireId !== selected.id);
-      }
-      state.selected = null;
-    });
-  }
-
-  function cloneSelection(event = null) {
-    commitActiveDrag();
-    if (state.selected?.kind !== "component") return;
-    const original = state.circuit.components.find((component) => component.id === state.selected.id);
-    if (!original) return;
-    const includeTarget = Boolean(event?.shiftKey && ["CCCS", "CCVS"].includes(original.type) && original.control?.elementId);
-    const ids = includeTarget ? [original.control.elementId, original.id] : [original.id];
-    const cloned = cloneComponentSet(state.circuit, ids);
-    const selectedId = cloned.idMap.get(original.id);
-    if (!selectedId) return;
-    mutate(() => {
-      state.circuit.components.push(...cloned.components);
-      state.circuit.wires.push(...cloned.wires);
-      state.selected = { kind: "component", id: selectedId };
-    });
-    setStatus(includeTarget ? "제어 대상·종속원 원자 복제 완료" : "부품 복제 완료 · 외부 제어 ID 유지", "ready");
-  }
-
-  function rotateSelection(direction = 1) {
-    commitActiveDrag();
-    if (state.selected?.kind !== "component") return;
-    mutate(() => {
-      const component = state.circuit.components.find((item) => item.id === state.selected.id);
-      component.rotation = (((component.rotation ?? 0) + 90 * direction) % 360 + 360) % 360;
-    });
-  }
-
-  /** Arrow-key move by whole grid steps. A press is one history entry; held-key repeats extend that entry. */
-  function nudgeSelection({ dx, dy, steps, repeat }) {
-    const selected = state.selected;
-    if (!selected || !["component", "junction"].includes(selected.kind) || state.pointerOwnerId !== null || state.pendingPin || state.inlineEdit) return false;
-    const exists = selected.kind === "junction"
-      ? (state.circuit.junctions ?? []).some((junction) => junction.id === selected.id)
-      : state.circuit.components.some((component) => component.id === selected.id);
-    if (!exists) return false;
-    if (!repeat) closeEditGroup();
-    mutateGrouped("nudge", () => {
-      const item = selected.kind === "junction"
-        ? state.circuit.junctions.find((junction) => junction.id === selected.id)
-        : state.circuit.components.find((component) => component.id === selected.id);
-      Object.assign(item, snapPoint({ x: item.x + dx * steps * GRID_SIZE, y: item.y + dy * steps * GRID_SIZE }));
-    });
-    return true;
-  }
+  const { deleteSelection, cloneSelection, rotateSelection, nudgeSelection, selectAll, copySelection, pasteSelection } = createSelectionCommands({
+    state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive,
+  });
 
   /**
    * Arrow keys move the selection only while focus is on the page itself, the canvas or an editor tool button (tools, edit actions,
@@ -489,6 +431,8 @@ export function createEditorInput(deps) {
     if (!active || active === document.body || active === document.documentElement) return true;
     if (active.closest?.(ARROW_OWNERS)) return false;
     if (active.id === "canvas-wrap" || active.closest?.("#circuit-canvas")) return true;
+    // A checkbox ignores arrow keys itself, so a focused one (e.g. the auto-update toggle) must not swallow the nudge.
+    if (active.tagName === "INPUT" && String(active.type).toLowerCase() === "checkbox") return true;
     return active.tagName === "BUTTON" && Boolean(active.closest(".canvas-bar .tool-group, #palette-panel"));
   }
 
@@ -560,14 +504,76 @@ export function createEditorInput(deps) {
 
   // ---- canvas pointer gestures (mouse, pen and touch share these)
 
-  function beginCanvasPointer(event, payload) {
+  function beginCanvasPointer(event, payload, { capture = true } = {}) {
     if (state.pointerOwnerId !== null) return false;
     const session = beginPointerSession(state.drag, event.pointerId, { ...payload, startClient: payload.startClient ?? { x: event.clientX, y: event.clientY }, pointerType: event.pointerType });
     if (!session || session === state.drag) return false;
     state.drag = session;
     state.pointerOwnerId = event.pointerId;
-    capturePointer(elements["circuit-canvas"], event.pointerId);
+    if (capture) capturePointer(elements["circuit-canvas"], event.pointerId);
     return true;
+  }
+
+  /**
+   * Focus left on a checkbox, button or slider must not swallow the editor shortcuts: a canvas press that keeps the focus
+   * (preventDefault) drops it, unless the focused element takes typed text (an inspector value being edited keeps its draft).
+   */
+  function releaseStaleFocus() {
+    const active = document.activeElement;
+    if (!active || active === document.body || active === document.documentElement || isTypingTarget(active, "a")) return;
+    active.blur?.();
+  }
+
+  /**
+   * Press on a part or junction in the select tool. Shift toggles it in the selection (no drag). Otherwise a drag starts; when the
+   * item belongs to a multi-selection the WHOLE selection moves (one history entry), and a press without movement narrows the
+   * selection to that item on release.
+   */
+  function beginItemDrag(event, item, entity) {
+    if (event.shiftKey) {
+      toggleSelection(state, item);
+      renderSelection();
+      return;
+    }
+    const point = svgPoint(event);
+    if (!point) return;
+    const multi = isSelected(state, item.kind, item.id) && selectedKeys(state).size > 1;
+    const group = multi ? captureGroupOrigins(state.circuit, selectedItems(state)) : null;
+    if (!beginCanvasPointer(event, { kind: item.kind, id: item.id, start: point, origin: { x: entity.x, y: entity.y }, before: snapshot(), moved: false, group, wasMulti: multi })) return;
+    if (multi) state.selected = { kind: item.kind, id: item.id };
+    else setSingleSelection(state, item);
+    renderSelection();
+  }
+
+  let suppressPinClickUntil = 0;
+
+  /** The drag has passed the slop: the pressed pin becomes the pending wire start and the preview follows the pointer. */
+  function startWireFromDrag(drag) {
+    drag.started = true;
+    state.pendingPin = structuredClone(drag.target);
+    state.pendingWaypoints = [];
+    state.pointer = endpointPosition(drag.target);
+    elements["tool-hint"].textContent = "배선 중 — 끝낼 핀이나 배선에 놓으세요 · 빈 곳에 놓으면 계속 배선 · Esc 취소";
+    // No pointer capture: renderCanvas() below replaces the pressed pin, and window-level pointermove/pointerup keep delivering to the gesture.
+    renderCanvas();
+  }
+
+  /**
+   * Pointer released after a wire drag. A pin, junction or wire under the pointer ends the wire there. Anywhere else — empty canvas or
+   * the pin it started from — the wire stays pending, so the click-click flow (bend points, then a pin) simply continues.
+   */
+  function completeWireDrag(drag) {
+    const client = drag.lastClient;
+    const target = client ? pickTouchTarget(client) : null;
+    if (!target || !state.pendingPin) return;
+    if (target.kind === "wire") {
+      const point = svgPoint({ clientX: client.x, clientY: client.y });
+      if (point) createJunctionAndConnect(target.id, point);
+      return;
+    }
+    const endpoint = target.kind === "pin" ? { componentId: target.id, pin: target.pin } : target.kind === "junction" ? { junctionId: target.id } : null;
+    if (!endpoint || endpointsEqual(endpoint, state.pendingPin)) return;
+    handleEndpointClick(endpoint);
   }
 
   function finishCanvasPointer(pointerId, reason = "commit") {
@@ -578,8 +584,24 @@ export function createEditorInput(deps) {
     state.pointerOwnerId = null;
     elements["circuit-canvas"].classList.remove("dragging");
     releasePointer(elements["circuit-canvas"], pointerId);
+    if (drag.kind === "wire") {
+      if (!drag.started) return true; // a plain click on a pin: the click event starts the click-click wire
+      suppressPinClickUntil = performance.now() + 250;
+      state.ignoreClickUntil = performance.now() + 180;
+      if (reason === "commit") completeWireDrag(drag);
+      else cancelPendingWire();
+      return true;
+    }
+    if (drag.kind === "marquee") {
+      setMarquee(null);
+      state.ignoreClickUntil = performance.now() + 180;
+      if (reason !== "commit") setSelectionItems(state, drag.base, drag.basePrimary);
+      renderSelection();
+      return true;
+    }
     if (reason !== "commit") {
       if (drag.kind === "pan") state.canvasView = { ...drag.originView };
+      else if (drag.group) restoreGroupOrigins(state.circuit, drag.group);
       else {
         const item = drag.kind === "junction"
           ? (state.circuit.junctions ?? []).find((junction) => junction.id === drag.id)
@@ -593,12 +615,14 @@ export function createEditorInput(deps) {
       // The pointer is captured by the svg, so the browser's click no longer targets the background: a tap that started on empty canvas
       // (no drag past the slop) is decided here instead, and clears the selection.
       state.ignoreClickUntil = performance.now() + 180;
-      if (state.selected) { state.selected = null; renderSelection(); }
+      if (state.selected) { clearSelection(state); renderSelection(); }
     }
     if (!drag.moved && drag.kind !== "pan") {
       // Pointer capture retargets the subsequent click to the SVG root. Commit the
       // selection visuals here so a normal tap exposes its real delete button.
       state.ignoreClickUntil = performance.now() + 180;
+      // A press without movement on a member of a multi-selection narrows the selection to it.
+      if (drag.wasMulti) setSingleSelection(state, { kind: drag.kind, id: drag.id });
       renderSelection();
     }
     if (drag.moved) {
@@ -613,6 +637,23 @@ export function createEditorInput(deps) {
     const drag = state.drag;
     if (!drag.moved && !passedDragSlop(drag.startClient, { x: event.clientX, y: event.clientY }, drag.pointerType)) return;
     drag.moved = true;
+    if (drag.kind === "wire") {
+      drag.lastClient = { x: event.clientX, y: event.clientY };
+      if (!drag.started) startWireFromDrag(drag);
+      const wirePoint = svgPoint(event);
+      if (wirePoint) { state.pointer = snapPoint(wirePoint); scheduleOverlayRender(); }
+      return;
+    }
+    if (drag.kind === "marquee") {
+      const boxPoint = svgPoint(event);
+      if (!boxPoint) return;
+      const rect = normalizeRect(drag.start, boxPoint);
+      const hits = marqueeHits(state.circuit, rect);
+      setSelectionItems(state, [...drag.base, ...hits], drag.basePrimary ?? hits[0] ?? null);
+      setMarquee(rect);
+      applySelection();
+      return;
+    }
     elements["circuit-canvas"].classList.add("dragging");
     if (drag.kind === "pan") {
       state.canvasView.x = drag.originView.x - (event.clientX - drag.startClient.x) / drag.screenScale;
@@ -624,7 +665,14 @@ export function createEditorInput(deps) {
     if (!point) return;
     const item = drag.kind === "junction" ? (state.circuit.junctions ?? []).find(j => j.id === drag.id) : state.circuit.components.find(c => c.id === drag.id);
     if (!item) return;
-    Object.assign(item, snapPoint({ x: drag.origin.x + point.x - drag.start.x, y: drag.origin.y + point.y - drag.start.y }));
+    const target = snapPoint({ x: drag.origin.x + point.x - drag.start.x, y: drag.origin.y + point.y - drag.start.y });
+    if (drag.group) {
+      // The whole selection moves by the primary item's snapped offset, so the group stays rigid.
+      applyGroupOffset(state.circuit, drag.group, target.x - drag.origin.x, target.y - drag.origin.y);
+      scheduleDragUpdate("group", groupFootprint(drag.group));
+      return;
+    }
+    Object.assign(item, target);
     scheduleDragUpdate(drag.kind, drag.id);
   }
 
@@ -687,6 +735,11 @@ export function createEditorInput(deps) {
       view: () => ({...state.canvasView}),
       setView: view => { state.canvasView = view; updateCanvasView(); },
       begin: (event, target) => {
+        // Wire tool: one finger dragging from a pin draws a wire (a tap on the pin still starts the click-click wire).
+        if (state.tool === "wire" && target?.kind === "pin" && !state.pendingPin && !state.port.mode) {
+          beginCanvasPointer(event, { kind: "wire", target: { componentId: target.id, pin: target.pin }, started: false, moved: false }, { capture: false });
+          return;
+        }
         if (!["select","pan"].includes(state.tool) || state.pendingPin || state.port.mode || !target) return;
         const point = svgPoint(event); if (!point) return;
         if (["component","junction"].includes(target.kind) && state.selected?.kind === target.kind && state.selected?.id === target.id && state.tool === "select") {
@@ -704,29 +757,29 @@ export function createEditorInput(deps) {
         const point = svgPoint(event); if(!target || !point || state.tool === "pan")return;
         hover.showTouch(target, event.clientX, event.clientY);
         if(target.kind === "delete") { if(state.selected?.kind === "component" && state.selected.id === target.id) deleteSelection(); return; }
-        if(target.kind === "properties") { state.selected={kind:"component",id:target.id}; renderSelection(); showInspector(); return; }
+        if(target.kind === "properties") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); showInspector(); return; }
         if(target.kind === "pin") { handlePinClick(target.id,target.pin); return; }
         if(target.kind === "junction") {
           if(state.tool === "voltage-probe") addVoltageProbeEndpoint({junctionId:target.id});
           else if(state.port.mode || state.tool === "wire" || state.pendingPin) handleEndpointClick({junctionId:target.id});
-          else { state.selected={kind:"junction",id:target.id};renderSelection(); }
+          else { setSingleSelection(state,{kind:"junction",id:target.id});renderSelection(); }
           return;
         }
         if(target.kind === "component") {
           if(state.tool === "current-probe")addCurrentProbe(target.id);
-          else {state.selected={kind:"component",id:target.id};renderSelection();}
+          else {setSingleSelection(state,{kind:"component",id:target.id});renderSelection();}
           return;
         }
         if(target.kind === "wire") {
           const wire=state.circuit.wires.find(w=>w.id===target.id); if(!wire)return;
           if(state.pendingPin)createJunctionAndConnect(wire.id,point);
           else if(state.tool === "voltage-probe")addVoltageProbeEndpoint(wire.a.componentId !== undefined ? wire.a : wire.b,wire.id);
-          else if(state.tool === "select"){state.selected={kind:"wire",id:wire.id};renderSelection();}
+          else if(state.tool === "select"){setSingleSelection(state,{kind:"wire",id:wire.id});renderSelection();}
           return;
         }
         if(state.pendingPin)addPendingWaypoint(point);
         else if(state.tool.startsWith("place:"))placeComponent({clientX:event.clientX,clientY:event.clientY,target:svg.querySelector(".canvas-bg")});
-        else if(state.tool === "select"){state.selected=null;renderSelection();}
+        else if(state.tool === "select"){clearSelection(state);renderSelection();}
       },
     });
   }
@@ -753,6 +806,13 @@ export function createEditorInput(deps) {
     document.querySelectorAll("[data-tool]").forEach((button) => button.addEventListener("click", () => setTool(button.dataset.tool)));
     elements["circuit-canvas"].addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || !["select", "pan"].includes(state.tool) || (state.tool !== "pan" && !event.target.classList.contains("canvas-bg")) || state.pendingPin) return;
+      releaseStaleFocus();
+      if (state.tool === "select" && event.shiftKey && event.pointerType !== "touch") {
+        // Shift + drag on empty canvas: box selection (adds to the current selection). A plain drag still pans.
+        const start = svgPoint(event);
+        if (start) beginCanvasPointer(event, { kind: "marquee", start, base: selectedItems(state), basePrimary: state.selected ? { ...state.selected } : null, moved: false });
+        return;
+      }
       beginCanvasPointer(event, { kind: "pan", startClient: { x: event.clientX, y: event.clientY }, screenScale: elements["circuit-canvas"].getScreenCTM().a, originView: { ...state.canvasView }, moved: false, deselectOnTap: state.tool === "select" });
     });
     elements["circuit-canvas"].addEventListener("click", (event) => {
@@ -763,7 +823,7 @@ export function createEditorInput(deps) {
           return;
         }
         placeComponent(event);
-        if (state.tool === "select" && performance.now() >= state.ignoreClickUntil) { state.selected = null; renderSelection(); }
+        if (state.tool === "select" && performance.now() >= state.ignoreClickUntil && !event.shiftKey) { clearSelection(state); renderSelection(); }
       }
     });
     window.addEventListener("pointermove", (event) => {
@@ -793,6 +853,13 @@ export function createEditorInput(deps) {
     elements["fit-button"].addEventListener("click", fitCanvas);
     elements["rotate-button"].addEventListener("click", () => rotateSelection(1));
     elements["delete-button"].addEventListener("click", deleteSelection);
+    elements["inspector-content"].addEventListener("click", (event) => {
+      const button = event.target.closest?.("[data-multi-action]");
+      if (!button || button.disabled) return;
+      if (button.dataset.multiAction === "delete") deleteSelection();
+      else if (button.dataset.multiAction === "clone") cloneSelection();
+      else if (button.dataset.multiAction === "rotate") rotateSelection(1);
+    });
     elements["wave-plot"].addEventListener("wheel", (event) => {
       if (!scopeView.result) return;
       event.preventDefault();
@@ -844,15 +911,18 @@ export function createEditorInput(deps) {
     });
     window.addEventListener("keydown", (event) => {
       if (!isCircuitUiActive()) return;
-      const typing = ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName);
+      // The scope plot handles its own keys (cursor A/B, Esc releases a cursor): once it consumed the key, the editor must not act on it too.
+      if (event.defaultPrevented && event.target.closest?.("#wave-plot")) return;
+      const typing = isTypingTarget(document.activeElement, event.key);
       if (event.key === "Escape") {
         if (!elements["probe-context-menu"].classList.contains("hidden")) closeProbeContextMenu();
         else if (state.inlineEdit) closeInlineEditor();
         else if (!typing) {
-          // One Esc backs out one level: a half-drawn wire, then the tool, then the selection.
-          if (state.pendingPin) cancelPendingWire();
+          // One Esc backs out one level: a wire or box being dragged, a half-drawn wire, then the tool, then the selection.
+          if (state.drag && ["wire", "marquee"].includes(state.drag.kind)) finishCanvasPointer(state.drag.pointerId, "cancel");
+          else if (state.pendingPin) cancelPendingWire();
           else if (state.tool !== "select" || state.port.mode) setTool("select");
-          else if (state.selected && state.pointerOwnerId === null) { state.selected = null; renderSelection(); }
+          else if (state.selected && state.pointerOwnerId === null) { clearSelection(state); renderSelection(); }
         }
       }
       const shortcut = shortcutFor(event, { typing });
@@ -865,6 +935,10 @@ export function createEditorInput(deps) {
         delete: () => { deleteSelection(); return false; },
         rotate: () => { rotateSelection(shortcut.direction); return false; },
         clone: () => { cloneSelection(); return true; },
+        copy: () => copySelection(),
+        cut: () => copySelection({ cut: true }),
+        paste: () => pasteSelection(),
+        selectAll: () => selectAll(),
         undo: () => { undoEdit(); return true; },
         redo: () => { redoEdit(); return true; },
         tool: () => { setTool(shortcut.tool); return false; },

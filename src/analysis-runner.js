@@ -13,6 +13,7 @@ import { traceColor } from "./trace-color.js";
 import { formatPortResult, probeKeysForTarget } from "./ui-model.js";
 import { createSweepRunner, createSweepState } from "./sweep-runner.js";
 import { sweepLegendMarkup, syncSweepStatus } from "./sweep-panel.js";
+import { setSingleSelection } from "./selection-model.js";
 
 /** Run/result slice of the shared state: results, run status, auto-update and the DC port analysis. */
 export function createRunState() {
@@ -181,7 +182,7 @@ export function createAnalysisRunner(deps) {
     elements["error-box"].innerHTML = `<div class="diagnostic-heading"><span>${escapeHtml(diagnostic.analysis)}</span><span class="certainty-${diagnostic.certainty}">${escapeHtml(diagnostic.certaintyLabel)}</span><code>${escapeHtml(diagnostic.code)}</code></div><strong>${escapeHtml(diagnostic.message)}</strong>${constraints}<p>${escapeHtml(diagnostic.hint)}</p>`;
     elements["error-box"].classList.remove("hidden");
     elements["error-box"].querySelectorAll("[data-diagnostic-component]").forEach((button) => button.addEventListener("click", () => {
-      state.selected = { kind: "component", id: button.dataset.diagnosticComponent };
+      setSingleSelection(state, { kind: "component", id: button.dataset.diagnosticComponent });
       renderAll();
       setStatus(`${button.querySelector("b")?.textContent ?? button.dataset.diagnosticComponent} 진단 대상 선택`, "error");
     }));

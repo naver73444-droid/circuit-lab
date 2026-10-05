@@ -14,7 +14,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 - 순수 모델(`*-model`, `*-format`, `circuit-*`, `persistence`, `share-url`, `value-series` …)은 DOM·`window`를 쓰지 않고 `app.js`·뷰·컨트롤러를 import하지 않습니다.
 - 컨트롤러 사이의 호출은 `app.js`가 주입한 함수로 합니다(뒤에 만들어질 모듈을 가리키는 호출은 `() => analysis.x()`로 감쌈). import로 얽힌 예외는 `project-io` → `editor-session`(`PROBE_COLORS`)과 `analysis-runner`/`inspector` → `sweep-panel` 정도입니다. `app.js`를 import하는 모듈은 없습니다.
 - `circuit-engine.js`는 `union-find.js`만 import합니다. `scope-view.js`·`phasor-view.js`는 engine을 import하지 않습니다(검사됨).
-- `npm run check`가 import 사이클·누락 import·순수 모델의 DOM 접근·`app.js` import를 검사합니다(검사 대상 순수 모델 목록은 `scripts/check-boundaries.mjs`의 `pure`).
+- `npm run check`가 import 사이클·누락 import·순수 모델의 DOM 접근·`app.js` import를 검사합니다(검사 대상 순수 모델 목록은 `scripts/check-boundaries.mjs`의 `pure`; 800줄을 넘는 모듈은 경고).
 
 ## 모듈 지도
 
@@ -25,12 +25,12 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 - `circuit-geometry.js`(핀 위치·격자·배선 경로) · `circuit-edit.js`(삭제·분할·세대 검사 `acceptsRunGeneration`) · `circuit-status.js`(연결 상태 분류) · `current-direction.js`(전류 기준 방향·라벨).
 - `project-format.js`(JSON 직렬화·검증, version 1~3) · `csv-format.js` · `persistence.js`(탭별 자동저장 슬롯) · `share-url.js`(`#p=` 인코딩·압축·한도).
 - `scope-model.js`(눈금·표본 선택) · `plot-format.js` · `measurement-format.js`(dB·위상) · `phasor-format.js` · `cursor-label-model.js` · `cursor-delta-model.js`(A/B 차이) · `measure-model.js`·`wave-measure-model.js`(자동 측정) · `node-readout-model.js`(호버 판독) · `sweep-model.js`(스윕 계획·병합).
-- `editor-shortcuts.js`(키 → 동작) · `value-series.js`(E12) · `input-drafts.js`(미확정 입력) · `ui-model.js`(편집 UI 모델) · `interaction-math.js`·`touch-targets.js`·`pointer-session.js`(제스처 계산) · `port-ui-state.js` · `color-model.js` · `phasor-practice-model.js` · `examples.js`.
+- `selection-model.js`(다중 선택 모델·상자 선택 적중 판정) · `group-edit.js`(선택 전체 이동·회전, 드래그 origin) · `clipboard-model.js`(복사·붙여넣기 조각, 시스템 클립보드 JSON 검사) · `editor-shortcuts.js`(키 → 동작, `isTypingTarget`) · `value-series.js`(E12) · `input-drafts.js`(미확정 입력) · `ui-model.js`(편집 UI 모델) · `interaction-math.js`·`touch-targets.js`·`pointer-session.js`(제스처 계산) · `port-ui-state.js` · `color-model.js` · `phasor-practice-model.js` · `examples.js`.
 
 ### 회로 편집기 컨트롤러 (DOM 있음, `app.js`가 조립)
 - `editor-session.js` — 편집 상태(`createEditorState`)와 **유일한 편집 경로** `mutate()`(이력·세대·재렌더·자동실행·자동저장 알림), undo/redo, 프로브 추가·제거.
 - `canvas-renderer.js` — SVG 캔버스 전체 렌더, 선택 클래스 토글, 드래그 중 부분 갱신.
-- `editor-input.js` — 도구·배치·배선·프로브, 캔버스·파형 포인터/휠/키 입력 전부. `canvas-touch.js`(터치 라우팅), `editor-shortcuts.js` 사용.
+- `editor-input.js` — 도구·배치·배선(클릭-클릭과 핀에서 끌기)·프로브, 캔버스·파형 포인터/휠/키 입력 전부. `canvas-touch.js`(터치 라우팅), `editor-shortcuts.js` 사용. `selection-commands.js` — 선택 전체에 대한 삭제·복제·회전·방향키 이동·모두 선택·복사/잘라내기/붙여넣기(내부 클립보드).
 - `analysis-runner.js` — 해석 수명주기(예약·Worker 실행·취소·stale·진단)와 결과 표시(프로브 목록, 파형, 페이저, 포트 패널). `sweep-runner.js`(스윕), `analysis-worker-client.js`(Worker 1회용 래퍼), `analysis-worker.js`(Worker 본체).
 - `inspector.js` — 속성·해석 설정·화면 값 편집·draft 확정. `sweep-panel.js`(스윕 UI).
 - `project-io.js` — 예제·새 회로·JSON 저장/열기·CSV·자동저장·복원 배너·링크 공유. 모든 프로젝트 교체는 `openProject()` 한 길.
@@ -43,6 +43,16 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 - 회로 과정(AC·3상): `circuit-course-controller.js` · `circuit-course-registry.js` · `circuit-course-model.js` · `circuit-course-problem{,-symbolic}.js` · `circuit-course-view.js`.
 - 공용: `course-focus.js`(재렌더 후 포커스 유지) · `course-style.js`(스타일 1회 주입) · `course-math-view.js`·`course-symbolic-view.js`(수식 표시) · `course-illustration-contract.js`.
 - `workspace-tabs.js` — 작업공간 탭과 `createLazyController`.
+
+## 선택 모델
+
+- `state.selected`는 **기본(primary) 항목 하나**(`{kind, id}` | null)로, 인스펙터·페이저·포트 패널이 기존대로 읽습니다. `state.selection`은 선택된 **모든** 항목의 `Set`이며 키는 `"component:R1"`·`"wire:W3"`·`"junction:J1"` 꼴입니다(종류가 달라도 id 충돌 없음). `selected`가 있으면 그 키가 `selection`에 들어 있습니다.
+- 읽는 쪽은 `selection-model.js`의 `selectedKeys(state)`/`selectedItems`/`isSelected`를 씁니다. 다른 모듈이 `state.selected`만 직접 바꿔도(그 키가 `selection`에 없으면) 단일 선택으로 해석되므로 깨지지 않습니다. 쓰는 쪽은 `setSingleSelection`·`toggleSelection`·`setSelectionItems`·`clearSelection`을 씁니다. 프로젝트 교체·undo/redo(`restore`)는 선택을 비웁니다.
+- 입력: `Shift`+클릭은 `pointerdown`에서 토글(드래그 없음, 뒤따르는 click은 무시), `Shift`+빈 곳 끌기(마우스·펜, 선택 도구)는 `kind: "marquee"` 포인터 세션으로 `marqueeHits`(부품: 경계 상자가 닿으면, 접속점: 점이 안, 배선: 기본 경로 전체가 안)를 실시간 반영하고 `canvas-renderer.setMarquee`가 `#marquee-rect`를 그립니다. 다중 선택된 부품을 끌면 `captureGroupOrigins`로 기준 위치를 기록해 프레임마다 `applyGroupOffset`(주 항목의 격자 오프셋 그대로)으로 움직이고, 끝에 `commitMove(before)` **한 번**이 이력 한 단계입니다(양 끝이 함께 움직이는 배선의 꺾임점도 이동). 움직임 없이 놓으면 그 항목 하나로 좁혀집니다.
+- 렌더: `applySelection`이 클래스만 토글합니다(둘 이상이면 부품 삭제 배지는 없음). 부분 갱신은 `scheduleDragUpdate("group", {components, junctions})` → `updateMoved`가 움직인 항목과 닿은 배선만 고칩니다(≤50 부품에서 전체 렌더로 떨어지지 않음).
+- 명령(`selection-commands.js`): 삭제(`deleteSelectionFromCircuit`), 복제·붙여넣기(`circuit-edit.js`의 `extractFragment`/`remapFragment` — 새 ID, 내부 배선·제어원 참조 재매핑, 밖으로 나가는 배선 제외), 회전(`rotateGroup`, 기준 부품 고정), 방향키(`moveGroup` + `mutateGrouped`) 모두 `mutate`/`mutateGrouped` 한 번 = 이력 한 단계이고, 먼저 `commitActiveDrag()`로 진행 중 드래그를 확정합니다. 클립보드는 앱 안 변수(붙여넣을 때마다 2칸씩 비켜 놓임)이며 복사 때 JSON을 시스템 클립보드에도 최선 노력으로 씁니다. 앱 안 클립보드가 비었을 때만 `navigator.clipboard.readText()`로 읽어 `parseClipboardText`(형식 검사) 후 `serializeCircuit` 검증을 거쳐 붙여넣습니다.
+- 핀에서 끌어 배선: 핀 `pointerdown`(선택·배선 도구, 마우스·펜)이 `kind: "wire"` 세션을 열고(포인터 캡처 없음), 슬롭을 넘으면 `pendingPin`을 세워 기존 미리보기를 재사용합니다. 놓은 곳이 다른 핀·접속점이면 완성, 배선이면 접속점을 만들어 연결, 빈 곳이나 출발 핀이면 배선이 **그대로 대기**(클릭-클릭 흐름 계속, `Esc` 취소). 터치는 배선 도구에서만(한 손가락 끌기 = 화면 이동 계약 유지).
+- 포커스: `isTypingTarget(element, key)`가 글자를 받는 칸만 단축키를 막습니다(체크박스·버튼은 아님, 슬라이더·`<select>`는 방향키만). 캔버스에서 `preventDefault`하는 눌림은 `releaseStaleFocus()`로 글자 칸이 아닌 포커스를 풀어 줍니다. 파형 그래프가 키를 처리했으면(`defaultPrevented`) 편집기 `keydown`은 건너뜁니다.
 
 ## 해석 실행 데이터 흐름
 
@@ -69,7 +79,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 
 **새 측정·판독**: `measure-model.js`(계산, note에 보간·기준 명시) → `wave-measure-model.js`(어느 항목을 보일지) → `measure-view.js`.
 
-**새 단축키**: `editor-shortcuts.js`에 동작 이름을 추가하고 `editor-input.js`의 `handled` 표에 연결합니다(이력을 쓰거나 되돌리는 동작은 `DRAG_COMMITTING`에 넣어 진행 중 드래그를 먼저 확정).
+**새 단축키**: `editor-shortcuts.js`에 동작 이름을 추가하고 `editor-input.js`의 `handled` 표에 연결합니다(이력을 쓰거나 되돌리는 동작은 `DRAG_COMMITTING`에 넣어 진행 중 드래그를 먼저 확정). 글자 입력 칸 안에서도 동작해야 하는 키는 `shortcutFor`의 `typing` 검사 앞에 둡니다(현재 Ctrl+S, Ctrl+Enter).
 
 **새 학습 실험**: EM은 해당 `em-course-*.js`의 `EXPERIMENTS`에 추가(레지스트리가 모음), 회로 과정은 `circuit-course-registry.js`, 신호는 `signals-course-model.js`의 `SIGNALS_LESSONS`.
 

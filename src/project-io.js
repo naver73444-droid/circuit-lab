@@ -8,6 +8,7 @@ import { PROBE_COLORS } from "./editor-session.js";
 import { createAutosave, describeSavedAt, isEmptyProject } from "./persistence.js";
 import { buildShareUrl, decodeProjectFromHash, encodeProjectToHash } from "./share-url.js";
 import { createCanvasNotices } from "./canvas-notices.js";
+import { clearSelection } from "./selection-model.js";
 
 /**
  * Whole-project operations: example loading, new circuit, JSON save/open, CSV export, autosave + restore offer and share links.
@@ -105,7 +106,7 @@ export function createProjectIO(deps) {
           ? { ...probe, key: `V:${probe.componentId}:${probe.pin}`, label: `V(${component.props.ref}.${probe.pin + 1})`, color: PROBE_COLORS[index] }
           : { ...probe, key: `I:${probe.componentId}`, label: currentProbeLabel(component, circuitGeometryVersion(state.circuit)), color: PROBE_COLORS[index] };
       });
-      state.selected = null;
+      clearSelection(state);
       state.learningId = ["rc-lowpass", "rl", "rlc", "parallel-sine"].includes(id) ? id : null;
       state.result = null;
       state.phasorResult = null;
@@ -292,7 +293,7 @@ export function createProjectIO(deps) {
       state.circuit = { version: 1, geometryVersion: CURRENT_GEOMETRY_VERSION, components: [], wires: [], junctions: [] };
       state.title = "새 회로";
       state.subtitle = "빈 캔버스에서 시작하세요";
-      state.selected = null;
+      clearSelection(state);
       state.learningId = null;
       state.probes = [];
       state.result = null;

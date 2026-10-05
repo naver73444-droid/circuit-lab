@@ -85,36 +85,69 @@ function componentIdPrefix(type) {
   return { VCVS: "E", VCCS: "G", CURRENT_SENSOR: "S", CCCS: "F", CCVS: "H" }[type] ?? type;
 }
 
-export function cloneComponentSet(circuit, componentIds, offset = 40) {
-  const selected = new Set(componentIds);
-  const originals = circuit.components.filter((component) => selected.has(component.id));
+const endpointInSet = (end, componentIds, junctionIds) => end?.junctionId !== undefined ? junctionIds.has(end.junctionId) : componentIds.has(end?.componentId);
+
+/**
+ * A self-contained copy of some parts (and optionally junctions) of a circuit: the items themselves plus every wire whose two
+ * ends both lie inside the set. Wires that leave the set are dropped. Nothing in it shares references with the circuit.
+ */
+export function extractFragment(circuit, componentIds, junctionIds = []) {
+  const components = new Set(componentIds), junctions = new Set(junctionIds);
+  return structuredClone({
+    components: circuit.components.filter((component) => components.has(component.id)),
+    junctions: (circuit.junctions ?? []).filter((junction) => junctions.has(junction.id)),
+    wires: circuit.wires.filter((wire) => endpointInSet(wire.a, components, junctions) && endpointInSet(wire.b, components, junctions)),
+  });
+}
+
+/**
+ * Instantiate a fragment into `circuit` (which is not modified): fresh ids that cannot collide with the circuit or each other,
+ * every position/waypoint shifted by `offset`, wire endpoints and controlled-source references that point inside the fragment remapped.
+ * A reference to an element that is not part of the fragment keeps its (external) id.
+ */
+export function remapFragment(circuit, fragment, offset = 40) {
   const reserved = [...circuit.components];
   const idMap = new Map();
-  for (const original of originals) {
+  for (const original of fragment.components) {
     const id = nextEntityId(reserved, componentIdPrefix(original.type));
     idMap.set(original.id, id);
     reserved.push({ id });
   }
-  const components = originals.map((original) => {
-    const component = {
-      ...structuredClone(original),
-      id: idMap.get(original.id),
-      ...snapPoint({ x: original.x + offset, y: original.y + offset }),
-    };
+  const reservedJunctions = [...(circuit.junctions ?? [])];
+  const junctionMap = new Map();
+  for (const original of fragment.junctions ?? []) {
+    const id = nextEntityId(reservedJunctions, "J");
+    junctionMap.set(original.id, id);
+    reservedJunctions.push({ id });
+  }
+  const components = fragment.components.map((original) => {
+    const component = { ...structuredClone(original), id: idMap.get(original.id), ...snapPoint({ x: original.x + offset, y: original.y + offset }) };
     if (component.control?.elementId && idMap.has(component.control.elementId)) component.control.elementId = idMap.get(component.control.elementId);
     return component;
   });
-  const reservedWires = [...circuit.wires];
+  const junctions = (fragment.junctions ?? []).map((original) => ({ ...structuredClone(original), id: junctionMap.get(original.id), ...snapPoint({ x: original.x + offset, y: original.y + offset }) }));
+  const remapEnd = (end) => {
+    const copy = structuredClone(end);
+    if (copy.junctionId !== undefined) copy.junctionId = junctionMap.get(end.junctionId);
+    else copy.componentId = idMap.get(end.componentId);
+    return copy;
+  };
+  const inside = (end) => end?.junctionId !== undefined ? junctionMap.has(end.junctionId) : idMap.has(end?.componentId);
   const wires = [];
-  for (const original of circuit.wires) {
-    if (!original.a?.componentId || !original.b?.componentId || !idMap.has(original.a.componentId) || !idMap.has(original.b.componentId)) continue;
+  for (const original of fragment.wires ?? []) {
+    if (!inside(original.a) || !inside(original.b)) continue;
     const wire = structuredClone(original);
-    wire.id = nextEntityId([...reservedWires, ...wires], "W");
-    wire.a.componentId = idMap.get(original.a.componentId);
-    wire.b.componentId = idMap.get(original.b.componentId);
+    wire.id = nextEntityId([...circuit.wires, ...wires], "W");
+    wire.a = remapEnd(original.a);
+    wire.b = remapEnd(original.b);
+    if (Array.isArray(wire.waypoints)) wire.waypoints = wire.waypoints.map((point) => snapPoint({ x: point.x + offset, y: point.y + offset }));
     wires.push(wire);
   }
-  return { components, wires, idMap };
+  return { components, wires, junctions, idMap, junctionMap };
+}
+
+export function cloneComponentSet(circuit, componentIds, offset = 40, { junctionIds = [] } = {}) {
+  return remapFragment(circuit, extractFragment(circuit, componentIds, junctionIds), offset);
 }
 
 export function cloneSelectedComponent(circuit, componentId, offset = 40) {
@@ -145,4 +178,26 @@ export function deleteComponentFromCircuit(circuit, componentId, probes = []) {
     probes: probes.filter((probe) => probe.componentId !== componentId && !removedWireIds.has(probe.wireId)),
     removedWireIds: [...removedWireIds],
   };
+}
+
+/**
+ * Delete a mixed selection ({kind: "component" | "wire" | "junction", id}) in one pass: parts first (their wires and probes go with them),
+ * then junctions (their wires go with them), then the explicitly selected wires. The input is not modified.
+ */
+export function deleteSelectionFromCircuit(circuit, items, probes = []) {
+  let current = circuit, currentProbes = probes;
+  for (const item of items.filter((entry) => entry.kind === "component")) {
+    const deleted = deleteComponentFromCircuit(current, item.id, currentProbes);
+    current = deleted.circuit; currentProbes = deleted.probes;
+  }
+  for (const item of items.filter((entry) => entry.kind === "junction")) {
+    const deleted = deleteJunctionFromCircuit(current, item.id, currentProbes);
+    current = deleted.circuit; currentProbes = deleted.probes;
+  }
+  const wireIds = new Set(items.filter((entry) => entry.kind === "wire").map((entry) => entry.id));
+  if (wireIds.size) {
+    current = { ...current, wires: current.wires.filter((wire) => !wireIds.has(wire.id)) };
+    currentProbes = currentProbes.filter((probe) => !wireIds.has(probe.wireId));
+  }
+  return { circuit: current, probes: currentProbes };
 }

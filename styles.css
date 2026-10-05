@@ -221,6 +221,10 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .junction-hit { r: var(--junction-hit-r, 13px); }
 .junction { fill: var(--symbol); stroke: var(--canvas); stroke-width: 1.5; pointer-events: none; }
 .junction.selected, .junction.target { fill: var(--warning); }
+.marquee { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.multi-selection .multi-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.multi-selection .multi-actions button { min-height: 36px; padding: 6px 14px; }
+.multi-selection .multi-actions button.danger { color: var(--danger); border-color: var(--danger); }
 .wire-preview, .wire-preview-fixed { fill: none; stroke: var(--accent); stroke-width: 2; pointer-events: none; }
 .wire-preview { stroke-dasharray: 6 4; }
 .pin.port-p, .junction.port-p { fill: var(--accent); stroke: var(--accent); }

@@ -50,17 +50,20 @@ export function createMeasureView({ panel, summary, body, bButton, scopeView }) 
   /** inputs: {analysis, traces, stale, signature} — same signature means same data, so nothing is recomputed. */
   function update({ analysis, traces, isStale = false, key = null, maxRows } = {}) {
     stale = isStale;
-    if (key !== null && key === signature) { render(); return; }
+    if (key !== null && key === signature) { render(); refreshButton(); return; }
     signature = key;
     computeCount += 1;
     measured = measureTraces({ analysis, traces, maxRows });
     render();
+    // scopeView.setData() only notifies for an empty result, so the B-cursor button follows the measurement refresh.
+    refreshButton();
   }
 
   function clear() {
     measured = null;
     signature = null;
     render();
+    refreshButton();
   }
 
   function refreshButton() {

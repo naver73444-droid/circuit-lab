@@ -14,6 +14,7 @@ import { currentArrowGeometry, currentDirectionDescriptor } from "./current-dire
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { sourceInlineDescriptor } from "./ui-model.js";
+import { isSelected, selectedKeys } from "./selection-model.js";
 
 /**
  * SVG drawing of the circuit canvas. Reads the editor state and never changes it. Pointer/keyboard handling is delegated
@@ -66,16 +67,19 @@ export function createCanvasRenderer(deps) {
     if (canvasFrame === null) canvasFrame = requestAnimationFrame(() => { canvasFrame = null; renderCanvas(); });
   }
 
-  /** Frame-batched drag update: only the dragged item's group and its wires change. Falls back to a full render if the DOM is not there. */
+  /**
+   * Frame-batched drag update: only the moved items' groups and the wires attached to them change. Falls back to a full render if the
+   * DOM is not there. `id` is one id, or for kind "group" an object {components: [...], junctions: [...]}.
+   */
   function scheduleDragUpdate(kind, id) {
-    pendingDrag = { kind, id };
+    pendingDrag = kind === "group" ? { components: id.components, junctions: id.junctions } : { components: kind === "component" ? [id] : [], junctions: kind === "junction" ? [id] : [] };
     if (dragFrame !== null) return;
     dragFrame = requestAnimationFrame(() => {
       dragFrame = null;
       const job = pendingDrag;
       pendingDrag = null;
       if (!job || !workspace.circuitActive) return;
-      if (!updateDragged(job.kind, job.id)) { stats.dragFallback += 1; renderCanvas(); }
+      if (!updateMoved(job)) { stats.dragFallback += 1; renderCanvas(); }
     });
   }
 
@@ -135,7 +139,7 @@ export function createCanvasRenderer(deps) {
       const color = probe ? ` style="--probe-color:${traceColor(probe.color)}"` : "";
       return `<circle class="pin-hit" data-pin="${pin}" cx="${pos.x}" cy="${pos.y}" r="4"/><circle class="pin${pending}${target}${probed}${portP}${portN}" data-pin="${pin}" cx="${pos.x}" cy="${pos.y}" r="4"${color}/><text class="pin-number" x="${pos.x + 6}" y="${pos.y - 6}">${pin + 1}</text>`;
     }).join("");
-    const selected = state.selected?.kind === "component" && state.selected.id === component.id ? " selected" : "";
+    const selected = isSelected(state, "component", component.id) ? " selected" : "";
     const probe = state.probes.find((item) => item.kind === "current" && item.componentId === component.id);
     const probed = probe ? " probed" : "";
     const color = probe ? ` style="--probe-color:${traceColor(probe.color)}"` : "";
@@ -147,7 +151,8 @@ export function createCanvasRenderer(deps) {
     const connectionStatus = connection?.status ?? "solver-check";
     const badgeRotation = -Number(component.rotation ?? 0);
     const connectionMarkup = connectionStatus !== "referenced" ? `<rect class="connection-halo status-${connectionStatus}" x="-47" y="-47" width="94" height="94" rx="3"/><g class="connection-badge status-${connectionStatus}" data-show-connection="${escapeHtml(component.id)}" role="button" tabindex="0" aria-label="${ref} 연결 상태 보기" transform="translate(-35 -34) rotate(${badgeRotation})"><title>${escapeHtml(connection?.label ?? "연결 상태 보기")} · 클릭하여 설명</title><circle r="11"/><text y="4">${escapeHtml(connection?.badge ?? "?")}</text></g>` : "";
-    const deleteMarkup = selected ? deleteButtonMarkup(component) : "";
+    // The delete badge belongs to a single selected part; with several selected the inspector offers the group actions.
+    const deleteMarkup = selected && selectedKeys(state).size === 1 ? deleteButtonMarkup(component) : "";
     const upright = -Number(component.rotation ?? 0);
     const vertical = Math.abs(Math.sin(Number(component.rotation ?? 0) * Math.PI / 180)) > .7;
     const labelX = vertical ? 30 : 0;
@@ -193,7 +198,7 @@ export function createCanvasRenderer(deps) {
       junctions.push(`<circle class="junction" data-jp="${escapeHtml(componentId)}:${pin}" cx="${position.x}" cy="${position.y}" r="5"/>`);
     }
     for (const junction of state.circuit.junctions ?? []) {
-      const selected = state.selected?.kind === "junction" && state.selected.id === junction.id ? " selected" : "";
+      const selected = isSelected(state, "junction", junction.id) ? " selected" : "";
       const pending = state.pendingPin && state.pendingPin.junctionId !== junction.id ? " target" : "";
       const portP = state.port.p?.junctionId === junction.id ? " port-p" : "";
       const portN = state.port.n?.junctionId === junction.id ? " port-n" : "";
@@ -226,7 +231,7 @@ export function createCanvasRenderer(deps) {
       if (!a || !b) return "";
       const points = wireRoute(wire, a, b);
       const path = polylinePath(points);
-      const selected = state.selected?.kind === "wire" && state.selected.id === wire.id ? " selected" : "";
+      const selected = isSelected(state, "wire", wire.id) ? " selected" : "";
       const probe = state.probes.find((item) => item.kind === "voltage" && item.wireId === wire.id);
       const probed = probe ? " probed" : "";
       const color = probe ? ` style="--probe-color:${traceColor(probe.color)}"` : "";
@@ -259,14 +264,14 @@ export function createCanvasRenderer(deps) {
   const wireGroup = (id) => elements["wire-layer"].querySelector(`[data-wire-id="${CSS.escape(id)}"]`);
 
   /**
-   * Cheap drag frame. Returns false when the expected DOM is missing so the caller can do a full render instead.
-   * Writes exactly the attributes a full render would write for the same state.
+   * Cheap drag frame for any set of moved parts/junctions. Returns false when the expected DOM is missing so the caller can do a
+   * full render instead. Writes exactly the attributes a full render would write for the same state.
    */
-  function updateDragged(kind, id) {
-    const byId = (list) => list.find((item) => item.id === id);
-    const touches = (end) => (kind === "junction" ? end?.junctionId === id : end?.componentId === id);
-    if (kind === "component") {
-      const component = byId(state.circuit.components);
+  function updateMoved({ components: componentIds = [], junctions: junctionIds = [] }) {
+    const movedComponents = new Set(componentIds), movedJunctions = new Set(junctionIds);
+    const componentById = new Map(state.circuit.components.map((component) => [component.id, component]));
+    for (const id of movedComponents) {
+      const component = componentById.get(id);
       const group = elements["component-layer"].querySelector(`.component[data-id="${CSS.escape(id)}"]`);
       if (!component || !group) return false;
       group.setAttribute("transform", componentTransform(component));
@@ -277,13 +282,14 @@ export function createCanvasRenderer(deps) {
         dot.setAttribute("cx", position.x);
         dot.setAttribute("cy", position.y);
       }
-    } else {
-      const junction = byId(state.circuit.junctions ?? []);
+    }
+    for (const id of movedJunctions) {
+      const junction = (state.circuit.junctions ?? []).find((item) => item.id === id);
       const group = elements["overlay-layer"].querySelector(`[data-junction-id="${CSS.escape(id)}"]`);
       if (!junction || !group) return false;
       for (const circle of group.querySelectorAll("circle")) { circle.setAttribute("cx", junction.x); circle.setAttribute("cy", junction.y); }
     }
-    const componentById = new Map(state.circuit.components.map((component) => [component.id, component]));
+    const touches = (end) => (end?.junctionId !== undefined ? movedJunctions.has(end.junctionId) : movedComponents.has(end?.componentId));
     for (const wire of state.circuit.wires) {
       if (!touches(wire.a) && !touches(wire.b)) continue;
       const group = wireGroup(wire.id);
@@ -297,28 +303,44 @@ export function createCanvasRenderer(deps) {
     return true;
   }
 
-  /** Selection change without a rebuild: toggle `selected` classes and the selected part's delete button. */
+  function updateDragged(kind, id) {
+    return updateMoved(kind === "junction" ? { junctions: [id] } : { components: [id] });
+  }
+
+  /** Marquee rectangle while a Shift+drag box selection is in progress (rect in world coordinates); null hides it. */
+  function setMarquee(rect) {
+    const node = elements["marquee-rect"];
+    if (!node) return;
+    node.classList.toggle("hidden", !rect);
+    if (!rect) return;
+    node.setAttribute("x", rect.x0); node.setAttribute("y", rect.y0);
+    node.setAttribute("width", rect.x1 - rect.x0); node.setAttribute("height", rect.y1 - rect.y0);
+  }
+
+  /** Selection change without a rebuild: toggle `selected` classes and the delete button of a single selected part. */
   function applySelection() {
     stats.selection += 1;
-    const selected = state.selected;
+    const keys = selectedKeys(state);
+    const single = keys.size === 1;
     for (const group of elements["component-layer"].querySelectorAll(".component")) {
-      const on = selected?.kind === "component" && selected.id === group.dataset.id;
+      const on = keys.has(`component:${group.dataset.id}`);
       const probed = group.classList.contains("probed") ? " probed" : "";
       group.setAttribute("class", `component${on ? " selected" : ""}${probed}`);
       const button = group.querySelector(".component-delete");
-      if (on && !button) {
+      const wantButton = on && single;
+      if (wantButton && !button) {
         const component = state.circuit.components.find((item) => item.id === group.dataset.id);
         if (component) group.insertAdjacentHTML("beforeend", deleteButtonMarkup(component));
-      } else if (!on && button) button.remove();
+      } else if (!wantButton && button) button.remove();
     }
     for (const group of elements["wire-layer"].querySelectorAll("[data-wire-id]")) {
       const line = group.querySelector(".wire");
       if (!line) continue;
-      const on = selected?.kind === "wire" && selected.id === group.dataset.wireId;
+      const on = keys.has(`wire:${group.dataset.wireId}`);
       line.setAttribute("class", `wire${on ? " selected" : ""}${line.classList.contains("probed") ? " probed" : ""}`);
     }
     // Junction dots carry several state classes; their markup is small, so rebuild just that layer when one is involved.
-    if (selected?.kind === "junction" || elements["overlay-layer"].querySelector(".junction.selected")) renderOverlay();
+    if ([...keys].some((key) => key.startsWith("junction:")) || elements["overlay-layer"].querySelector(".junction.selected")) renderOverlay();
   }
 
   function routeForWireId(wireId) {
@@ -329,5 +351,5 @@ export function createCanvasRenderer(deps) {
     return a && b ? wireRoute(wire, a, b) : [];
   }
 
-  return { updateCanvasView, scheduleCanvasRender, scheduleOverlayRender, scheduleDragUpdate, updateDragged, applySelection, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId, stats };
+  return { updateCanvasView, scheduleCanvasRender, scheduleOverlayRender, scheduleDragUpdate, updateDragged, updateMoved, setMarquee, applySelection, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId, stats };
 }

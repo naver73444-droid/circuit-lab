@@ -8,10 +8,11 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-node scripts\launch.mjs
+rem Optional arguments are passed through: start-circuit-lab.cmd 4191   or   start-circuit-lab.cmd 4191 --no-browser
+node scripts\launch.mjs %*
 if errorlevel 1 (
   echo Startup failed. Keep the message above for diagnosis.
   echo Another Circuit Lab may already be using port 4173.
-  echo Try: node scripts\launch.mjs 4191
+  echo Try: start-circuit-lab.cmd 4191
   pause
 )

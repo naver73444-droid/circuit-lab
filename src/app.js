@@ -17,6 +17,7 @@ import { createProjectIO } from "./project-io.js";
 import { createHoverReadout } from "./hover-readout.js";
 import { hasShareHash } from "./share-url.js";
 import { createMeasureView } from "./measure-view.js";
+import { selectedItems, selectedKeys } from "./selection-model.js";
 
 const elements = Object.fromEntries([
   "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "empty-hint",
@@ -28,7 +29,7 @@ const elements = Object.fromEntries([
   "clone-button", "zoom-out-button", "zoom-in-button", "fit-button", "inline-value-editor",
   "connection-summary", "probe-context-menu", "phasor-validity", "small-signal-note",
   "scope-controls", "analysis-intent", "analysis-recommendation", "auto-update", "advanced-analysis",
-  "share-button", "canvas-notices", "hover-tip",
+  "share-button", "canvas-notices", "hover-tip", "marquee-rect",
   "measure-panel", "measure-summary", "measure-body", "cursor-b-button",
   "port-panel", "port-p-button", "port-n-button", "port-load-button", "port-clear-button", "port-run-button", "port-selection", "port-loads", "port-result", "port-status",
 ].map((id) => [id, document.getElementById(id)]));
@@ -94,6 +95,7 @@ const inspector = createInspector({
 const hover = createHoverReadout({ state, elements, workspace, scopeView });
 const input = createEditorInput({
   state, elements, workspace, scopeView, renderAll, renderSelection, setStatus, showInspector, showCanvas, isCircuitUiActive, hover,
+  applySelection: renderer.applySelection, setMarquee: renderer.setMarquee,
   runAnalysis: () => analysis.runAnalysis(), saveProject: () => projectIO.saveProject(),
   mutate: session.mutate, mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, snapshot: session.snapshot, commitMove: session.commitMove, undo: session.undo, redo: session.redo,
   addVoltageProbe: session.addVoltageProbe, addVoltageProbeEndpoint: session.addVoltageProbeEndpoint, addCurrentProbe: session.addCurrentProbe, removeProbe: session.removeProbe,
@@ -121,6 +123,7 @@ function resetProjectSession() {
   elements["inline-value-editor"].classList.add("hidden");
   elements["inline-value-editor"].classList.remove("input-invalid", "input-editing");
   state.selected = null;
+  state.selection = new Set();
   state.pendingPin = null;
   state.pendingWaypoints = [];
   state.pointer = null;
@@ -163,9 +166,11 @@ function renderSelection() {
 }
 
 function syncSelectionButtons() {
-  elements["rotate-button"].disabled = state.selected?.kind !== "component";
-  elements["clone-button"].disabled = state.selected?.kind !== "component";
-  elements["delete-button"].disabled = !state.selected;
+  const items = selectedItems(state);
+  const hasComponent = items.some((item) => item.kind === "component");
+  elements["rotate-button"].disabled = !hasComponent;
+  elements["clone-button"].disabled = !hasComponent;
+  elements["delete-button"].disabled = items.length === 0;
 }
 
 function renderAll() {
@@ -292,7 +297,7 @@ function initialize() {
   renderAll();
   setStatus("해석 준비", "ready");
   window.__CIRCUIT_LAB__ = {
-    getState: () => structuredClone({ selected: state.selected, tool: state.tool, pendingPin: state.pendingPin, historyDepth: state.history.length, circuit: state.circuit, settings: state.settings, probes: state.probes, stale: state.stale, result: state.result, phasorResult: state.phasorResult, port: state.port, learningId: state.learningId, generation: state.generation, lastRunMs: state.lastRunMs, runState: state.runState, pointerOwnerId: state.pointerOwnerId, drag: state.drag, canvasView: state.canvasView, intent: state.intent, autoUpdate: state.autoUpdate, scope: scopeView.inspect(), drafts: inputDrafts.entries() }),
+    getState: () => structuredClone({ selected: state.selected, selection: [...selectedKeys(state)], tool: state.tool, pendingPin: state.pendingPin, historyDepth: state.history.length, circuit: state.circuit, settings: state.settings, probes: state.probes, stale: state.stale, result: state.result, phasorResult: state.phasorResult, port: state.port, learningId: state.learningId, generation: state.generation, lastRunMs: state.lastRunMs, runState: state.runState, pointerOwnerId: state.pointerOwnerId, drag: state.drag, canvasView: state.canvasView, intent: state.intent, autoUpdate: state.autoUpdate, scope: scopeView.inspect(), drafts: inputDrafts.entries() }),
     loadExample: projectIO.loadExample,
     runAnalysis: analysis.runAnalysis,
     runPortAnalysis: analysis.runPortAnalysis,

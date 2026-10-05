@@ -14,6 +14,7 @@ export function createEditorState() {
     title: "새 회로",
     subtitle: "빈 캔버스에서 시작하세요",
     selected: null,
+    selection: new Set(),
     probes: [],
     history: [],
     future: [],
@@ -81,6 +82,7 @@ export function createEditorSession(deps) {
     state.manualSettingKeys = new Set(saved.manualSettingKeys ?? []);
     synchronizeIntent();
     state.selected = null;
+    state.selection = new Set();
     state.pendingPin = null;
     state.pendingWaypoints = [];
     bumpGeneration();
