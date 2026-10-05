@@ -24,7 +24,7 @@ export function engineering(value, unit = "", precision = 4) {
   if (value === Number.NEGATIVE_INFINITY && ["dBV", "dBA"].includes(unit)) return `−∞ ${unit}`;
   if (!Number.isFinite(value)) return `— ${unit}`.trim();
   if (value === 0) return `0 ${unit}`.trim();
-  if (["dBV", "dBA", "°", "dec"].includes(unit)) return `${Number(value.toPrecision(precision))} ${unit}`;
+  if (["dBV", "dBA", "dB", "°", "dec"].includes(unit)) return `${Number(value.toPrecision(precision))} ${unit}`;
   const prefixes = new Map([[-15, "f"], [-12, "p"], [-9, "n"], [-6, "µ"], [-3, "m"], [0, ""], [3, "k"], [6, "M"], [9, "G"], [12, "T"]]);
   const exponent = Math.max(-15, Math.min(12, 3 * Math.floor(Math.log10(Math.abs(value)) / 3 + 1e-12)));
   return `${Number((value / 10 ** exponent).toPrecision(precision))} ${prefixes.get(exponent)}${unit}`.trim();

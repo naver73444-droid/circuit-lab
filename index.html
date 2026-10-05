@@ -175,18 +175,20 @@
 <div class="probe-list" id="probe-list"><span class="probe-empty">추가된 프로브 없음</span></div>
 <div class="wave-actions">
 <div class="segmented hidden" id="ac-view-toggle"><button class="active" data-ac-view="magnitude" type="button">크기 (dB)</button><button data-ac-view="phase" type="button">위상 (°)</button></div>
+<button class="hidden" id="cursor-b-button" type="button" aria-pressed="false" title="그래프를 눌러 기준 커서 B를 놓습니다">B 커서</button>
 <button id="reset-view-button" type="button">자동 맞춤</button>
 <button disabled="" id="csv-button" type="button">CSV 내보내기</button>
 </div>
 </div>
 <div class="wave-body">
 <div class="plot-wrap">
-<svg aria-describedby="cursor-readout" aria-label="프로브 파형 그래프. 시간응답에서 좌우 화살표로 원표본을 이동하고 Home과 End로 처음과 끝을 선택하며 Escape로 고정을 해제합니다." id="wave-plot" preserveaspectratio="none" tabindex="0" viewbox="0 0 1000 300"></svg>
+<svg aria-describedby="cursor-readout" aria-label="프로브 파형 그래프. 좌우 화살표로 원표본의 커서 A를 이동하고 Home과 End로 처음과 끝을 선택하며 Shift와 함께 누르면 기준 커서 B를 이동합니다. Escape로 고정을 해제합니다." id="wave-plot" preserveaspectratio="none" tabindex="0" viewbox="0 0 1000 300"></svg>
 <div class="plot-empty" id="plot-empty"><span>V 또는 I 프로브 도구로 회로를 클릭하세요</span></div>
 </div>
 <div aria-label="오실로스코프 눈금 조절" class="scope-controls" id="scope-controls"></div>
 </div>
 <div class="scope-zero-note hidden" id="scope-zero-note"></div>
+<details class="measure-panel hidden" id="measure-panel"><summary id="measure-summary"></summary><div class="measure-body" id="measure-body"></div></details>
 <div aria-live="polite" class="cursor-readout" id="cursor-readout" role="status">그래프를 눌러 값을 읽습니다.</div>
 </section>
 <nav aria-label="패널 선택" class="view-tabs" role="tablist">

@@ -16,6 +16,7 @@ import { createEditorInput, createInputState } from "./editor-input.js";
 import { createProjectIO } from "./project-io.js";
 import { createHoverReadout } from "./hover-readout.js";
 import { hasShareHash } from "./share-url.js";
+import { createMeasureView } from "./measure-view.js";
 
 const elements = Object.fromEntries([
   "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "empty-hint",
@@ -28,6 +29,7 @@ const elements = Object.fromEntries([
   "connection-summary", "probe-context-menu", "phasor-validity", "small-signal-note",
   "scope-controls", "analysis-intent", "analysis-recommendation", "auto-update", "advanced-analysis",
   "share-button", "canvas-notices", "hover-tip",
+  "measure-panel", "measure-summary", "measure-body", "cursor-b-button",
   "port-panel", "port-p-button", "port-n-button", "port-load-button", "port-clear-button", "port-run-button", "port-selection", "port-loads", "port-result", "port-status",
 ].map((id) => [id, document.getElementById(id)]));
 
@@ -41,6 +43,7 @@ const isCircuitUiActive = () => workspace.circuitActive && !workspace.switching 
 const inputDrafts = new InputDrafts();
 const phasorView = createPhasorView(elements, state, parseValue, () => inputDrafts.size > 0);
 const scopeView = new ScopeView(elements["wave-plot"], elements["scope-controls"], elements["cursor-readout"]);
+const measureView = createMeasureView({ panel: elements["measure-panel"], summary: elements["measure-summary"], body: elements["measure-body"], bButton: elements["cursor-b-button"], scopeView });
 let panels = null;
 let workspaceTabs = null;
 // Heavy workspace controllers (EM, circuit course, signals) load on first use.
@@ -70,8 +73,6 @@ const session = createEditorSession({
 });
 const renderer = createCanvasRenderer({
   state, elements, workspace, currentConnections: session.currentConnections,
-  bindCanvasItems: () => input.bindCanvasItems(),
-  bindOverlayItems: () => input.bindOverlayItems(),
 });
 const analysis = createAnalysisRunner({
   state, elements, workspace, inputDrafts, scopeView, phasorView, renderAll, setStatus, showCanvas, phasorPanelVisible,
@@ -81,20 +82,22 @@ const analysis = createAnalysisRunner({
   commitPendingInputs: () => inspector.commitPendingInputs(),
   updateDraftNotice: (...args) => inspector.updateDraftNotice(...args),
   openProbeContextMenu: (...args) => input.openProbeContextMenu(...args),
+  measureView,
 });
 const inspector = createInspector({
   state, elements, workspace, inputDrafts, phasorView, renderAll, setStatus, showInspector, isCircuitUiActive,
   mutate: session.mutate, currentConnections: session.currentConnections,
   synchronizeIntent: analysis.synchronizeIntent, cancelScheduledRun: analysis.cancelScheduledRun, markInputDirty: analysis.markInputDirty,
   scheduleAutoRun: analysis.scheduleAutoRun, renderPhasorLearning: analysis.renderPhasorLearning,
+  runSweep: analysis.runSweep, clearSweep: analysis.clearSweep,
 });
 const hover = createHoverReadout({ state, elements, workspace, scopeView });
 const input = createEditorInput({
-  state, elements, workspace, scopeView, renderAll, setStatus, showInspector, showCanvas, isCircuitUiActive, hover,
+  state, elements, workspace, scopeView, renderAll, renderSelection, setStatus, showInspector, showCanvas, isCircuitUiActive, hover,
   runAnalysis: () => analysis.runAnalysis(), saveProject: () => projectIO.saveProject(),
   mutate: session.mutate, mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, snapshot: session.snapshot, commitMove: session.commitMove, undo: session.undo, redo: session.redo,
   addVoltageProbe: session.addVoltageProbe, addVoltageProbeEndpoint: session.addVoltageProbeEndpoint, addCurrentProbe: session.addCurrentProbe, removeProbe: session.removeProbe,
-  renderCanvas: renderer.renderCanvas, renderOverlay: renderer.renderOverlay, scheduleCanvasRender: renderer.scheduleCanvasRender, scheduleOverlayRender: renderer.scheduleOverlayRender,
+  renderCanvas: renderer.renderCanvas, renderOverlay: renderer.renderOverlay, scheduleDragUpdate: renderer.scheduleDragUpdate, scheduleOverlayRender: renderer.scheduleOverlayRender,
   updateCanvasView: renderer.updateCanvasView, endpointPosition: renderer.endpointPosition, pinPosition: renderer.pinPosition, routeForWireId: renderer.routeForWireId,
   renderInspector: inspector.renderInspector, openInlineEditor: inspector.openInlineEditor, closeInlineEditor: inspector.closeInlineEditor,
   assignPortEndpoint: analysis.assignPortEndpoint, presentProbe: analysis.presentProbe,
@@ -109,6 +112,8 @@ const projectIO = createProjectIO({
 function resetProjectSession() {
   analysis.cancelScheduledRun();
   analysis.invalidateActiveAnalysis("project-reset");
+  analysis.resetSweep();
+  measureView.clear();
   state.runSerial += 1;
   input.cancelPointerSessions();
   inputDrafts.clear();
@@ -146,6 +151,23 @@ function refreshProbeViews() {
   updateHistoryButtons();
 }
 
+/** Selection changed: toggle the canvas classes (no rebuild) and refresh only what depends on the selection. */
+function renderSelection() {
+  if (!workspace.circuitActive) { workspace.renderDeferred = true; return; }
+  renderer.applySelection();
+  inspector.renderInspector();
+  analysis.renderPhasorLearning();
+  analysis.renderPortPanel();
+  syncSelectionButtons();
+  hover.refresh();
+}
+
+function syncSelectionButtons() {
+  elements["rotate-button"].disabled = state.selected?.kind !== "component";
+  elements["clone-button"].disabled = state.selected?.kind !== "component";
+  elements["delete-button"].disabled = !state.selected;
+}
+
 function renderAll() {
   if (!workspace.circuitActive) { workspace.renderDeferred = true; return; }
   workspace.renderDeferred = false;
@@ -159,9 +181,7 @@ function renderAll() {
   analysis.renderPortPanel();
   if (state.runState.status === "error" && state.runState.error) analysis.renderFailureDiagnostic(state.runState.error);
   updateHistoryButtons();
-  elements["rotate-button"].disabled = state.selected?.kind !== "component";
-  elements["clone-button"].disabled = state.selected?.kind !== "component";
-  elements["delete-button"].disabled = !state.selected;
+  syncSelectionButtons();
   hover.refresh();
   elements["stale-badge"].classList.toggle("hidden", !(state.stale || state.runState.status === "stale"));
   analysis.updateAnalysisControls();
@@ -279,6 +299,10 @@ function initialize() {
     flushAutosave: projectIO.flushAutosave,
     getAutosaveStatus: projectIO.autosaveStatus,
     getHoverReadout: hover.inspect,
+    getSweep: () => { const v = analysis.sweepView(); return { running: state.sweep.running, progress: state.sweep.progress, message: state.sweep.message, overlay: v ? { probe: v.overlay.probe.label, labels: v.overlay.plan.values.map((x) => x.label), series: v.merged.series.map((x) => ({ key: x.key, label: x.label, color: x.color, sweepText: x.sweepText, n: x.values.length })) } : null }; },
+    getMeasure: () => measureView.inspect(),
+    getCanvasStats: () => ({ ...renderer.stats }),
+    forceCanvasRender: () => renderer.renderCanvas(),
     getLayout: () => panels.inspect(),
     getWorkspace: () => workspaceTabs.active,
     // Lazy controllers report null until loaded; await ensureWorkspace(name) first.

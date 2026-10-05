@@ -2,6 +2,7 @@ import { traceColor } from "./trace-color.js";
 import { escapeHtml } from "./safe-dom.js";
 import { axisDisplayUnit, engineering, extremaIndices, fittedAxis, fittedXAxis, nearestSampleIndex, zoomAxis, X_DIVISIONS, Y_DIVISIONS } from "./scope-model.js";
 import { axisSide, cursorIndexAfterKey, layoutCursorLabels } from "./cursor-label-model.js";
+import { describeCursorDelta, nextCursorB } from "./cursor-delta-model.js";
 
 const LABELS = { V: "전압", A: "전류", dBV: "전압 레벨", dBA: "전류 레벨", "°": "위상" };
 
@@ -19,6 +20,11 @@ export class ScopeView {
     this.cursorIndex = null;
     this.hoverIndex = null;
     this.pinnedIndex = null;
+    // Second (reference) cursor B and the trace the A/B delta and the measurement summary describe.
+    this.cursorB = null;
+    this.bArmed = false;
+    this.activeTraceKey = null;
+    this.onChange = null;
     this.selectedTraceKeys = new Map();
     this.stale = false;
     this.forceFit = true;
@@ -50,7 +56,7 @@ export class ScopeView {
   }
 
   inspect() {
-    return structuredClone({ x: this.xAxis, axes: Object.fromEntries(this.axes), geometry: this.geometry, cursorIndex: this.cursorIndex, hoverIndex: this.hoverIndex, pinnedIndex: this.pinnedIndex, selectedTraceKeys: Object.fromEntries(this.selectedTraceKeys), renderCount: this.renderCount });
+    return structuredClone({ x: this.xAxis, axes: Object.fromEntries(this.axes), geometry: this.geometry, cursorIndex: this.cursorIndex, hoverIndex: this.hoverIndex, pinnedIndex: this.pinnedIndex, cursorB: this.cursorB, bArmed: this.bArmed, activeTraceKey: this.activeTraceKey, selectedTraceKeys: Object.fromEntries(this.selectedTraceKeys), renderCount: this.renderCount });
   }
 
   resetForProject() {
@@ -60,8 +66,59 @@ export class ScopeView {
     this.cursorIndex = null;
     this.hoverIndex = null;
     this.pinnedIndex = null;
+    this.cursorB = null;
+    this.bArmed = false;
+    this.activeTraceKey = null;
     this.selectedTraceKeys.clear();
     this.wheelBalance.clear();
+  }
+
+  notify() {
+    try { this.onChange?.(); } catch { /* a failing observer must not break the plot */ }
+  }
+
+  /** The trace the A/B delta describes: the chosen one, else the first. */
+  activeSeries() {
+    return this.series.find((item) => item.key === this.activeTraceKey) ?? this.series[0] ?? null;
+  }
+
+  setActiveTrace(key) {
+    if (!this.series.some((item) => item.key === key) || this.activeTraceKey === key) return false;
+    this.activeTraceKey = key;
+    this.renderCursor();
+    this.notify();
+    return true;
+  }
+
+  get hasCursors() {
+    return Boolean(this.result && this.result.analysis !== "dc" && this.series.length);
+  }
+
+  armB(on = true) {
+    if (!this.hasCursors && on) return false;
+    this.bArmed = Boolean(on);
+    this.renderCursor();
+    this.notify();
+    return true;
+  }
+
+  placeB(point) {
+    const index = this.indexAtPoint(point);
+    if (index === null) return false;
+    this.cursorB = index;
+    this.bArmed = false;
+    this.renderCursor();
+    this.notify();
+    return true;
+  }
+
+  clearB() {
+    if (this.cursorB === null && !this.bArmed) return false;
+    this.cursorB = null;
+    this.bArmed = false;
+    this.renderCursor();
+    this.notify();
+    return true;
   }
 
   setData(result, series, stale = false) {
@@ -69,10 +126,13 @@ export class ScopeView {
     if (result === this.result && signature === this.signature && stale === this.stale && !this.forceFit) return;
     const changedAnalysis = result?.analysis !== this.result?.analysis;
     const changedResult = result !== this.result;
+    const keepCursorB = Boolean(this.result && result && this.result.analysis === result.analysis && this.result.xValues.length === result.xValues.length);
     this.result = result;
     this.series = series;
     const availableKeys = new Set(series.map((item) => item.key));
     for (const [side, key] of this.selectedTraceKeys) if (!availableKeys.has(key)) this.selectedTraceKeys.delete(side);
+    if (this.activeTraceKey !== null && !availableKeys.has(this.activeTraceKey)) this.activeTraceKey = null;
+    if (!result || !keepCursorB) { this.cursorB = null; this.bArmed = false; }
     this.signature = signature;
     this.stale = stale;
     if (!result || !series.length) {
@@ -82,6 +142,7 @@ export class ScopeView {
       this.cursorIndex = null;
       this.hoverIndex = null;
       this.pinnedIndex = null;
+      this.notify();
       return;
     }
     this.logarithmic = result.analysis === "ac";
@@ -186,7 +247,7 @@ export class ScopeView {
 
   moveCursor(point) {
     if (!this.result || this.result.analysis === "dc") return;
-    if (this.result.analysis === "transient" && this.pinnedIndex !== null) return;
+    if (this.pinnedIndex !== null) return;
     const index = this.indexAtPoint(point);
     if (index === this.hoverIndex && index === this.cursorIndex) return;
     this.hoverIndex = index;
@@ -205,7 +266,7 @@ export class ScopeView {
   }
 
   pinCursorAt(point) {
-    if (this.result?.analysis !== "transient") return false;
+    if (!this.hasCursors) return false;
     const index = this.indexAtPoint(point);
     if (index === null) return false;
     this.pinnedIndex = index;
@@ -222,10 +283,19 @@ export class ScopeView {
     return true;
   }
 
-  keyCursor(key) {
-    if (this.result?.analysis !== "transient") return false;
-    if (key === "Escape") return this.clearPinnedCursor();
+  /** Keyboard: arrows/Home/End move cursor A; with shift they move cursor B. Escape releases A, then B. */
+  keyCursor(key, shift = false) {
+    if (!this.hasCursors) return false;
+    if (key === "Escape") return this.clearPinnedCursor() || this.clearB();
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) return false;
+    if (shift) {
+      const length = this.result.xValues.length;
+      const step = key === "Home" ? "home" : key === "End" ? "end" : key === "ArrowRight" ? 1 : -1;
+      const next = nextCursorB(this.cursorB, step, length, this.cursorIndex ?? this.pinnedIndex ?? 0);
+      if (next === null) return false;
+      if (next !== this.cursorB) { this.cursorB = next; this.bArmed = false; this.renderCursor(); this.notify(); }
+      return true;
+    }
     const next = cursorIndexAfterKey(this.pinnedIndex, key, this.result.xValues.length);
     if (next === null) return false;
     if (next !== this.pinnedIndex) {
@@ -353,6 +423,7 @@ export class ScopeView {
     const index = this.cursorIndex;
     if (index === null || !this.result || index >= this.result.xValues.length) {
       this.readout.textContent = "그래프를 눌러 값을 읽습니다.";
+      this.renderCursorB(target, null);
       return;
     }
     const isDC = this.result.analysis === "dc";
@@ -397,5 +468,43 @@ export class ScopeView {
     }
     target.innerHTML = markup;
     if (this.result.analysis !== "transient") this.readout.textContent = parts.join("  ·  ");
+    this.renderCursorB(target, index);
+  }
+
+  /** Cursor B marker and the A/B delta line. Draws nothing until B exists; while arming it only adds a hint. */
+  renderCursorB(target, indexA) {
+    const hasB = this.cursorB !== null && this.hasCursors && this.cursorB < this.result.xValues.length;
+    if (!hasB) {
+      if (this.bArmed && this.hasCursors) this.readout.innerHTML += `<div class="cursor-delta"><b>B 커서</b> 그래프에서 놓을 위치를 누르세요 (Shift+클릭도 가능)</div>`;
+      return;
+    }
+    const g = this.geometry;
+    const active = this.activeSeries();
+    const bx = this.coordinates(this.xValues[this.cursorB], 0, this.series[0].quantity).x;
+    let markup = `<g clip-path="url(#scope-data-clip)"><line class="plot-cursor plot-cursor-b" x1="${bx}" y1="${g.top}" x2="${bx}" y2="${g.top + g.plotHeight}"/>`;
+    for (const item of this.series) {
+      const value = item.values[this.cursorB];
+      if (value === null || !Number.isFinite(value)) continue;
+      const point = this.coordinates(this.xValues[this.cursorB], value, item.quantity);
+      markup += `<circle class="scope-b-dot" cx="${point.x}" cy="${point.y}" r="3.5" stroke="${traceColor(item.color)}"/>`;
+    }
+    markup += "</g>";
+    markup += `<text class="cursor-tag cursor-tag-b" x="${bx + 4}" y="${g.top + 11}">B</text>`;
+    if (indexA !== null) {
+      const ax = this.coordinates(this.xValues[indexA], 0, this.series[0].quantity).x;
+      markup += `<text class="cursor-tag" x="${ax + 4}" y="${g.top + 11}">A</text>`;
+    }
+    target.innerHTML += markup;
+    const bValue = engineering(this.result.xValues[this.cursorB], this.logarithmic ? "Hz" : "s", 6);
+    let html = `<div class="cursor-delta"><b>B</b> index ${this.cursorB} · ${escapeHtml(bValue)}`;
+    if (indexA === null) html += ` · A 커서를 놓으면 차이를 보여 줍니다`;
+    else if (active) {
+      const delta = describeCursorDelta({ analysis: this.result.analysis, xValues: this.result.xValues, values: active.values, indexA, indexB: this.cursorB, quantity: active.quantity });
+      html += ` · <span class="delta-trace" style="--trace-color:${traceColor(active.color)}">${escapeHtml(active.label)}</span> B−A`;
+      html += delta.items.map((item) => `<span class="delta-item${item.ok ? "" : " na"}" title="${escapeHtml(item.note ?? "")}">${escapeHtml(item.label)} ${escapeHtml(item.text)}</span>`).join("");
+      html += `<small>${escapeHtml(delta.basis)}</small>`;
+    }
+    html += "</div>";
+    this.readout.innerHTML += html;
   }
 }

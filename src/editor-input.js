@@ -44,8 +44,8 @@ export function createInputState() {
 /** Tools, placement, wiring, probe placement and every canvas/plot pointer, wheel, touch and keyboard gesture. */
 export function createEditorInput(deps) {
   const { state, elements, workspace, scopeView, mutate, mutateGrouped, closeEditGroup, snapshot, commitMove, undo, redo, runAnalysis, saveProject, hover, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe,
-    renderCanvas, renderOverlay, scheduleCanvasRender, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
-    renderAll, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
+    renderCanvas, renderOverlay, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
+    renderAll, renderSelection, scheduleDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
   let canvasTouch = null;
 
   // ---- plot pointer session (the scope plot shares pointerOwnerId with the canvas)
@@ -67,7 +67,12 @@ export function createEditorInput(deps) {
     state.pointerOwnerId = null;
     releasePointer(elements["wave-plot"], pointerId);
     if (reason !== "commit") scopeView.restore(drag.view);
-    else if (isTapGesture(drag.maxDistance)) scopeView.pinCursorAt(drag.lastPoint ?? drag.point);
+    else if (isTapGesture(drag.maxDistance)) {
+      const point = drag.lastPoint ?? drag.point;
+      // Shift+click, or a tap while "B 커서" is armed, places the reference cursor B; a plain tap pins cursor A.
+      if (drag.shift || scopeView.bArmed) scopeView.placeB(point);
+      else scopeView.pinCursorAt(point);
+    }
     return true;
   };
   const cancelPlotSession = () => { if (plotDrag) finishPlotPointer(plotDrag.pointerId, "cancel"); };
@@ -76,6 +81,18 @@ export function createEditorInput(deps) {
 
   function capturePointer(element, pointerId) {
     try { element.setPointerCapture?.(pointerId); } catch { /* synthetic/ended pointers may not be capturable */ }
+  }
+
+  /**
+   * Chromium occasionally drops a mouse/pen capture right after granting it (a "gotpointercapture" followed ~1 frame later by
+   * "lostpointercapture") while the button is still held. Cancelling the drag for that would undo a gesture the user is still making,
+   * so ask for the capture again (a bounded number of times); a real loss still ends the gesture.
+   */
+  function recaptureWhilePressed(element, event, session) {
+    if (!session || !ownsPointer(session, event.pointerId) || event.pointerType === "touch" || !(event.buttons & 1)) return false;
+    session.recaptures = (session.recaptures ?? 0) + 1;
+    if (session.recaptures > 5) return false;
+    try { element.setPointerCapture(event.pointerId); return true; } catch { return false; }
   }
 
   function releasePointer(element, pointerId) {
@@ -194,67 +211,76 @@ export function createEditorInput(deps) {
     if (state.tool === "voltage-probe") addVoltageProbe(componentId, pin, wireId);
   }
 
-  // ---- per-item event binding for the freshly rendered canvas
+  // ---- delegated item events: bound once on the layer roots, so re-rendering the layers never re-binds listeners
+
+  const closestIn = (event, selector) => event.target?.closest?.(selector) ?? null;
+  const PIN_SELECTOR = ".pin, .pin-hit";
 
   function bindCanvasItems() {
-    elements["component-layer"].querySelectorAll("[data-show-connection], [data-delete-component]").forEach((button) => {
-      const activate = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const id = button.dataset.deleteComponent ?? button.dataset.showConnection;
-        state.selected = { kind: "component", id };
-        if (button.dataset.deleteComponent) deleteSelection();
-        else { showInspector(); renderAll(); }
-      };
-      button.addEventListener("pointerdown", (event) => event.stopPropagation());
-      button.addEventListener("click", activate);
-      button.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) activate(event); });
+    const components = elements["component-layer"];
+    const activateBadge = (event, button) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const id = button.dataset.deleteComponent ?? button.dataset.showConnection;
+      state.selected = { kind: "component", id };
+      if (button.dataset.deleteComponent) deleteSelection();
+      else { showInspector(); renderAll(); }
+    };
+    components.addEventListener("pointerdown", (event) => {
+      if (closestIn(event, "[data-show-connection], [data-delete-component]")) { event.stopPropagation(); return; }
+      const group = closestIn(event, ".component");
+      if (!group || state.tool !== "select" || closestIn(event, `${PIN_SELECTOR}, .value-label`) || event.button !== 0) return;
+      event.preventDefault();
+      const component = state.circuit.components.find((item) => item.id === group.dataset.id);
+      const point = svgPoint(event);
+      if (!component || !point) return;
+      if (!beginCanvasPointer(event, { kind: "component", id: component.id, start: point, origin: { x: component.x, y: component.y }, before: snapshot(), moved: false })) return;
+      state.selected = { kind: "component", id: component.id };
+      renderSelection();
     });
-    elements["component-layer"].querySelectorAll(".pin, .pin-hit").forEach((pin) => {
-      pin.addEventListener("click", (event) => {
+    components.addEventListener("click", (event) => {
+      const button = closestIn(event, "[data-show-connection], [data-delete-component]");
+      if (button) { activateBadge(event, button); return; }
+      const group = closestIn(event, ".component");
+      if (!group) return;
+      const pin = closestIn(event, PIN_SELECTOR);
+      if (pin) {
         event.stopPropagation();
-        const group = pin.closest(".component");
         handlePinClick(group.dataset.id, Number(pin.dataset.pin));
-      });
-      pin.addEventListener("contextmenu", (event) => {
-        const group = pin.closest(".component");
-        const keys = probeKeysForTarget(state.probes, { kind: "pin", componentId: group.dataset.id, pin: Number(pin.dataset.pin) });
-        if (keys.length) openProbeContextMenu(keys, event);
-      });
+        return;
+      }
+      if (performance.now() < state.ignoreClickUntil) return;
+      const id = group.dataset.id;
+      if (state.tool === "current-probe") addCurrentProbe(id);
+      else if (state.tool === "select") {
+        state.selected = { kind: "component", id };
+        // Selection only toggles classes, so the clicked text node survives and a native second click can still raise dblclick.
+        renderSelection();
+      }
     });
-    elements["component-layer"].querySelectorAll(".component").forEach((group) => {
-      group.addEventListener("click", (event) => {
-        if (event.target.classList.contains("pin") || event.target.classList.contains("pin-hit") || performance.now() < state.ignoreClickUntil) return;
-        const id = group.dataset.id;
-        if (state.tool === "current-probe") addCurrentProbe(id);
-        else if (state.tool === "select") {
-          state.selected = { kind: "component", id };
-          // Preserve the clicked text node so a native second click can produce dblclick.
-          if (event.target.classList.contains("value-label")) renderInspector();
-          else renderAll();
-        }
-      });
-      group.querySelector(".value-label")?.addEventListener("dblclick", (event) => {
-        event.stopPropagation();
-        openInlineEditor(group.dataset.id, event.target.dataset.editProp, event);
-      });
-      group.addEventListener("pointerdown", (event) => {
-        if (state.tool !== "select" || event.target.classList.contains("pin") || event.target.classList.contains("pin-hit") || event.target.classList.contains("value-label") || event.button !== 0) return;
-        event.preventDefault();
-        const component = state.circuit.components.find((item) => item.id === group.dataset.id);
-        const point = svgPoint(event);
-        if (!point) return;
-        if (!beginCanvasPointer(event, { kind: "component", id: component.id, start: point, origin: { x: component.x, y: component.y }, before: snapshot(), moved: false })) return;
-        state.selected = { kind: "component", id: component.id };
-        renderInspector();
-      });
-      group.addEventListener("contextmenu", (event) => {
-        if (event.target.classList.contains("pin") || event.target.classList.contains("pin-hit")) return;
-        const keys = probeKeysForTarget(state.probes, { kind: "component", componentId: group.dataset.id });
-        if (keys.length) openProbeContextMenu(keys, event);
-      });
+    components.addEventListener("keydown", (event) => {
+      const button = closestIn(event, "[data-show-connection], [data-delete-component]");
+      if (button && ["Enter", " "].includes(event.key)) activateBadge(event, button);
     });
-    elements["wire-layer"].querySelectorAll("[data-wire-id]").forEach((group) => group.addEventListener("click", (event) => {
+    components.addEventListener("dblclick", (event) => {
+      const label = closestIn(event, ".value-label");
+      const group = closestIn(event, ".component");
+      if (!label || !group) return;
+      event.stopPropagation();
+      openInlineEditor(group.dataset.id, label.dataset.editProp, event);
+    });
+    components.addEventListener("contextmenu", (event) => {
+      const group = closestIn(event, ".component");
+      if (!group) return;
+      const pin = closestIn(event, PIN_SELECTOR);
+      const keys = probeKeysForTarget(state.probes, pin ? { kind: "pin", componentId: group.dataset.id, pin: Number(pin.dataset.pin) } : { kind: "component", componentId: group.dataset.id });
+      if (keys.length) openProbeContextMenu(keys, event);
+    });
+
+    const wires = elements["wire-layer"];
+    wires.addEventListener("click", (event) => {
+      const group = closestIn(event, "[data-wire-id]");
+      if (!group) return;
       event.stopPropagation();
       const wire = state.circuit.wires.find((item) => item.id === group.dataset.wireId);
       if (!wire) return;
@@ -262,46 +288,49 @@ export function createEditorInput(deps) {
       else if (state.tool === "voltage-probe") addVoltageProbeEndpoint(wire.a.componentId !== undefined ? wire.a : wire.b, wire.id);
       else if (state.tool === "select") {
         state.selected = { kind: "wire", id: wire.id };
-        elements["wire-layer"].querySelectorAll(".wire").forEach((line) => line.classList.toggle("selected", line.closest("[data-wire-id]")?.dataset.wireId === wire.id));
-        renderInspector();
-        elements["delete-button"].disabled = false;
+        renderSelection();
       }
-    }));
-    elements["wire-layer"].querySelectorAll("[data-wire-id]").forEach((group) => group.addEventListener("dblclick", (event) => {
-      if (state.tool !== "select" || state.pendingPin) return;
+    });
+    wires.addEventListener("dblclick", (event) => {
+      const group = closestIn(event, "[data-wire-id]");
+      if (!group || state.tool !== "select" || state.pendingPin) return;
       event.stopPropagation();
       createJunctionOnWire(group.dataset.wireId, svgPoint(event));
-    }));
-    elements["wire-layer"].querySelectorAll("[data-wire-id]").forEach((group) => group.addEventListener("contextmenu", (event) => {
+    });
+    wires.addEventListener("contextmenu", (event) => {
+      const group = closestIn(event, "[data-wire-id]");
+      if (!group) return;
       const keys = probeKeysForTarget(state.probes, { kind: "wire", wireId: group.dataset.wireId });
       if (keys.length) openProbeContextMenu(keys, event);
-    }));
-  }
+    });
 
-  function bindOverlayItems() {
-    elements["overlay-layer"].querySelectorAll("[data-junction-id]").forEach((group) => {
-      group.addEventListener("click", (event) => {
-        event.stopPropagation();
-        if (performance.now() < state.ignoreClickUntil) return;
-        const junctionId = group.dataset.junctionId;
-        if (state.tool === "voltage-probe") addVoltageProbeEndpoint({ junctionId });
-        else handleEndpointClick({ junctionId });
-      });
-      group.addEventListener("pointerdown", (event) => {
-        if (state.tool !== "select" || state.port.mode || event.button !== 0) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const junction = (state.circuit.junctions ?? []).find((item) => item.id === group.dataset.junctionId);
-        const point = svgPoint(event);
-        if (!point) return;
-        if (!beginCanvasPointer(event, { kind: "junction", id: junction.id, start: point, origin: { x: junction.x, y: junction.y }, before: snapshot(), moved: false })) return;
-        state.selected = { kind: "junction", id: junction.id };
-        renderInspector();
-      });
-      group.addEventListener("contextmenu", (event) => {
-        const keys = probeKeysForTarget(state.probes, { kind: "junction", junctionId: group.dataset.junctionId });
-        if (keys.length) openProbeContextMenu(keys, event);
-      });
+    const overlay = elements["overlay-layer"];
+    overlay.addEventListener("click", (event) => {
+      const group = closestIn(event, "[data-junction-id]");
+      if (!group) return;
+      event.stopPropagation();
+      if (performance.now() < state.ignoreClickUntil) return;
+      const junctionId = group.dataset.junctionId;
+      if (state.tool === "voltage-probe") addVoltageProbeEndpoint({ junctionId });
+      else handleEndpointClick({ junctionId });
+    });
+    overlay.addEventListener("pointerdown", (event) => {
+      const group = closestIn(event, "[data-junction-id]");
+      if (!group || state.tool !== "select" || state.port.mode || event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const junction = (state.circuit.junctions ?? []).find((item) => item.id === group.dataset.junctionId);
+      const point = svgPoint(event);
+      if (!junction || !point) return;
+      if (!beginCanvasPointer(event, { kind: "junction", id: junction.id, start: point, origin: { x: junction.x, y: junction.y }, before: snapshot(), moved: false })) return;
+      state.selected = { kind: "junction", id: junction.id };
+      renderSelection();
+    });
+    overlay.addEventListener("contextmenu", (event) => {
+      const group = closestIn(event, "[data-junction-id]");
+      if (!group) return;
+      const keys = probeKeysForTarget(state.probes, { kind: "junction", junctionId: group.dataset.junctionId });
+      if (keys.length) openProbeContextMenu(keys, event);
     });
   }
 
@@ -535,7 +564,7 @@ export function createEditorInput(deps) {
       // Pointer capture retargets the subsequent click to the SVG root. Commit the
       // selection visuals here so a normal tap exposes its real delete button.
       state.ignoreClickUntil = performance.now() + 180;
-      renderAll();
+      renderSelection();
     }
     if (drag.moved) {
       state.ignoreClickUntil = performance.now() + 180;
@@ -560,7 +589,7 @@ export function createEditorInput(deps) {
     const item = drag.kind === "junction" ? (state.circuit.junctions ?? []).find(j => j.id === drag.id) : state.circuit.components.find(c => c.id === drag.id);
     if (!item) return;
     Object.assign(item, snapPoint({ x: drag.origin.x + point.x - drag.start.x, y: drag.origin.y + point.y - drag.start.y }));
-    scheduleCanvasRender();
+    scheduleDragUpdate(drag.kind, drag.id);
   }
 
   // ---- touch hit testing and routing
@@ -639,29 +668,29 @@ export function createEditorInput(deps) {
         const point = svgPoint(event); if(!target || !point || state.tool === "pan")return;
         hover.showTouch(target, event.clientX, event.clientY);
         if(target.kind === "delete") { if(state.selected?.kind === "component" && state.selected.id === target.id) deleteSelection(); return; }
-        if(target.kind === "properties") { state.selected={kind:"component",id:target.id}; renderAll(); showInspector(); return; }
+        if(target.kind === "properties") { state.selected={kind:"component",id:target.id}; renderSelection(); showInspector(); return; }
         if(target.kind === "pin") { handlePinClick(target.id,target.pin); return; }
         if(target.kind === "junction") {
           if(state.tool === "voltage-probe") addVoltageProbeEndpoint({junctionId:target.id});
           else if(state.port.mode || state.tool === "wire" || state.pendingPin) handleEndpointClick({junctionId:target.id});
-          else { state.selected={kind:"junction",id:target.id};renderAll(); }
+          else { state.selected={kind:"junction",id:target.id};renderSelection(); }
           return;
         }
         if(target.kind === "component") {
           if(state.tool === "current-probe")addCurrentProbe(target.id);
-          else {state.selected={kind:"component",id:target.id};renderAll();}
+          else {state.selected={kind:"component",id:target.id};renderSelection();}
           return;
         }
         if(target.kind === "wire") {
           const wire=state.circuit.wires.find(w=>w.id===target.id); if(!wire)return;
           if(state.pendingPin)createJunctionAndConnect(wire.id,point);
           else if(state.tool === "voltage-probe")addVoltageProbeEndpoint(wire.a.componentId !== undefined ? wire.a : wire.b,wire.id);
-          else if(state.tool === "select"){state.selected={kind:"wire",id:wire.id};renderAll();}
+          else if(state.tool === "select"){state.selected={kind:"wire",id:wire.id};renderSelection();}
           return;
         }
         if(state.pendingPin)addPendingWaypoint(point);
         else if(state.tool.startsWith("place:"))placeComponent({clientX:event.clientX,clientY:event.clientY,target:svg.querySelector(".canvas-bg")});
-        else if(state.tool === "select"){state.selected=null;renderAll();}
+        else if(state.tool === "select"){state.selected=null;renderSelection();}
       },
     });
   }
@@ -681,6 +710,7 @@ export function createEditorInput(deps) {
 
   /** Register every canvas, plot, toolbar and keyboard listener owned by this module. */
   function attach() {
+    bindCanvasItems();
     document.addEventListener("click", (event) => {
       if (!event.target.closest("#probe-context-menu")) closeProbeContextMenu();
     });
@@ -697,7 +727,7 @@ export function createEditorInput(deps) {
           return;
         }
         placeComponent(event);
-        if (state.tool === "select" && performance.now() >= state.ignoreClickUntil) { state.selected = null; renderAll(); }
+        if (state.tool === "select" && performance.now() >= state.ignoreClickUntil) { state.selected = null; renderSelection(); }
       }
     });
     window.addEventListener("pointermove", (event) => {
@@ -710,7 +740,9 @@ export function createEditorInput(deps) {
     });
     window.addEventListener("pointerup", (event) => { if (workspace.circuitActive) finishCanvasPointer(event.pointerId, "commit"); });
     elements["circuit-canvas"].addEventListener("pointercancel", (event) => finishCanvasPointer(event.pointerId, "cancel"));
-    elements["circuit-canvas"].addEventListener("lostpointercapture", (event) => finishCanvasPointer(event.pointerId, "lost-capture"));
+    elements["circuit-canvas"].addEventListener("lostpointercapture", (event) => {
+      if (!recaptureWhilePressed(elements["circuit-canvas"], event, state.drag)) finishCanvasPointer(event.pointerId, "lost-capture");
+    });
     elements["circuit-canvas"].addEventListener("wheel", (event) => {
       event.preventDefault();
       if (wheelAdjustValue(event)) return;
@@ -726,12 +758,12 @@ export function createEditorInput(deps) {
     elements["rotate-button"].addEventListener("click", () => rotateSelection(1));
     elements["delete-button"].addEventListener("click", deleteSelection);
     elements["wave-plot"].addEventListener("wheel", (event) => {
-      if (!state.result) return;
+      if (!scopeView.result) return;
       event.preventDefault();
       scopeView.wheel(event);
     }, { passive: false });
     elements["wave-plot"].addEventListener("pointerdown", (event) => {
-      if (!state.result || state.result.analysis === "dc" || event.button !== 0 || state.pointerOwnerId !== null) return;
+      if (!scopeView.result || scopeView.result.analysis === "dc" || event.button !== 0 || state.pointerOwnerId !== null) return;
       const point = scopeView.point(event);
       // Pointer coordinates are integer CSS pixels while the SVG plot edge may be
       // fractional. Accept at most one SVG unit so the first/last sample remains
@@ -739,7 +771,7 @@ export function createEditorInput(deps) {
       if (!scopeView.inside(point, 1)) return;
       event.preventDefault();
       const clientPoint = { x: event.clientX, y: event.clientY };
-      const session = beginPointerSession(plotDrag, event.pointerId, { point, lastPoint: point, clientPoint, lastClientPoint: clientPoint, maxDistance: 0, panned: false, view: scopeView.inspect() });
+      const session = beginPointerSession(plotDrag, event.pointerId, { point, lastPoint: point, clientPoint, lastClientPoint: clientPoint, maxDistance: 0, panned: false, shift: event.shiftKey, view: scopeView.inspect() });
       if (!session || session === plotDrag) return;
       plotDrag = session;
       state.pointerOwnerId = event.pointerId;
@@ -764,9 +796,11 @@ export function createEditorInput(deps) {
     });
     window.addEventListener("pointerup", (event) => { if (workspace.circuitActive) finishPlotPointer(event.pointerId, "commit", event); });
     elements["wave-plot"].addEventListener("pointercancel", (event) => finishPlotPointer(event.pointerId, "cancel"));
-    elements["wave-plot"].addEventListener("lostpointercapture", (event) => finishPlotPointer(event.pointerId, "lost-capture"));
+    elements["wave-plot"].addEventListener("lostpointercapture", (event) => {
+      if (!recaptureWhilePressed(elements["wave-plot"], event, plotDrag)) finishPlotPointer(event.pointerId, "lost-capture");
+    });
     elements["wave-plot"].addEventListener("keydown", (event) => {
-      if (scopeView.keyCursor(event.key)) event.preventDefault();
+      if (scopeView.keyCursor(event.key, event.shiftKey)) event.preventDefault();
     });
     window.addEventListener("blur", () => {
       if (state.drag) finishCanvasPointer(state.drag.pointerId, "blur");
@@ -799,5 +833,5 @@ export function createEditorInput(deps) {
     setupCanvasTouch();
   }
 
-  return { setTool, renderPalette, bindCanvasItems, bindOverlayItems, openProbeContextMenu, closeProbeContextMenu, fitCanvas, cancelPointerSessions, cancelInteractions, attach };
+  return { setTool, renderPalette, openProbeContextMenu, closeProbeContextMenu, fitCanvas, cancelPointerSessions, cancelInteractions, attach };
 }

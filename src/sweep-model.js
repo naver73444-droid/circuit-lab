@@ -256,3 +256,30 @@ export function mergeSweepResults({ plan, results, probe, acView = "magnitude", 
   const sharedX = series.every((item) => item.xValues.length === first.length && item.xValues.every((value, i) => value === first[i]));
   return { ok: true, analysis, sharedX, xValues: first, series, skipped };
 }
+
+/**
+ * 인스펙터의 "스윕" 대상: R·C·L의 값과 간략 OP AMP의 개방루프 이득만 (그 외 부품은 null).
+ * 반환: {componentId, ref, type, key, unit, base} — base는 현재 값 문자열.
+ */
+export function sweepTarget(component) {
+  if (!component || !["R", "C", "L", "OPAMP"].includes(component.type)) return null;
+  const prop = sweepableProps(component)[0];
+  if (!prop) return null;
+  return {
+    componentId: component.id,
+    ref: component.props?.ref ?? component.id,
+    type: component.type,
+    key: prop.key,
+    unit: prop.unit,
+    base: String(component.props?.[prop.key] ?? ""),
+  };
+}
+
+/** 시작·끝 입력 칸이 비어 있을 때 쓰이는 기본값(현재 값의 1/10 ~ 10배) 문자열. 기준값이 양수가 아니면 null. */
+export function sweepDefaults(base) {
+  const parsed = parseNumber(base, "현재 값");
+  if (!parsed.ok || !(parsed.value > 0)) return null;
+  const from = formatSIValue(parsed.value / 10);
+  const to = formatSIValue(parsed.value * 10);
+  return Number.isFinite(parsed.value * 10) ? { from, to } : null;
+}

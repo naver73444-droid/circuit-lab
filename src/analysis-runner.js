@@ -11,6 +11,8 @@ import { refreshInvalidatedPortPanel } from "./port-ui-state.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { formatPortResult, probeKeysForTarget } from "./ui-model.js";
+import { createSweepRunner, createSweepState } from "./sweep-runner.js";
+import { sweepLegendMarkup, syncSweepStatus } from "./sweep-panel.js";
 
 /** Run/result slice of the shared state: results, run status, auto-update and the DC port analysis. */
 export function createRunState() {
@@ -29,6 +31,7 @@ export function createRunState() {
     runSerial: 0,
     recommendation: "",
     port: { mode: null, p: null, n: null, loadIds: [], result: null, stale: false, error: null },
+    sweep: createSweepState(),
   };
 }
 
@@ -38,11 +41,32 @@ export function createRunState() {
  */
 export function createAnalysisRunner(deps) {
   const { state, elements, workspace, inputDrafts, scopeView, phasorView, mutate, currentConnections, bumpGeneration, removeProbe, renderCanvas, renderAll, setStatus, setTool, showCanvas,
-    phasorPanelVisible, commitPendingInputs, updateDraftNotice, openProbeContextMenu } = deps;
+    phasorPanelVisible, commitPendingInputs, updateDraftNotice, openProbeContextMenu, measureView } = deps;
   const analysisWorkerClient = new AnalysisWorkerClient();
   let activeAnalysisJob = null;
   let seriesCache = null;
   const CURSOR_HINT = "그래프를 눌러 값을 읽습니다.";
+  const resultIds = new WeakMap();
+  let resultIdCounter = 0;
+  const resultId = (result) => { if (!result) return 0; if (!resultIds.has(result)) resultIds.set(result, (resultIdCounter += 1)); return resultIds.get(result); };
+
+  // Parameter sweep: shares this runner's single job slot, worker client and cancel button.
+  const sweepRunner = createSweepRunner({
+    state, client: analysisWorkerClient, setStatus, commitPendingInputs, presentProbe: (probe) => presentProbe(probe),
+    synchronizeIntent: () => synchronizeIntent(), cancelScheduledRun: () => cancelScheduledRun(),
+    activeKey: () => scopeView.activeTraceKey,
+    beginJob: () => {
+      invalidateActiveAnalysis("replaced-by-sweep");
+      const job = { kind: "sweep", serial: ++state.runSerial, requestId: null, generation: state.generation };
+      activeAnalysisJob = job;
+      updateAnalysisControls();
+      return job;
+    },
+    endJob: (job) => { if (activeAnalysisJob === job) { activeAnalysisJob = null; updateAnalysisControls(); } },
+    isCurrent: (job) => activeAnalysisJob === job && job.serial === state.runSerial && job.generation === state.generation,
+    onState: () => syncSweepStatus(state.sweep),
+    onOverlay: () => { renderProbes(); renderPlot(); },
+  });
 
   // ---- run control: worker job, cancellation, stale state, auto-update scheduling
 
@@ -188,6 +212,7 @@ export function createAnalysisRunner(deps) {
       state.result = result;
       state.phasorResult = phasorResult;
       state.stale = false;
+      sweepRunner.clear({ quiet: true });
       state.view = { min: 0, max: 1 };
       state.cursorIndex = state.result.xValues.length > 1 ? state.result.xValues.length - 1 : 0;
       state.runState = { status: "success", analysis: state.settings.analysis, generation: state.generation, error: null };
@@ -229,6 +254,11 @@ export function createAnalysisRunner(deps) {
   }
 
   function renderProbes() {
+    const sweepView = sweepRunner.view(state.acView);
+    if (sweepView) {
+      elements["probe-list"].innerHTML = sweepLegendMarkup(sweepView);
+      return;
+    }
     if (!state.probes.length) {
       elements["probe-list"].innerHTML = `<span class="probe-empty">추가된 프로브 없음</span>`;
       return;
@@ -311,14 +341,34 @@ export function createAnalysisRunner(deps) {
     if (!workspace.circuitActive) { workspace.renderDeferred = true; return; }
     const series = seriesForProbes();
     const hasData = Boolean(state.result && series.length);
-    elements["plot-empty"].classList.toggle("hidden", hasData);
+    const sweepView = sweepRunner.view(state.acView);
+    elements["plot-empty"].classList.toggle("hidden", hasData || Boolean(sweepView));
     elements["csv-button"].disabled = !hasData || state.stale || state.runState.status !== "success";
+    const staleNow = state.stale || state.runState.status === "stale";
+    if (sweepView) {
+      const { merged, resultLike, overlay } = sweepView;
+      const isAc = resultLike.analysis === "ac";
+      scopeView.setData(resultLike, merged.series.map((item) => ({ key: item.key, label: item.label, color: item.color, quantity: item.quantity, values: isAc ? item.values : item.raw })), false);
+      measureView.update({
+        analysis: resultLike.analysis, key: `sweep:${overlay.id}`, maxRows: merged.series.length,
+        traces: merged.series.map((item) => ({ key: item.key, label: item.label, color: item.color, baseUnit: item.baseUnit, raw: item.raw, xValues: item.xValues })),
+      });
+      return;
+    }
     const viewSeries = series.map((item) => ({
       key: item.probe.key, label: item.probe.label, color: item.probe.color,
       quantity: state.result?.analysis === "ac" ? item.unit : item.probe.kind === "voltage" ? "V" : "A",
       values: state.result?.analysis === "ac" ? item.values : item.raw,
     }));
-    scopeView.setData(state.result, viewSeries, state.stale || state.runState.status === "stale");
+    scopeView.setData(state.result, viewSeries, staleNow);
+    if (hasData) {
+      // Measurements use the raw samples and are recomputed only for a new result or a different set of traces.
+      measureView.update({
+        analysis: state.result.analysis, isStale: staleNow,
+        key: `${resultId(state.result)}|${series.map((item) => `${item.probe.key}~${item.probe.label}`).join(",")}`,
+        traces: series.map((item) => ({ key: item.probe.key, label: item.probe.label, color: item.probe.color, baseUnit: item.probe.kind === "voltage" ? "V" : "A", raw: item.raw, xValues: state.result.xValues })),
+      });
+    } else measureView.clear();
     if (!hasData) {
       const availability = resultAvailabilityText(state.runState, state.settings.analysis, state.probes.length);
       elements["plot-empty"].querySelector("span").textContent = availability
@@ -448,6 +498,17 @@ export function createAnalysisRunner(deps) {
     renderCanvas();
   }
 
+  function clearSweep() {
+    if (sweepRunner.clear()) { renderProbes(); renderPlot(); }
+  }
+
+  /** New project / restored snapshot: nothing of an old sweep may survive. */
+  function resetSweep() {
+    sweepRunner.clear({ quiet: true });
+    Object.assign(state.sweep, { running: false, progress: "", message: "", messageKind: "" });
+    state.sweep.form.componentId = null;
+  }
+
   /** Register the run, port, AC-view and scope-reset listeners. */
   function attach() {
     elements["analysis-intent"].addEventListener("change", () => {
@@ -467,6 +528,7 @@ export function createAnalysisRunner(deps) {
     elements["port-clear-button"].addEventListener("click", clearPort);
     elements["port-run-button"].addEventListener("click", runPortAnalysis);
     elements["reset-view-button"].addEventListener("click", () => scopeView.fit());
+    elements["probe-list"].addEventListener("click", (event) => { if (event.target.closest("[data-sweep-clear-legend]")) clearSweep(); });
     elements["ac-view-toggle"].querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
       state.acView = button.dataset.acView;
       elements["ac-view-toggle"].querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
@@ -478,5 +540,6 @@ export function createAnalysisRunner(deps) {
   return {
     updateAnalysisControls, invalidateActiveAnalysis, cancelScheduledRun, synchronizeIntent, markStale, markInputDirty, setAutoHint, scheduleAutoRun, runAnalysis, runPortAnalysis,
     renderProbes, renderPlot, renderPhasorLearning, renderPortPanel, renderFailureDiagnostic, seriesForProbes, presentProbe, assignPortEndpoint, attach,
+    runSweep: (componentId) => sweepRunner.run(componentId), clearSweep, resetSweep, sweepView: () => sweepRunner.view(state.acView),
   };
 }

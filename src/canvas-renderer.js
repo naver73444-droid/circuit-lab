@@ -15,11 +15,19 @@ import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { sourceInlineDescriptor } from "./ui-model.js";
 
-/** SVG drawing of the circuit canvas. Reads the editor state and never changes it; item event binding is injected. */
+/**
+ * SVG drawing of the circuit canvas. Reads the editor state and never changes it. Pointer/keyboard handling is delegated
+ * on the layer roots by editor-input (bound once), so a render only writes markup and never re-binds listeners.
+ * A component drag takes a cheaper path (updateDragged): move that part's <g transform> and the `d` of the wires attached to it.
+ */
 export function createCanvasRenderer(deps) {
-  const { state, elements, workspace, currentConnections, bindCanvasItems, bindOverlayItems } = deps;
+  const { state, elements, workspace, currentConnections } = deps;
   let canvasFrame = null;
   let overlayFrame = null;
+  let dragFrame = null;
+  let pendingDrag = null;
+  // Render counters (debug hook): full rebuilds vs cheap drag updates.
+  const stats = { full: 0, overlay: 0, drag: 0, dragFallback: 0, selection: 0 };
 
   function updateCanvasView() {
     const v = state.canvasView;
@@ -34,6 +42,19 @@ export function createCanvasRenderer(deps) {
     if (canvasFrame === null) canvasFrame = requestAnimationFrame(() => { canvasFrame = null; renderCanvas(); });
   }
 
+  /** Frame-batched drag update: only the dragged item's group and its wires change. Falls back to a full render if the DOM is not there. */
+  function scheduleDragUpdate(kind, id) {
+    pendingDrag = { kind, id };
+    if (dragFrame !== null) return;
+    dragFrame = requestAnimationFrame(() => {
+      dragFrame = null;
+      const job = pendingDrag;
+      pendingDrag = null;
+      if (!job || !workspace.circuitActive) return;
+      if (!updateDragged(job.kind, job.id)) { stats.dragFallback += 1; renderCanvas(); }
+    });
+  }
+
   function localPin(type, pin) {
     return geometryLocalPin(type, pin, circuitGeometryVersion(state.circuit));
   }
@@ -41,6 +62,14 @@ export function createCanvasRenderer(deps) {
   function pinPosition(component, pin) {
     return geometryPinPosition(component, pin, circuitGeometryVersion(state.circuit));
   }
+
+  function deleteButtonMarkup(component) {
+    const ref = escapeHtml(component.props?.ref ?? component.id);
+    const badgeRotation = -Number(component.rotation ?? 0);
+    return `<g class="component-delete" data-delete-component="${escapeHtml(component.id)}" role="button" tabindex="0" aria-label="${ref} 삭제" transform="translate(35 -34) rotate(${badgeRotation})"><title>부품 삭제 · Ctrl+Z로 복원</title><rect x="-15" y="-15" width="30" height="30" rx="3"/><text y="4">×</text></g>`;
+  }
+
+  const componentTransform = (component) => `translate(${component.x} ${component.y}) rotate(${component.rotation ?? 0})`;
 
   function componentMarkup(component, connection) {
     const ref = escapeHtml(component.props?.ref ?? component.id);
@@ -94,7 +123,7 @@ export function createCanvasRenderer(deps) {
     const connectionStatus = connection?.status ?? "solver-check";
     const badgeRotation = -Number(component.rotation ?? 0);
     const connectionMarkup = connectionStatus !== "referenced" ? `<rect class="connection-halo status-${connectionStatus}" x="-47" y="-47" width="94" height="94" rx="3"/><g class="connection-badge status-${connectionStatus}" data-show-connection="${escapeHtml(component.id)}" role="button" tabindex="0" aria-label="${ref} 연결 상태 보기" transform="translate(-35 -34) rotate(${badgeRotation})"><title>${escapeHtml(connection?.label ?? "연결 상태 보기")} · 클릭하여 설명</title><circle r="11"/><text y="4">${escapeHtml(connection?.badge ?? "?")}</text></g>` : "";
-    const deleteMarkup = selected ? `<g class="component-delete" data-delete-component="${escapeHtml(component.id)}" role="button" tabindex="0" aria-label="${ref} 삭제" transform="translate(35 -34) rotate(${badgeRotation})"><title>부품 삭제 · Ctrl+Z로 복원</title><rect x="-15" y="-15" width="30" height="30" rx="3"/><text y="4">×</text></g>` : "";
+    const deleteMarkup = selected ? deleteButtonMarkup(component) : "";
     const upright = -Number(component.rotation ?? 0);
     const vertical = Math.abs(Math.sin(Number(component.rotation ?? 0) * Math.PI / 180)) > .7;
     const labelX = vertical ? 30 : 0;
@@ -103,7 +132,7 @@ export function createCanvasRenderer(deps) {
     const anchor = vertical ? "start" : "middle";
     const modeMarkup = ["V", "I"].includes(component.type) && !sourceDescriptor ? `<text class="source-mode-label" x="${labelX}" y="${valueY + 16}" style="text-anchor:${anchor}">${escapeHtml(mode)}</text>` : "";
     const labels = `<g class="upright-labels" transform="rotate(${upright})"><text class="label" x="${labelX}" y="${labelY}" style="text-anchor:${anchor}">${ref}</text>${value ? `<text class="value-label" data-edit-prop="${editProp}" x="${labelX}" y="${valueY}" style="text-anchor:${anchor}">${value}</text>` : ""}${modeMarkup}</g>`;
-    return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${connectionStatus}" aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="translate(${component.x} ${component.y}) rotate(${component.rotation ?? 0})"${color}>${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${labels}${deleteMarkup}</g>`;
+    return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${connectionStatus}" aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${labels}${deleteMarkup}</g>`;
   }
 
   function endpointPosition(endpoint, componentById = new Map(state.circuit.components.map((component) => [component.id, component]))) {
@@ -137,7 +166,7 @@ export function createCanvasRenderer(deps) {
       const component = componentById.get(componentId);
       if (!component) continue;
       const position = pinPosition(component, Number(pin));
-      junctions.push(`<circle class="junction" cx="${position.x}" cy="${position.y}" r="5"/>`);
+      junctions.push(`<circle class="junction" data-jp="${escapeHtml(componentId)}:${pin}" cx="${position.x}" cy="${position.y}" r="5"/>`);
     }
     for (const junction of state.circuit.junctions ?? []) {
       const selected = state.selected?.kind === "junction" && state.selected.id === junction.id ? " selected" : "";
@@ -157,7 +186,7 @@ export function createCanvasRenderer(deps) {
       }
     }
     elements["overlay-layer"].innerHTML = junctions.join("");
-    bindOverlayItems();
+    stats.overlay += 1;
   }
 
   function renderCanvas() {
@@ -197,7 +226,72 @@ export function createCanvasRenderer(deps) {
     elements["connection-summary"].classList.toggle("has-stale", state.runState.status === "stale");
     elements["canvas-title"].textContent = state.title;
     elements["canvas-subtitle"].textContent = state.subtitle;
-    bindCanvasItems();
+    stats.full += 1;
+  }
+
+  const wireGroup = (id) => elements["wire-layer"].querySelector(`[data-wire-id="${CSS.escape(id)}"]`);
+
+  /**
+   * Cheap drag frame. Returns false when the expected DOM is missing so the caller can do a full render instead.
+   * Writes exactly the attributes a full render would write for the same state.
+   */
+  function updateDragged(kind, id) {
+    const byId = (list) => list.find((item) => item.id === id);
+    const touches = (end) => (kind === "junction" ? end?.junctionId === id : end?.componentId === id);
+    if (kind === "component") {
+      const component = byId(state.circuit.components);
+      const group = elements["component-layer"].querySelector(`.component[data-id="${CSS.escape(id)}"]`);
+      if (!component || !group) return false;
+      group.setAttribute("transform", componentTransform(component));
+      for (let pin = 0; pin < pinCount(component.type); pin += 1) {
+        const dot = elements["overlay-layer"].querySelector(`[data-jp="${CSS.escape(id)}:${pin}"]`);
+        if (!dot) continue;
+        const position = pinPosition(component, pin);
+        dot.setAttribute("cx", position.x);
+        dot.setAttribute("cy", position.y);
+      }
+    } else {
+      const junction = byId(state.circuit.junctions ?? []);
+      const group = elements["overlay-layer"].querySelector(`[data-junction-id="${CSS.escape(id)}"]`);
+      if (!junction || !group) return false;
+      for (const circle of group.querySelectorAll("circle")) { circle.setAttribute("cx", junction.x); circle.setAttribute("cy", junction.y); }
+    }
+    const componentById = new Map(state.circuit.components.map((component) => [component.id, component]));
+    for (const wire of state.circuit.wires) {
+      if (!touches(wire.a) && !touches(wire.b)) continue;
+      const group = wireGroup(wire.id);
+      const a = endpointPosition(wire.a, componentById);
+      const b = endpointPosition(wire.b, componentById);
+      if (!group || !a || !b) return false;
+      const path = polylinePath(wireRoute(wire, a, b));
+      for (const line of group.querySelectorAll("path")) line.setAttribute("d", path);
+    }
+    stats.drag += 1;
+    return true;
+  }
+
+  /** Selection change without a rebuild: toggle `selected` classes and the selected part's delete button. */
+  function applySelection() {
+    stats.selection += 1;
+    const selected = state.selected;
+    for (const group of elements["component-layer"].querySelectorAll(".component")) {
+      const on = selected?.kind === "component" && selected.id === group.dataset.id;
+      const probed = group.classList.contains("probed") ? " probed" : "";
+      group.setAttribute("class", `component${on ? " selected" : ""}${probed}`);
+      const button = group.querySelector(".component-delete");
+      if (on && !button) {
+        const component = state.circuit.components.find((item) => item.id === group.dataset.id);
+        if (component) group.insertAdjacentHTML("beforeend", deleteButtonMarkup(component));
+      } else if (!on && button) button.remove();
+    }
+    for (const group of elements["wire-layer"].querySelectorAll("[data-wire-id]")) {
+      const line = group.querySelector(".wire");
+      if (!line) continue;
+      const on = selected?.kind === "wire" && selected.id === group.dataset.wireId;
+      line.setAttribute("class", `wire${on ? " selected" : ""}${line.classList.contains("probed") ? " probed" : ""}`);
+    }
+    // Junction dots carry several state classes; their markup is small, so rebuild just that layer when one is involved.
+    if (selected?.kind === "junction" || elements["overlay-layer"].querySelector(".junction.selected")) renderOverlay();
   }
 
   function routeForWireId(wireId) {
@@ -208,5 +302,5 @@ export function createCanvasRenderer(deps) {
     return a && b ? wireRoute(wire, a, b) : [];
   }
 
-  return { updateCanvasView, scheduleCanvasRender, scheduleOverlayRender, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId };
+  return { updateCanvasView, scheduleCanvasRender, scheduleOverlayRender, scheduleDragUpdate, updateDragged, applySelection, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId, stats };
 }

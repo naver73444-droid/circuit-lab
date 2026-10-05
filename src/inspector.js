@@ -3,11 +3,12 @@ import { classifyNumericInput } from "./circuit-edit.js";
 import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { controlReferenceModel, controlledSourceInputModel, passiveSliderModel } from "./ui-model.js";
+import { bindSweep, sweepMarkup } from "./sweep-panel.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
 export function createInspector(deps) {
   const { state, elements, workspace, inputDrafts, phasorView, mutate, currentConnections, synchronizeIntent, cancelScheduledRun, markInputDirty, scheduleAutoRun, renderPhasorLearning,
-    setStatus, renderAll, showInspector, isCircuitUiActive } = deps;
+    setStatus, renderAll, showInspector, isCircuitUiActive, runSweep, clearSweep } = deps;
 
   // Inspector re-renders rebuild innerHTML, which would drop keyboard focus (Tab lands on BODY).
   // Remember the focused control (and any in-flight Tab direction) by a stable key, then re-focus it or its successor.
@@ -288,9 +289,11 @@ export function createInspector(deps) {
       if (control.status !== "valid") html += `<div class="connection-detail status-analysis-floating"><strong>제어 참조 오류</strong><span>${escapeHtml(control.reason)}</span><small>실행·정상 JSON 저장은 차단됩니다.</small></div>`;
     }
     if (component.type === "GND") html += `<p class="field-help">이 핀이 모든 전압 해석의 0 V 기준입니다.</p>`;
+    html += sweepMarkup(component, state);
     const savedFocus = captureInspectorFocus();
     elements["inspector-content"].innerHTML = html;
     applyInputDrafts(elements["inspector-content"], "prop", component);
+    bindSweep(elements["inspector-content"], { component, state, run: runSweep, clear: clearSweep });
     elements["inspector-content"].querySelectorAll("[data-prop-slider]").forEach((slider) => {
       slider.addEventListener("input", () => {
         const input = elements["inspector-content"].querySelector(`[data-prop="${slider.dataset.propSlider}"]`);

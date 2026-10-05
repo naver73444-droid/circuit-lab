@@ -3,7 +3,7 @@
  *
  * 모든 값은 solver가 낸 "원 표본(raw samples)" 기준입니다. 보간은 아래 항목에서만 쓰고
  * 각 항목의 note에 명시합니다.
- *   - 주기/주파수: 교차 시각을 인접 표본 사이 선형보간. 누락 구간(gap)을 사이에 둔 교차·주기는 이어 붙이지 않고,
+ *   - 주기/주파수: 교차 시각을 인접 표본 사이 선형보간(기본은 상승 교차, 상승 교차가 부족하고 하강 교차가 더 많으면 하강 교차 — 3주기 창처럼 시작점이 기준 수준에 걸린 경우). 누락 구간(gap)을 사이에 둔 교차·주기는 이어 붙이지 않고,
  *     한 연속 구간 안에서 완전한 주기가 2개 이상 있는 경우(가장 많은 구간)만 측정한다.
  *   - 상승시간: 10%·90% 교차점을 인접 표본 사이 선형보간
  *   - −3 dB 주파수: log10(f)–dB 선형보간(모든 주파수가 0보다 커야 하며, 교차 구간이 누락 구간에 걸치면 측정 불가)
@@ -187,9 +187,11 @@ export function measurePeriod(x, y, options = {}) {
     start = end;
   }
   let best = null; // 완전한 주기가 가장 많은 구간(동률이면 앞쪽)
+  let bestFalling = null;
   for (const [start, end] of segments) {
     let state = null; // "low" | "high" | null(대역 안)
     const rising = [];
+    const falling = [];
     for (let i = start; i < end; i += 1) {
       const value = prep.y[i];
       if (state === null) {
@@ -209,21 +211,33 @@ export function measurePeriod(x, y, options = {}) {
         rising.push(prep.x[j] + fraction * (prep.x[j + 1] - prep.x[j]));
       } else if (state === "high" && value <= level - half) {
         state = "low";
+        let j = i;
+        while (j > start && prep.y[j] <= level) j -= 1;
+        // j: level 초과인 마지막 표본, j+1: 처음으로 level 이하가 된 표본
+        if (prep.y[j] <= level) continue;
+        const y0 = prep.y[j];
+        const y1 = prep.y[j + 1];
+        const fraction = y1 === y0 ? 0 : (level - y0) / (y1 - y0);
+        falling.push(prep.x[j] + fraction * (prep.x[j + 1] - prep.x[j]));
       }
     }
     if (!best || rising.length > best.rising.length) best = { rising };
+    if (!bestFalling || falling.length > bestFalling.falling.length) bestFalling = { falling };
   }
-  const rising = best?.rising ?? [];
+  let rising = best?.rising ?? [];
+  let edgeName = "상승";
+  // 상승 교차만으로 완전한 주기 2개가 안 나오고 하강 교차가 더 많으면 하강 교차로 측정(예: 사인 3주기 창).
+  if (rising.length < 3 && (bestFalling?.falling.length ?? 0) > rising.length) { rising = bestFalling.falling; edgeName = "하강"; }
   const cycles = rising.length - 1;
   if (cycles < 2) {
     const where = segments.length > 1 ? `한 연속 구간 안에서 ` : "";
-    return { ...none(`${where}완전한 주기가 2개 이상 필요합니다(감지된 상승 교차 ${rising.length}개, 완전한 주기 ${Math.max(0, cycles)}개${segments.length > 1 ? `, 연속 구간 ${segments.length}개` : ""}).`), cycles: Math.max(0, cycles) };
+    return { ...none(`${where}완전한 주기가 2개 이상 필요합니다(감지된 ${edgeName} 교차 ${rising.length}개, 완전한 주기 ${Math.max(0, cycles)}개${segments.length > 1 ? `, 연속 구간 ${segments.length}개` : ""}).`), cycles: Math.max(0, cycles) };
   }
   const period = (rising.at(-1) - rising[0]) / cycles;
   if (!(period > 0)) return { ...none("주기가 0 이하로 계산되었습니다."), cycles };
   let worst = 0;
   for (let k = 1; k < rising.length; k += 1) worst = Math.max(worst, Math.abs((rising[k] - rising[k - 1]) / period - 1));
-  const base = `상승 교차 ${rising.length}개의 평균 간격, 교차 시각은 인접 표본 선형보간 · 기준 수준 ${options.level === "mean" ? "평균" : "최소·최대 중점"}${segments.length > 1 ? " · 누락 구간을 가로지르지 않고 가장 긴(주기가 많은) 연속 구간만 사용" : ""}`;
+  const base = `${edgeName} 교차 ${rising.length}개의 평균 간격, 교차 시각은 인접 표본 선형보간 · 기준 수준 ${options.level === "mean" ? "평균" : "최소·최대 중점"}${segments.length > 1 ? " · 누락 구간을 가로지르지 않고 가장 긴(주기가 많은) 연속 구간만 사용" : ""}`;
   const note = worst > 0.1 ? `${base} · 주기 간 편차 최대 ${(worst * 100).toFixed(1)} % (비주기 신호일 수 있음)` : base;
   return {
     period: item("period", "주기", period, units.xUnit, note, { cycles }),
@@ -368,8 +382,14 @@ export function measureCutoff(frequencies, magnitudeDb, options = {}) {
   let lower = null;
   for (let i = peak - 1; i >= 0; i -= 1) if (prep.y[i] <= target) { if (prep.gapBefore[i + 1]) blocked = true; else lower = interpolate(i, i + 1); break; }
   if (blocked) return { ...none("−3 dB 교차 구간이 누락 표본에 걸쳐 있어 보간할 수 없습니다."), referenceDb: reference, peakFrequency: prep.x[peak] };
-  const note = `최대 ${Number(reference.toPrecision(5))} dB 기준 −${Number(drop.toPrecision(5))} dB, log f–dB 선형보간${prep.dropped ? ` · 누락 표본 ${prep.dropped}개 건너뜀` : ""}`;
-  const extra = { referenceDb: reference, peakFrequency: prep.x[peak], lower, upper };
+  // 최대값이 해석 범위의 가장자리이고 곡선이 거기서도 가파르게 내려가면(1차 필터 기준 약 0.5 fc 이상) 진짜 통과대역 이득이 범위 밖일 수 있다.
+  let edge = false;
+  if (peak === 0 && prep.y.length > 1 && prep.x[1] > prep.x[0]) edge = (prep.y[1] - prep.y[0]) / (Math.log10(prep.x[1]) - Math.log10(prep.x[0])) < -3;
+  const last = prep.y.length - 1;
+  if (peak === last && last > 0 && prep.x[last] > prep.x[last - 1]) edge = (prep.y[last] - prep.y[last - 1]) / (Math.log10(prep.x[last]) - Math.log10(prep.x[last - 1])) > 3;
+  const edgeNote = edge ? " · 주의: 통과대역 이득이 해석 범위 밖에 있을 수 있어 범위 안 최대값 기준입니다(주파수 범위를 넓혀 확인하세요)" : "";
+  const note = `최대 ${Number(reference.toPrecision(5))} dB 기준 −${Number(drop.toPrecision(5))} dB, log f–dB 선형보간${prep.dropped ? ` · 누락 표본 ${prep.dropped}개 건너뜀` : ""}${edgeNote}`;
+  const extra = { referenceDb: reference, peakFrequency: prep.x[peak], lower, upper, edgeReference: edge };
   if (upper !== null && lower !== null) {
     return { ...item("cutoff", "−3 dB 대역폭", upper - lower, "Hz", `대역통과: ${note}`), type: "bandpass", bandwidth: upper - lower, ...extra };
   }
