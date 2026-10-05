@@ -12,6 +12,7 @@ for(const file of files){
  for(const path of imports)try{await access(resolve(root,'src',path));}catch{errors.push(`${file}: missing relative import ${path}`);}
  if(pure.has(file)&&/\b(?:window|document|localStorage|sessionStorage)\s*[.[]|\baddEventListener\s*\(/.test(source))errors.push(`${file}: browser dependency inside a pure model`);
  if(pure.has(file)&&imports.some(path=>/\/(?:app|scope-view|phasor-view|theme|trace-color)\.js$/.test(path)))errors.push(`${file}: model imports a view/controller`);
+ if(file!=='app.js'&&imports.some(path=>/(?:^|\/)app\.js$/.test(path)))errors.push(`${file}: imports the app coordinator; pass dependencies from app.js instead`);
  if(['scope-view.js','phasor-view.js'].includes(file)&&imports.some(path=>path.includes('circuit-engine')))errors.push('scope-view.js: display imports solver');
  if(file==='app.js'&&source.split('\n').length>1500)warnings.push('app.js remains a large coordinator; extract edit/run controllers in separately tested changes.');
 }
