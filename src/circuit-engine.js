@@ -642,17 +642,20 @@ function stampVoltage(A, b, a, z, branch, voltage) {
   b[branch] += voltage;
 }
 
-// A pivot is singular when it is negligible relative to the largest entry of
-// its ORIGINAL column (cancellation residue is ~1e-16 of that scale), so
-// uniformly tiny but well-conditioned systems (e.g. 1e15 ohm dividers) solve.
-// An all-zero column keeps an absolute floor and is always singular.
+// A pivot is singular only when it fails BOTH checks: it is below the old
+// absolute 1e-14 AND negligible relative to the largest entry of its ORIGINAL
+// column (cancellation residue is ~1e-16 of that scale). So uniformly tiny but
+// well-conditioned systems (1e15 ohm dividers) solve, and columns with +-1
+// coupling entries or huge gains (floating sources, op-amps) keep solving as
+// they did with the absolute rule. An all-zero column is always singular.
+const PIVOT_ABSOLUTE_TOLERANCE = 1e-14;
 const PIVOT_RELATIVE_TOLERANCE = 1e-12;
 const PIVOT_ABSOLUTE_FLOOR = 1e-300;
 
 // LU with partial pivoting on flat Float64Array storage (n^3/3 instead of the
 // n^3 of Gauss-Jordan). Pivot choice and the singular test are the same as the
 // Gauss-Jordan elimination it replaces: the largest |entry| of the (reduced)
-// column wins, and it must exceed the relative tolerance of the ORIGINAL column.
+// column wins, and it must pass the hybrid absolute/relative test above.
 // Reusable scratch buffers for one-shot solves (Newton iterations, DC, initial
 // state): small systems are dominated by typed-array allocation otherwise. The
 // solver is synchronous and never re-entered, so one module-level set is safe.
@@ -681,7 +684,7 @@ function luFactorInPlace(lu, columnScale, pivots, n) {
       const magnitude = Math.abs(lu[row * n + column]);
       if (magnitude > best) { pivot = row; best = magnitude; }
     }
-    if (best <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "회로 방정식이 특이행렬입니다.", "떠 있는 노드, 이상적 전원 단락·모순, 병렬 이상 전원을 확인하세요.");
+    if (best < PIVOT_ABSOLUTE_TOLERANCE && best <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "회로 방정식이 특이행렬입니다.", "떠 있는 노드, 이상적 전원 단락·모순, 병렬 이상 전원을 확인하세요.");
     pivots[column] = pivot;
     if (pivot !== column) {
       for (let k = 0; k < n; k += 1) {
@@ -1369,7 +1372,7 @@ function solveComplex(A, b) {
       const magnitude = Math.hypot(re[row * n + column], im[row * n + column]);
       if (magnitude > best) { pivot = row; best = magnitude; }
     }
-    if (best <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "AC 회로 방정식이 특이행렬입니다.", "떠 있는 노드와 이상적 전원 연결을 확인하세요.");
+    if (best < PIVOT_ABSOLUTE_TOLERANCE && best <= Math.max(columnScale[column] * PIVOT_RELATIVE_TOLERANCE, PIVOT_ABSOLUTE_FLOOR)) throw new CircuitError("SINGULAR", "AC 회로 방정식이 특이행렬입니다.", "떠 있는 노드와 이상적 전원 연결을 확인하세요.");
     pivots[column] = pivot;
     if (pivot !== column) {
       for (let k = 0; k < n; k += 1) {

@@ -1,7 +1,7 @@
 // Restricted arithmetic AST. No JavaScript evaluation and no property access.
 // Single source of truth for every limit shown in messages/help. `depth` counts only
 // parenthesis groups and function calls; `unary` bounds a chain of leading +/- signs.
-// `cost` is a deterministic work cap (AST-node evaluations); `timeBudgetMs` is only a safety net.
+// `cost` is a static backstop on work (AST-node evaluations). With nodes<=96 and cells<=1024 the estimate is at most 12,976,128, so it only guards future limit changes and cannot trigger today (the measured worst case, 1024 cells x 95 nodes, prepares in ~0.1 s); `timeBudgetMs` is the guard that bounds slow devices.
 export const EXPRESSION_LIMITS=Object.freeze({length:256,depth:20,unary:20,nodes:96,amplitude:10000,intermediate:1e10,minCells:32,maxCells:1024,outputPoints:129,cost:13e6,timeBudgetMs:1000});
 const fail=message=>{throw new RangeError(message);};
 export function parseSignalExpression(source) {
@@ -80,7 +80,7 @@ export function prepareCustomConvolution(xSource,hSource,T,requestedDt) {
   for(let i=0;i<=cells;i++){const t=-T+i*dt;windowSignal(xAst,t,T);windowSignal(hAst,t,T);}
   const data={custom:true,xSource,hSource,T,dt,cells,xAst,hAst,taus,xValues};
   const points=EXPRESSION_LIMITS.outputPoints;
-  // Secondary safety net only; the deterministic cost cap above is the primary rejection.
+  // The elapsed-time budget is the effective guard on slow devices; the static cost cap above is only a backstop and never fires within the current node/cell limits.
   data.output=Array.from({length:points},(_,i)=>{if(performance.now()-started>EXPRESSION_LIMITS.timeBudgetMs)fail(`계산 시간 안전 한도 ${EXPRESSION_LIMITS.timeBudgetMs/1000}초를 넘었습니다. 식이나 적분 구간 수를 줄이세요.`);const t=-2*T+4*T*i/(points-1);return[t,customConvolutionAt(data,t)];});
   return data;
 }

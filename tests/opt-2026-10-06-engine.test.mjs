@@ -127,3 +127,73 @@ test("repeated simulations of the same circuit are stable (no stale per-simulati
   const ac = simulateAC(divider("1k"), { startFrequency: "10", endFrequency: "1k", pointsPerDecade: "5" });
   assert.ok(ac.points.length > 0);
 });
+
+// Hybrid singular-pivot rule: singular only if the pivot is below the old absolute
+// 1e-14 AND negligible relative to its original column. Columns holding +-1 coupling
+// entries or huge gains must keep solving exactly as the absolute rule did.
+const floatingSource = (resistance, acMagnitude) => circuit(
+  [component("V1", "V", acMagnitude ? { mode: "DC", dc: "0", acMagnitude } : { mode: "DC", dc: "5" }), component("R1", "R", { value: resistance }), component("R2", "R", { value: resistance }), component("G1", "GND")],
+  [wire("a", "V1", 0, "R1", 0), wire("b", "V1", 1, "R2", 0), wire("c", "R1", 1, "G1", 0), wire("d", "R2", 1, "G1", 0)],
+);
+const opampFollower = (gain, load, acMagnitude) => circuit(
+  [component("V1", "V", acMagnitude ? { mode: "DC", dc: "0", acMagnitude } : { mode: "DC", dc: "1" }), component("U1", "OPAMP", { gain }), component("RL", "R", { value: load }), component("G1", "GND")],
+  [wire("a", "V1", 0, "U1", 0), wire("b", "V1", 1, "G1", 0), wire("c", "U1", 1, "U1", 2), wire("d", "U1", 2, "RL", 0), wire("e", "RL", 1, "G1", 0)],
+);
+const mixedDivider = (r1, r2) => circuit(
+  [component("V1", "V", { mode: "DC", dc: "10" }), component("R1", "R", { value: r1 }), component("R2", "R", { value: r2 }), component("G1", "GND")],
+  [wire("a", "V1", 0, "R1", 0), wire("b", "R1", 1, "R2", 0), wire("c", "R2", 1, "G1", 0), wire("d", "V1", 1, "G1", 0)],
+);
+const singular = (action, label) => assert.throws(action, (e) => e instanceof CircuitError && e.code === "SINGULAR", label);
+
+test("hybrid pivot rule: floating DC source between two high-resistance nodes solves like the baseline", () => {
+  for (const resistance of ["1e9", "1e12", "1e13"]) {
+    const nodes = simulateDC(floatingSource(resistance)).points[0].nodeVoltages;
+    near(nodes[1], 2.5, `floating +node R=${resistance}`, 1e-9);
+    near(nodes[2], -2.5, `floating -node R=${resistance}`, 1e-9);
+  }
+  singular(() => simulateDC(floatingSource("1e15")), "R=1e15 floating source stays SINGULAR (as in the baseline)");
+  const ac = simulateACAtFrequency(floatingSource("1e12", "5"), "1k").points[0];
+  near(ac.nodeVoltages[1].re, 2.5, "AC floating +node", 1e-9);
+  near(ac.nodeVoltages[2].re, -2.5, "AC floating -node", 1e-9);
+});
+
+test("hybrid pivot rule: op-amp followers with huge open-loop gain solve like the baseline", () => {
+  for (const gain of ["1e9", "1e12", "1e15"]) {
+    for (const load of ["1k", "1e9"]) {
+      const out = simulateDC(opampFollower(gain, load)).points[0].nodeVoltages[2];
+      near(out, 1 - 1 / (1 + Number(gain)), `follower gain=${gain} RL=${load}`, 1e-9);
+    }
+  }
+  const ac = simulateACAtFrequency(opampFollower("1e12", "1k", "1"), "1k").points[0];
+  near(ac.nodeVoltages[2].re, 1, "AC follower gain 1e12", 1e-9);
+});
+
+test("hybrid pivot rule: huge VCVS gain and a 1e15 grounded divider solve", () => {
+  const vcvs = circuit(
+    [component("V1", "V", { mode: "DC", dc: "1e-9" }), component("E1", "VCVS", { g: "1e12" }), component("RL", "R", { value: "1k" }), component("G1", "GND")],
+    [wire("a", "V1", 0, "E1", 2), wire("b", "V1", 1, "G1", 0), wire("c", "E1", 3, "G1", 0), wire("d", "E1", 0, "RL", 0), wire("e", "E1", 1, "G1", 0), wire("f", "RL", 1, "G1", 0)],
+  );
+  near(simulateDC(vcvs).points[0].nodeVoltages[2], 1000, "VCVS gain 1e12", 1e-9);
+  const high = simulateDC(mixedDivider("1e15", "1e15")).points[0].nodeVoltages;
+  near(high[2], 5, "1e15/1e15 divider", 1e-9);
+});
+
+test("hybrid pivot rule: mixed-scale resistor pairs match the baseline engine values", () => {
+  const cases = [["1u", "10meg", 10], ["1n", "1e9", 10], ["1u", "1e12", 10], ["1m", "1e12", 10], ["10meg", "1u", 1e-12], ["1e-6", "1e15", 10], ["1", "1e14", 10]];
+  for (const [r1, r2, expected] of cases) near(simulateDC(mixedDivider(r1, r2)).points[0].nodeVoltages[2], expected, `${r1}/${r2}`, 1e-9);
+});
+
+test("hybrid pivot rule: truly singular and contradictory circuits are still rejected", () => {
+  singular(() => simulateDC(circuit([component("I1", "I", { mode: "DC", dc: "1m" }), component("R1", "R", { value: "1k" }), component("G1", "GND")], [wire("a", "I1", 0, "R1", 0), wire("b", "R1", 1, "G1", 0)])), "current source into floating node");
+  singular(() => simulateDC(circuit([component("I1", "I", { mode: "DC", dc: "1m" }), component("G1", "GND")], [wire("a", "I1", 0, "G1", 0)])), "current source with an open terminal");
+  singular(() => simulateDC(circuit([component("I1", "I", { mode: "DC", dc: "1m" }), component("I2", "I", { mode: "DC", dc: "1m" }), component("G1", "GND")], [wire("a", "I1", 0, "G1", 0), wire("b", "I1", 1, "I2", 0), wire("c", "I2", 1, "G1", 0)])), "current sources only");
+  singular(() => simulateDC(circuit([component("V1", "V", { mode: "DC", dc: "5" }), component("C1", "C", { value: "1u" }), component("C2", "C", { value: "1u" }), component("G1", "GND")], [wire("a", "V1", 0, "C1", 0), wire("b", "C1", 1, "C2", 0), wire("c", "C2", 1, "G1", 0), wire("d", "V1", 1, "G1", 0)])), "series capacitors at DC");
+  singular(() => simulateDC(circuit([component("U1", "OPAMP", { gain: "100k" }), component("R1", "R", { value: "1k" }), component("G1", "GND")], [wire("a", "U1", 2, "R1", 0), wire("b", "R1", 1, "G1", 0)])), "floating op-amp");
+  singular(() => simulateDC(circuit([component("U1", "OPAMP_IDEAL", {}), component("R1", "R", { value: "1k" }), component("G1", "GND")], [wire("a", "U1", 2, "R1", 0), wire("b", "R1", 1, "G1", 0)])), "floating ideal op-amp");
+  const parallel = (a, b) => circuit([component("V1", "V", { mode: "DC", dc: a }), component("V2", "V", { mode: "DC", dc: b }), component("R1", "R", { value: "1k" }), component("G1", "GND")], [wire("a", "V1", 0, "R1", 0), wire("b", "V2", 0, "R1", 0), wire("c", "V1", 1, "G1", 0), wire("d", "V2", 1, "G1", 0), wire("e", "R1", 1, "G1", 0)]);
+  assert.throws(() => simulateDC(parallel("5", "3")), (e) => e instanceof CircuitError && e.code === "IDEAL_CONSTRAINT_CONFLICT", "parallel sources with different values");
+  assert.throws(() => simulateDC(parallel("5", "5")), (e) => e instanceof CircuitError && e.code === "IDEAL_CONSTRAINT_REDUNDANCY", "parallel sources with the same value");
+  assert.throws(() => simulateDC(circuit([component("V1", "V", { mode: "DC", dc: "5" }), component("G1", "GND")], [wire("a", "V1", 0, "G1", 0), wire("b", "V1", 1, "G1", 0)])), (e) => e instanceof CircuitError && e.code === "VOLTAGE_SOURCE_SHORT", "shorted voltage source");
+  const acParallel = circuit(parallel("0", "0").components.map((c) => (c.type === "V" ? { ...c, props: { ...c.props, acMagnitude: c.id === "V1" ? "1" : "2" } } : c)), parallel("0", "0").wires);
+  singular(() => simulateACAtFrequency(acParallel, "1k"), "parallel AC sources");
+});

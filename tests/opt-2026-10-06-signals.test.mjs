@@ -35,6 +35,12 @@ test('limits are the single source for error text and for the output grid',()=>{
   assert.throws(()=>prepareCustomConvolution('1','1',4,.000001),new RegExp(`${EXPRESSION_LIMITS.maxCells}`));
   assert.equal(prepareCustomConvolution('1','1',1,.05).output.length,EXPRESSION_LIMITS.outputPoints);
 });
+test('cost cap is an unreachable backstop for the current node/cell limits (time budget is the real guard)',()=>{
+  const worst=EXPRESSION_LIMITS.maxCells*(2*EXPRESSION_LIMITS.nodes+EXPRESSION_LIMITS.nodes*(EXPRESSION_LIMITS.outputPoints+1));
+  assert.equal(worst,12976128);
+  assert.ok(worst<=EXPRESSION_LIMITS.cost);
+  assert.equal(EXPRESSION_LIMITS.timeBudgetMs,1000);
+});
 test('deterministic cost estimate covers the maximal allowed workload and is monotone',()=>{
   const big=parseSignalExpression(Array(32).fill('sin(t)').join('+')),small=parseSignalExpression('t');
   assert.ok(estimateCustomCost(big,big,EXPRESSION_LIMITS.maxCells)<=EXPRESSION_LIMITS.cost);
