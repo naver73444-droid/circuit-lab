@@ -118,11 +118,30 @@ function planePoint(axes, normal, fixed) {
 const strengthOf = source => (source.type === 'point' ? source.q : source.lambda);
 
 /**
+ * The part of the segment p0 -> p1 (2D) inside the box { aMin, aMax, bMin, bMax } as a parameter range [t0, t1] within [0, 1]
+ * (Liang-Barsky), or null when the segment misses the box.
+ */
+export function clipSegmentToBox(p0, p1, box) {
+  let t0 = 0, t1 = 1;
+  const d = [p1[0] - p0[0], p1[1] - p0[1]];
+  const limits = [[-d[0], p0[0] - box.aMin], [d[0], box.aMax - p0[0]], [-d[1], p0[1] - box.bMin], [d[1], box.bMax - p0[1]]];
+  for (const [direction, room] of limits) {
+    if (direction === 0) { if (room < 0) return null; continue; }
+    const t = room / direction;
+    if (direction < 0) { if (t > t1) return null; t0 = Math.max(t0, t); } else { if (t < t0) return null; t1 = Math.min(t1, t); }
+  }
+  return t1 > t0 ? [t0, t1] : null;
+}
+
+/**
  * Seed positions around the sources, in the view plane (3D points with the plane's normal coordinate fixed).
  * Count scales with |source| so a stronger source emits more lines (3 to `maxPerSource`).
+ * With `bounds` ({ aMin, aMax, bMin, bMax }, the view) a line charge is seeded along its VISIBLE part only: a long or off-centre
+ * line gets its full share of seeds inside the view (an infinite line counts as a segment of LINE_REACH each way), and a line
+ * wholly outside the view gets none.
  * Returns [{ point, sourceId, sign }] where sign is the sign of the emitting source.
  */
-export function seedsAroundSources(sources, { axes, normal, fixed, maxPerSource = 12, ring = 0.12 }) {
+export function seedsAroundSources(sources, { axes, normal, fixed, maxPerSource = 12, ring = 0.12, bounds = null }) {
   const active = sources.filter(s => s.enabled !== false && s.visible !== false && strengthOf(s) !== 0);
   const strongest = Math.max(...active.map(s => Math.abs(strengthOf(s))), 0);
   const make = planePoint(axes, normal, fixed);
@@ -139,12 +158,27 @@ export function seedsAroundSources(sources, { axes, normal, fixed, maxPerSource 
       }
       continue;
     }
-    const start = source.type === 'finite-line' ? source.start : source.position.map(
+    let start = source.type === 'finite-line' ? source.start : source.position.map(
       (value, i) => value - source.direction[i] * source.displayLength / 2);
-    const end = source.type === 'finite-line' ? source.end : source.position.map(
+    let end = source.type === 'finite-line' ? source.end : source.position.map(
       (value, i) => value + source.direction[i] * source.displayLength / 2);
-    const dx = end[axes[0]] - start[axes[0]], dy = end[axes[1]] - start[axes[1]];
-    const span = Math.hypot(dx, dy);
+    let dx = end[axes[0]] - start[axes[0]], dy = end[axes[1]] - start[axes[1]];
+    let span = Math.hypot(dx, dy);
+    if (bounds && span >= ring) {
+      // Seed along the part inside the view; an infinite line counts as a segment of LINE_REACH each way, not just the stretch
+      // that is drawn around its reference point.
+      if (source.type === 'infinite-line') {
+        start = source.position.map((value, i) => value - source.direction[i] * LINE_REACH);
+        end = source.position.map((value, i) => value + source.direction[i] * LINE_REACH);
+      }
+      const clipped = clipSegmentToBox([start[axes[0]], start[axes[1]]], [end[axes[0]], end[axes[1]]], bounds);
+      if (!clipped) continue;
+      const [from, to] = [start, end];
+      start = from.map((value, i) => value + (to[i] - value) * clipped[0]);
+      end = from.map((value, i) => value + (to[i] - value) * clipped[1]);
+      dx = end[axes[0]] - start[axes[0]]; dy = end[axes[1]] - start[axes[1]];
+      span = Math.hypot(dx, dy);
+    }
     if (span < ring) {
       // A line (nearly) perpendicular to the view plane shows up as a single point where it pierces the plane: seed a ring
       // around that point exactly like a point charge, so the default xy examples with a z-directed line have field lines.
@@ -202,7 +236,7 @@ export function lineChargeStop(source, { axes, normal, fixed, radius }) {
 export function traceSourceLines(sources, field, {
   axes, normal, fixed, bounds, stopRadius = 0.06, maxSteps = 360, maxPerSource = 12, ring = 0.12,
 }) {
-  const seeds = seedsAroundSources(sources, { axes, normal, fixed, maxPerSource, ring });
+  const seeds = seedsAroundSources(sources, { axes, normal, fixed, maxPerSource, ring, bounds });
   const stops = [];
   for (const source of sources) {
     if (source.enabled === false || strengthOf(source) === 0) continue;

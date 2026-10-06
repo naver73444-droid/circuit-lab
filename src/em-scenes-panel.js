@@ -2,14 +2,10 @@
 // Typing a valid number applies it at once; a number that cannot be applied is marked and the last valid model stays.
 import { EMInputError } from './em-physics.js';
 import { escapeHtml } from './safe-dom.js';
+import { parseEMNumber } from './em-source-edit.js';
 
-export function parseEMNumber(value) {
-  const text = String(value ?? '').trim();
-  if (!text) throw new Error('빈값 또는 유한하지 않은 입력입니다.');
-  const result = Number(text);
-  if (!Number.isFinite(result)) throw new Error('빈값 또는 유한하지 않은 입력입니다.');
-  return result;
-}
+// parseEMNumber lives in the pure em-source-edit.js; it is re-exported here for the scene forms' callers.
+export { parseEMNumber };
 
 const DIRECTIONS = ['x', '-x', 'y', '-y', 'z', '-z'];
 const directionVector = name => {

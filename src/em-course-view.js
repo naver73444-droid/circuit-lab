@@ -1,6 +1,7 @@
 // Course pictures: the cross-section / profile canvas with the draggable probe, the coax B(r) profile, and the small
 // emf(t) trace. These only draw what the experiment definitions evaluate. Colours come from the page palette.
 import { cssRgba } from './em-palette.js';
+import { instantSupport, profileLayers } from './em-course-time.js';
 
 const axesFor = plane => (plane === 'xz' ? [0, 2] : plane === 'yz' ? [1, 2] : [0, 1]);
 const magnitude = vector => Math.hypot(...vector);
@@ -66,29 +67,33 @@ export function createCourseView(canvas, onProbe, getPalette) {
   };
   const profileDomain = () => {
     const points = current.profiles?.[0]?.points || [];
-    const lo = Math.min(...points.map(p => p.coordinate)), hi = Math.max(...points.map(p => p.coordinate));
+    let lo = Math.min(...points.map(p => p.coordinate)), hi = Math.max(...points.map(p => p.coordinate));
+    // An unresolved envelope has no points; the extent then comes from where the experiment is defined (the line's length).
+    if (!points.length) [lo, hi] = instantSupport(current.definition, current.params) ?? [NaN, NaN];
     if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return [-1, 1];
     const center = (lo + hi) / 2, half = (hi - lo) / 2 * (current.viewScale || 1);
     return [center - half, center + half];
   };
 
   function renderProfile(ctx, w, h, C) {
-    const series = (current.profiles || []).filter(p => p.points?.length && p.sampling?.status !== 'unresolved').slice(0, 3);
     const [xMin, xMax] = profileDomain(), left = 58, right = w - 14;
     ctx.font = `12px ${FONT}`;
-    if (!series.length) {
+    // Wave and line experiments also hand over the instantaneous curve; the profile is then its amplitude envelope. When the
+    // envelope cannot be resolved (sample cap) but the instantaneous curve can, the curve is drawn on its own.
+    const instant = current.instantProfile?.([xMin, xMax]);
+    delete canvas.dataset.instantUnresolved;
+    delete canvas.dataset.envelopeUnresolved;
+    const layers = profileLayers(current.profiles, instant);
+    if (!layers.length) {
       ctx.fillStyle = C.muted; ctx.fillText('표본 해상도 제한 · 곡선을 표시하지 않습니다.', 16, 44);
       canvas.dataset.profileSeries = '0';
       return;
     }
-    // Wave and line experiments also hand over the instantaneous curve; the profile is then its amplitude envelope.
-    const instant = current.instantProfile?.([xMin, xMax]);
-    delete canvas.dataset.instantUnresolved;
     const mapX = x => left + (x - xMin) / (xMax - xMin) * (right - left);
-    series.forEach((data, index) => {
-      const top = 28 + index * (h - 48) / series.length, bottom = top + (h - 48) / series.length - 26;
-      const unresolved = instant?.[index]?.status === 'unresolved';
-      const live = unresolved ? null : instant?.[index], envelope = data.points.map(p => p.value);
+    layers.forEach((layer, position) => {
+      const data = current.profiles[layer.index], live = layer.live, unresolved = layer.instantUnresolved;
+      const top = 28 + position * (h - 48) / layers.length, bottom = top + (h - 48) / layers.length - 26;
+      const envelope = layer.envelope ? data.points.map(p => p.value) : [];
       let yMin, yMax;
       if (live) {
         const peak = Math.max(...envelope.map(Math.abs), ...live.points.map(p => Math.abs(p.value))) * 1.1 || 1;
@@ -100,7 +105,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
       }
       const mapY = y => bottom - (y - yMin) / (yMax - yMin) * (bottom - top);
       ctx.fillStyle = C.text;
-      ctx.fillText(`${live ? live.label : data.label} (${data.unit})`, left, top - 8);
+      ctx.fillText(`${live ? live.label : data.label} (${live ? live.unit : data.unit})`, left, top - 8);
       ctx.fillStyle = C.muted;
       ctx.fillText(yMax.toExponential(1), 4, top + 5);
       ctx.fillText(yMin.toExponential(1), 4, bottom);
@@ -113,26 +118,30 @@ export function createCourseView(canvas, onProbe, getPalette) {
         points.forEach((p, i) => { const x = mapX(p.coordinate), y = mapY(sign * p.value); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
         ctx.stroke();
       };
-      if (live) {
+      if (live && layer.envelope) {
         ctx.strokeStyle = C.fieldSoft; ctx.lineWidth = 1.2; ctx.setLineDash([5, 4]);
         trace(data.points); trace(data.points, -1);
         ctx.setLineDash([]);
       }
-      ctx.strokeStyle = index === 0 ? C.field : C.source; ctx.lineWidth = 2;
+      ctx.strokeStyle = position === 0 ? C.field : C.source; ctx.lineWidth = 2;
       if (unresolved) {
         // A wavelength too short for the display would alias into a flat, misleading curve: say so instead of drawing it.
         ctx.fillStyle = C.muted;
-        ctx.fillText(instant[index].reason, left + 10, (top + bottom) / 2 + 4);
+        ctx.fillText(instant[layer.index].reason, left + 10, (top + bottom) / 2 + 4);
         canvas.dataset.instantUnresolved = 'true';
       } else trace(live ? live.points : data.points);
+      if (live && !layer.envelope) canvas.dataset.envelopeUnresolved = 'true';
       const px = mapX(current.point[2]);
       ctx.strokeStyle = C.probe; ctx.setLineDash([4, 3]);
       ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
       ctx.restore();
     });
     ctx.fillStyle = C.muted;
-    ctx.fillText(`z ${xMin.toPrecision(3)} … ${xMax.toPrecision(3)} m · 점선: 측정 위치${instant && !instant.some(item => item.status === 'unresolved') ? ' · 파선: 진폭 포락선' : ''}`, 10, h - 17);
-    Object.assign(canvas.dataset, { profileSeries: String(series.length), profileXMin: String(xMin), profileXMax: String(xMax) });
+    const noEnvelope = layers.some(layer => layer.live && !layer.envelope);
+    const withEnvelope = layers.every(layer => layer.live && layer.envelope);
+    const note = noEnvelope ? ' · 진폭 포락선은 표본 상한으로 생략' : withEnvelope ? ' · 파선: 진폭 포락선' : '';
+    ctx.fillText(`z ${xMin.toPrecision(3)} … ${xMax.toPrecision(3)} m · 점선: 측정 위치${note}`, 10, h - 17);
+    Object.assign(canvas.dataset, { profileSeries: String(layers.length), profileXMin: String(xMin), profileXMax: String(xMax) });
   }
 
   function renderAxisOnly(ctx, w, h, C, scale, extent, vectorKey) {

@@ -147,9 +147,9 @@ node scripts\launch.mjs 4191     # 다른 포트로 시작 + 브라우저 열기
 ## 시험
 
 ```powershell
-npm test               # 엔진 + UI 모델 + 도구 시험 (1181개: 엔진 728 · UI 모델 445 · 도구 8, 약 4초, Node >=22)
+npm test               # 엔진 + UI 모델 + 도구 시험 (1197개: 엔진 739 · UI 모델 450 · 도구 8, 약 4초, Node >=22)
 npm run check          # src 경계 검사 (import 사이클·순수 모델의 DOM 의존 등)
-npm run test:browser   # 헤드리스 Edge 종단 스모크 (91개 시나리오: 회로 편집·해석·저장·공유 + 전자기·신호·회로 과정 작업공간)
+npm run test:browser   # 헤드리스 Edge 종단 스모크 (98개 시나리오: 회로 편집·해석·저장·공유 + 전자기·신호·회로 과정 작업공간)
 npm run test:all       # test + test:browser
 npm run test:summary   # npm test와 같은 범위, 요약 출력 + 원시 TAP를 .verification/ 에 보관 (engine|ui-model|all, --out <폴더>)
 ```

@@ -3000,4 +3000,205 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.ok(Math.hypot(moved[0] - probe[0], moved[1] - probe[1]) > 0.1, `the sensor followed the finger (${probe} -> ${moved})`);
     await navigate("/"); // back to the desktop viewport
   });
+
+  // ---- 전자기학 round-2 review: loop scene performance, grid cache, multi-pointer guard, keyboard / inspector, labels, motion, course fixes ----------
+  const planeStats = () => ev(`${L}.getEMState().diagnostics.plane`);
+  const openLoopScene = async () => {
+    await openEM();
+    await ev(`document.querySelector('[data-em-scene="loop"]').click()`);
+    await until(`${L}.getEMState().scene === "loop" && ${L}.getEMState().diagnostics.plane.cols > 0`, "the loop scene to be drawn");
+    await settle();
+    await sleep(300);
+  };
+
+  test("EM loop scene: a wheel burst is drawn at draft resolution and settles into one converged render, and no frame blocks the main thread", async () => {
+    await openLoopScene();
+    assert.equal((await emState()).quality, "final");
+    const finalCols = (await planeStats()).cols;
+    await ev(`window.__longTasks = []; new PerformanceObserver((list) => { for (const entry of list.getEntries()) window.__longTasks.push(Math.round(entry.duration)); }).observe({ entryTypes: ["longtask"] }); true`);
+    const spot = await emScreen(0, 0), span0 = (await emState()).view.span, cols = [];
+    for (let i = 0; i < 10; i += 1) { await wheelAt(spot.x, spot.y, -120); cols.push((await planeStats()).cols); }
+    assert.equal((await emState()).quality, "draft", "right after the burst the picture is still the draft one");
+    assert.ok(Math.min(...cols) < finalCols * 0.7, `the burst was drawn at draft resolution (${cols.join(",")} cells across, final ${finalCols})`);
+    await until(`${L}.getEMState().quality === "final" && ${L}.getEMState().diagnostics.plane.cols === ${finalCols}`, "the converged render after the burst");
+    assert.ok((await emState()).view.span < span0 * 0.5, "the wheel zoomed in");
+    const stats = await planeStats(), tasks = await ev(`window.__longTasks`);
+    assert.ok(tasks.every((ms) => ms < 120), `no main-thread task of 120 ms or more while zooming the loop scene (long tasks: ${tasks.join(", ") || "none"}; last render ${Math.round(stats.baseMs)} ms)`);
+    assert.ok(stats.stages.sample < 120, `sampling the loop grid takes ${Math.round(stats.stages.sample)} ms (the converged numerical sum took 150-250 ms)`);
+    assert.ok(await colorCount("em-plane-base") > 10, "and the converged picture is really drawn");
+  });
+
+  test("EM chips and theme repaint the cached grid: toggling 장선 / 등크기선 or switching the theme does not resample the field, a plane switch does", async () => {
+    await openLoopScene();
+    await select("#appearance", "light");
+    await settle();
+    const builds = async () => (await planeStats()).gridBuilds, frames = async () => (await emState()).diagnostics.frames;
+    const g0 = await builds(), h0 = await planeHash();
+    for (const chip of ["lines", "contours"]) {
+      const f0 = await frames();
+      await ev(`document.querySelector('[data-em-chip="${chip}"]').click()`);
+      await until(`${L}.getEMState().diagnostics.frames > ${f0}`, `the ${chip} chip to render`);
+      await settle();
+      assert.equal(await builds(), g0, `the ${chip} chip did not sample the grid again`);
+      assert.equal((await planeStats()).gridCached, true, "the grid came from the cache");
+      assert.notEqual(await planeHash(), h0, `the ${chip} layer really changed the picture`);
+      await ev(`document.querySelector('[data-em-chip="${chip}"]').click()`);
+      await settle();
+      assert.equal(await builds(), g0);
+    }
+    assert.equal(await planeHash(), h0, "toggling both chips twice restores the exact picture");
+    await select("#appearance", "dark");
+    await settle();
+    assert.equal(await builds(), g0, "a theme change repaints from the cached grid");
+    assert.notEqual(await planeHash(), h0, "in other colours");
+    await select("#appearance", "light");
+    await select("#em-pg-plane", "xy");
+    await until(`${L}.getEMState().diagnostics.plane.gridBuilds > ${g0}`, "the new plane to be sampled");
+    assert.ok(await builds() > g0, "a plane switch is a different grid");
+  });
+
+  test("EM multi-pointer: a second finger cannot take over a running drag, and releasing it does not end the first finger's drag", async () => {
+    await openEM();
+    const touch = (type, touchPoints) => ctx.cdp.send("Input.dispatchTouchEvent", { type, touchPoints });
+    const start = (await emPg()).probe.slice(0, 2), a = await emScreen(...start), far = await emScreen(start[0] + 1.5, start[1] + 1.2);
+    await touch("touchStart", [{ x: a.x, y: a.y, id: 1 }]);
+    await settle();
+    await touch("touchStart", [{ x: a.x, y: a.y, id: 1 }, { x: far.x, y: far.y, id: 2 }]);
+    await settle();
+    const afterSecond = (await emPg()).probe;
+    assert.ok(Math.hypot(afterSecond[0] - start[0], afterSecond[1] - start[1]) < 0.05, `the second finger did not move the sensor (${start} -> ${afterSecond})`);
+    await touch("touchMove", [{ x: a.x + 30, y: a.y, id: 1 }, { x: far.x, y: far.y, id: 2 }]);
+    await settle();
+    const moved = (await emPg()).probe;
+    assert.ok(moved[0] - start[0] > 0.1 && Math.abs(moved[1] - start[1]) < 0.05, `the first finger still drives the sensor (${start} -> ${moved})`);
+    await touch("touchEnd", [{ x: a.x + 30, y: a.y, id: 1 }]); // finger 2 lifts
+    await settle();
+    await touch("touchMove", [{ x: a.x + 60, y: a.y, id: 1 }]);
+    await settle();
+    const stillDragging = (await emPg()).probe;
+    assert.ok(stillDragging[0] > moved[0] + 0.1, `lifting the second finger did not end the first drag (${moved[0]} -> ${stillDragging[0]})`);
+    await touch("touchEnd", []);
+    await settle();
+    assert.equal((await emState()).quality, "final");
+  });
+
+  test("EM labels and keyboard: 다시 하기 / 가우스 구, Tab leaves the canvas with no selection, delete and clone announce and move the focus, the empty inspector is not rewritten", async () => {
+    await openEM();
+    assert.equal(await ev(`document.getElementById("em-pg-redo").textContent.trim()`), "다시 하기");
+    assert.equal(await ev(`document.getElementById("em-chip-gauss").textContent.trim()`), "가우스 구");
+    // clone: the clone is announced and the focus follows to its strength field
+    await click('[data-em-act="clone"]');
+    await until(`document.activeElement?.dataset?.emField === "strength"`, "the focus on the clone's strength field");
+    assert.match(await ev(`document.getElementById("em-live").textContent`), /복제했습니다/);
+    // delete: the button disappears with the source, so the focus goes to the plane and the deletion is announced
+    await click('[data-em-act="delete"]');
+    await until(`document.activeElement?.id === "em-plane"`, "the focus on the plane after a delete");
+    assert.match(await ev(`document.getElementById("em-live").textContent`), /삭제했습니다/);
+    // delete the rest of the selection: nothing selected
+    while ((await emPg()).selectedId) { await click('[data-em-act="delete"]'); await settle(); }
+    await until(`document.querySelector("#em-inspector .em-note") !== null`, "the empty inspector note");
+    await ev(`document.querySelector("#em-inspector .em-note").dataset.mark = "kept"`);
+    const frames = (await emState()).diagnostics.frames;
+    await ev(`document.getElementById("em-plane").focus()`);
+    await press("ArrowRight", "ArrowRight", 39); // moves the sensor: a new frame
+    await until(`${L}.getEMState().diagnostics.frames > ${frames}`, "another frame");
+    assert.equal(await ev(`document.querySelector("#em-inspector .em-note")?.dataset.mark`), "kept", "the empty inspector note is the same node: it is not rewritten every frame");
+    // Tab with nothing selected leaves the canvas instead of selecting a source
+    assert.ok((await emPg()).sources.length > 0, "a source is left to tempt Tab");
+    await ev(`document.getElementById("em-plane").focus()`);
+    await press("Tab", "Tab", 9);
+    assert.equal((await emPg()).selectedId, null, "Tab did not start a selection");
+    assert.equal(await ev(`document.activeElement !== document.getElementById("em-plane")`), true, "the focus left the canvas");
+    // [ ] still select (wrapping)
+    await ev(`document.getElementById("em-plane").focus()`);
+    await press("]", "BracketRight", 221);
+    assert.ok((await emPg()).selectedId, "] selects a source");
+  });
+
+  test("EM reduced motion: the wave never starts by itself, 재생 still works, and turning the preference on stops a running wave", async () => {
+    await navigate("/");
+    await ctx.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    try {
+      await openEM();
+      assert.equal((await emState()).reducedMotion, true, "the workspace sees the preference");
+      await ev(`document.querySelector('[data-em-scene="wave"]').click()`);
+      await until(`${L}.getEMState().scene === "wave"`, "the wave scene");
+      await sleep(400);
+      assert.equal((await emState()).playing, false, "nothing plays on its own");
+      await click("#em-play");
+      await until(`${L}.getEMState().playing === true`, "user-started playback");
+      const t0 = (await emState()).timeCycles;
+      await until(`${L}.getEMState().timeCycles !== ${t0}`, "the wave to advance");
+      await ctx.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+      await until(`${L}.getEMState().reducedMotion === false`, "the page to see the preference go away");
+      assert.equal((await emState()).playing, true, "turning motion back on does not stop it");
+      await ctx.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+      await sleep(400); // the media-query change is delivered with a rendering update: do not starve it with polling
+      await until(`${L}.getEMState().playing === false`, "reduce-motion to stop the running wave");
+    } finally {
+      await ctx.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+    }
+  });
+
+  test("EM Gauss with two charges near the surface (a inside, b outside, ~2 mm each): the precise flux converges to 131.0 V·m instead of a 21%-off number", async () => {
+    await openEM();
+    const project = {
+      format: "circuit-lab-em-playground", version: 1,
+      world: {
+        sources: [
+          { id: "o", type: "point", q: 0, position: [0, 0, 0], enabled: true, visible: true },
+          { id: "a", type: "point", q: 1.16e-9, position: [0.4586, 0.8516, 0.2471], enabled: true, visible: true },
+          { id: "b", type: "point", q: 0.7e-9, position: [0.9328, -0.3418, -0.1292], enabled: true, visible: true },
+        ],
+        probe: [1.6, 1.1, 0], plane: "xy", selectedId: "o", comparison: null,
+      },
+      view: { camera: { yaw: -0.7, pitch: 0.45, distance: 7 }, vectorMode: "E" },
+      calculus: { mode: "electric", differentialMode: "numeric", alpha: 1, h: 0.005, radius: 1, normal: [0, 0, 1] },
+      legend: { mode: "auto" },
+    };
+    await ev(`(() => { const input = document.getElementById("em-d-file"), data = new DataTransfer(); data.items.add(new File([${JSON.stringify(JSON.stringify(project))}], "two.json", { type: "application/json" })); input.files = data.files; input.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    await until(`${L}.getEMState().playground.sources.length === 3`, "the two-charge example to load");
+    await click("#em-chip-gauss");
+    await until(`${L}.getEMState().chips.gauss === true && ${L}.getEMState().gauss`, "the Gauss surface");
+    await ev(`(() => { const slider = document.getElementById("em-gauss-radius"); slider.value = "1"; slider.dispatchEvent(new Event("input", { bubbles: true })); slider.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    await until(`document.querySelector("#em-gauss-lines")?.textContent.includes("정밀")`, "the precise flux", 30000);
+    const flux = await gaussFlux();
+    assert.match(flux.charge, /1\.16 nC/, "only a is inside");
+    near(flux.expected, 131.0, 0.002, "Q/eps0");
+    near(flux.numeric, 131.0, 0.005, "the refined flux");
+    assert.equal(flux.tag, "정밀 · 수렴", "converged only because each charge was refined on its own");
+    assert.equal(await ev(`document.getElementById("em-gauss-lines").dataset.agrees`), "true");
+  });
+
+  test("EM course: a transmission line with an unresolved envelope still draws its instantaneous v(z, t), and a rod at the end of its rail has a disabled scrubber with the reason", async () => {
+    await openEM();
+    await click("#em-course-open");
+    await until(`${L}.getEMState().course?.active === true && document.getElementById("em-course-canvas").clientWidth > 100`, "the course");
+    await select("#em-course-topic", "전송선");
+    await select("#em-course-select", "transmission-lossless");
+    await until(`${L}.getEMState().course.selectedId === "transmission-lossless"`, "the transmission experiment");
+    await typeInto('[data-em-course-parameter="frequency"]', "8000"); // MHz: 8 GHz
+    await typeInto('[data-em-course-parameter="length"]', "3");
+    await until(`${L}.getEMState().course.records["transmission-lossless"].params.length === 3`, "the line parameters");
+    await settle();
+    const canvas = await ev(`({ ...document.getElementById("em-course-canvas").dataset })`);
+    assert.equal(canvas.envelopeUnresolved, "true", "the envelope is over the 513-point cap");
+    assert.equal(canvas.instantUnresolved, undefined, "but the instantaneous curve is resolved");
+    assert.equal(canvas.profileSeries, "2", "so v(z, t) and i(z, t) are both drawn");
+    assert.ok(Number(canvas.profileXMax) - Number(canvas.profileXMin) < 10, "over the line's own length");
+    assert.match(await ev(`document.getElementById("em-course-notes").textContent`), /미해상/, "the note about the omitted envelope stays");
+    await select("#em-course-topic", "자기유도");
+    await select("#em-course-select", "motional-rod");
+    await until(`${L}.getEMState().course.selectedId === "motional-rod"`, "the motional rod");
+    await typeInto('[data-em-course-parameter="velocity"]', "-3"); // moving back towards x = 0 ...
+    await typeInto('[data-em-course-parameter="x0"]', "0"); // ... from a rod that already sits there
+    await until(`${L}.getEMState().course.records["motional-rod"].params.x0 === 0 && ${L}.getEMState().course.records["motional-rod"].params.velocity === -3`, "the rod at the end of its rail");
+    await settle();
+    assert.equal(await ev(`document.getElementById("em-course-time-slider").disabled && document.getElementById("em-course-play").disabled`), true, "the scrubber and play are disabled");
+    assert.match(await ev(`document.getElementById("em-course-time-text").textContent`), /레일 끝/, "with the reason shown");
+    await typeInto('[data-em-course-parameter="x0"]', "20");
+    await until(`!document.getElementById("em-course-time-slider").disabled && !document.getElementById("em-course-play").disabled`, "the scrubber to come back");
+    await click("#em-course-back");
+    await until(`${L}.getEMState().courseActive === false`, "return to the lab");
+  });
 });

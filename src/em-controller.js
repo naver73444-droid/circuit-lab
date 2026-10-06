@@ -10,12 +10,12 @@ import { createInspector } from './em-inspector.js';
 import { createScenesPanel, sceneTitle } from './em-scenes-panel.js';
 import { createCalculusPanel } from './em-calculus-panel.js';
 import { createProjectPanel } from './em-project-panel.js';
-import { createPalette } from './em-palette.js';
+import { createPalette, watchReducedMotion } from './em-palette.js';
 import { freeSpot } from './em-source-edit.js';
 import { planeNormal } from './em-plane-geometry.js';
 import { siText } from './em-format.js';
 
-export { parseEMNumber } from './em-scenes-panel.js';
+export { parseEMNumber } from './em-source-edit.js';
 
 // The course (lesson registry + topic modules, ~290KB) loads only when it is opened.
 // A failed module fetch is cached by the browser, so a retry adds a cache-busting suffix.
@@ -59,6 +59,8 @@ export function createEMController(root) {
 
   const palette = createPalette(root, () => { plane.invalidate(); threeD.invalidate(); requestRender(); });
   const getPalette = () => palette.current();
+  // The wave never starts by itself (only 재생 does, which stays allowed); "reduce motion" turned on mid-playback stops it.
+  const motion = watchReducedMotion(events.signal, () => { if (s.playing) { stopPlayback(); requestRender(); } });
   const requestRender = () => { if (frameId === null && !destroyed) frameId = requestAnimationFrame(flush); };
   const flush = () => { frameId = null; render(); };
 
@@ -72,6 +74,7 @@ export function createEMController(root) {
   });
   const inspector = createInspector({
     host: $('#em-inspector'), editor, request: requestRender, getPlane: () => pg.plane, signal: events.signal,
+    announce, focusCanvas: () => $(lab.tab === '3d' ? '#em-canvas' : '#em-plane').focus({ preventScroll: true }),
   });
   const scenesPanel = createScenesPanel({
     host: $('#em-model-fields'), store, signal: events.signal,
@@ -79,9 +82,9 @@ export function createEMController(root) {
     onError: text => { lab.error = text; requestRender(); },
   });
   const calculus = createCalculusPanel({
-    root, editor, isSandbox: () => lab.scene === 'playground', getPalette, signal: events.signal,
+    root, editor, isSandbox: () => lab.scene === 'playground', getPalette, signal: events.signal, interaction,
   });
-  createProjectPanel({
+  const project = createProjectPanel({
     root, editor, store, calculus, signal: events.signal,
     onLoaded: () => { setScene('playground'); lab.gauss = null; if (lab.chips.gauss) plane.placeGauss(); requestRender(); },
   });
@@ -242,6 +245,7 @@ export function createEMController(root) {
     lab.view = { span: 3, offset: [0, 0] };
     if (lab.scene === 'playground') {
       editor.reset();
+      project.resetCarried(); // a reset world must not save the comparison / vector mode / legend of the file opened before it
       lab.gauss = null;
       if (lab.chips.gauss) plane.placeGauss();
     } else {
@@ -367,7 +371,7 @@ export function createEMController(root) {
     inspect() {
       return {
         ...store.inspect(), playground: editor.inspect(), playgroundActive: lab.scene === 'playground',
-        tab: lab.tab, scene: lab.scene, chips: { ...lab.chips }, gauss: lab.gauss ? structuredClone(lab.gauss) : null,
+        reducedMotion: motion.matches, quality: lab.quality, tab: lab.tab, scene: lab.scene, chips: { ...lab.chips }, gauss: lab.gauss ? structuredClone(lab.gauss) : null,
         view: structuredClone(lab.view), courseActive, course: course ? course.inspect() : null,
         diagnostics: { ...diagnostics, plane: { ...plane.stats } },
       };

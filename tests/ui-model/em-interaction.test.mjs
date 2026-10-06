@@ -104,3 +104,53 @@ test('beginPlaneGrab and grabTarget refuse a ray that never meets the plane', ()
   assert.equal(beginPlaneGrab(parallel, 'xy', [0, 0, 1]), null);
   assert.equal(grabTarget(null, parallel), null);
 });
+
+// A hand-driven clock for the pulse tests.
+function fakeTimers() {
+  let now = 0, next = 1;
+  const pending = new Map();
+  return {
+    setTimer: (callback, delay) => { const id = next++; pending.set(id, { callback, at: now + delay }); return id; },
+    clearTimer: id => { pending.delete(id); },
+    advance(ms) {
+      now += ms;
+      for (const [id, item] of [...pending]) if (item.at <= now) { pending.delete(id); item.callback(); }
+    },
+    get count() { return pending.size; },
+  };
+}
+
+test('a pulse (wheel turn, resize) is an interaction until 150 ms after its LAST event, then settles once', () => {
+  const timers = fakeTimers(), state = createInteraction(timers);
+  let settled = 0, cancelled = 0;
+  state.onBegin(() => { cancelled += 1; });
+  state.pulse('plane-view', 150, () => { settled += 1; });
+  assert.equal(state.active, true);
+  assert.equal(cancelled, 1, 'precise work is cancelled when the burst starts');
+  timers.advance(100);
+  state.pulse('plane-view', 150, () => { settled += 1; }); // the next wheel tick restarts the wait
+  timers.advance(100);
+  assert.equal(state.active, true, 'still inside the burst');
+  assert.equal(settled, 0);
+  assert.equal(timers.count, 1, 'one timer for the whole burst');
+  timers.advance(60);
+  assert.equal(settled, 1);
+  assert.equal(state.active, false);
+  assert.equal(state.isCurrent(state.generation), true);
+  assert.equal(timers.count, 0);
+});
+
+test('ending a pulse early, or endAll(), cancels its settle callback', () => {
+  const timers = fakeTimers(), state = createInteraction(timers);
+  let settled = 0;
+  state.pulse('plane-view', 150, () => { settled += 1; });
+  assert.equal(state.end('plane-view'), true);
+  timers.advance(500);
+  assert.equal(settled, 0);
+  state.pulse('plane-view', 150, () => { settled += 1; });
+  state.begin('plane');
+  state.endAll();
+  timers.advance(500);
+  assert.equal(settled, 0);
+  assert.equal(state.active, false);
+});

@@ -1,7 +1,9 @@
-// Draws the 2D plane view. The expensive part (potential colours, equipotentials, field lines, field arrows) is a
-// "base layer" cached in an offscreen canvas and redrawn only when the field, the view or the quality changes;
-// sources, Gauss circle, sensor and scale bar are drawn on top every frame, so dragging the sensor or the Gauss
-// surface costs almost nothing. All colours come from the palette (CSS tokens).
+// Draws the 2D plane view onto two stacked canvases. The expensive part (potential colours, equipotentials, field lines, field
+// arrows) is a "base layer" painted onto the lower canvas (#em-plane-base) and repainted only when its inputs change; sources,
+// Gauss circle, sensor and scale bar are drawn on the upper canvas every frame, so dragging the sensor or the Gauss surface
+// costs almost nothing. The sampled scalar grid, the traced lines and the arrow samples are cached apart from the painting:
+// they depend on the field, the view and the quality only, so toggling a chip or the theme repaints without evaluating the
+// field again. All colours come from the palette (CSS tokens).
 import { compress, compressedLevels, contourSet, typicalMagnitude } from './em-contour.js';
 import { computePlaneLines, sampleScalarGrid, sampleVectorGrid } from './em-plane-field.js';
 import { planeAxes, planeNormal, scaleBar, sectionRadius } from './em-plane-geometry.js';
@@ -92,10 +94,7 @@ function strokeFieldLines(ctx, lines, view, plane, palette) {
   }
 }
 
-function strokeFieldArrows(ctx, field, scene, palette, width, height, spacing) {
-  const cols = Math.max(4, Math.floor(width / spacing)), rows = Math.max(3, Math.floor(height / spacing));
-  const samples = sampleVectorGrid(field, scene.plane, scene.fixed, scene.view.area, cols, rows);
-  const typical = typicalMagnitude(samples.map(s => s.magnitude), 1);
+function strokeFieldArrows(ctx, { samples, typical }, scene, palette) {
   if (!(typical > 0)) return;
   const top = Math.asinh(CLIP), alphaScale = scene.chips.lines ? 0.55 : 0.85;
   ctx.lineWidth = 1.2;
@@ -231,24 +230,34 @@ function drawScaleBar(ctx, view, palette, wavelengths) {
 
 export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
   const ctx = canvas.getContext('2d'), baseCtx = baseCanvas.getContext('2d'), tile = document.createElement('canvas');
-  let baseKey = null;
-  const stats = { baseMs: 0, baseCached: false, overlayMs: 0, cols: 0, rows: 0, lines: 0, stages: {} };
+  let baseKey = null, gridCache = null, linesCache = null, arrowCache = null;
+  // gridBuilds counts how often the field was sampled for the colour map; a chip or theme change must not raise it.
+  const stats = { baseMs: 0, baseCached: false, gridCached: false, gridBuilds: 0, overlayMs: 0, cols: 0, rows: 0, lines: 0, stages: {} };
+
+  function sampleGrid(scene, draft, key) {
+    if (gridCache?.key === key) return gridCache;
+    const { view } = scene, cell = draft ? 16 : 7;
+    const cols = Math.max(8, Math.min(260, Math.ceil(view.width / cell))), rows = Math.max(8, Math.min(200, Math.ceil(view.height / cell)));
+    const { aMin, aMax, bMin, bMax } = view.area, da = (aMax - aMin) / (2 * cols), db = (bMax - bMin) / (2 * rows);
+    const grid = sampleScalarGrid(
+      scene.field, scene.plane, scene.fixed, { aMin: aMin + da, aMax: aMax - da, bMin: bMin + db, bMax: bMax - db }, cols, rows);
+    stats.gridBuilds += 1;
+    gridCache = { key, grid, ref: typicalMagnitude(grid.values), arrows: null };
+    return gridCache;
+  }
 
   // The base layer is painted straight onto the lower canvas and left alone until its inputs change.
-  function drawBase(scene, palette, dpr) {
+  function drawBase(scene, palette, dpr, gridKey) {
     const { view } = scene, started = performance.now(), stages = {};
     let mark = started;
     const lap = name => { const now = performance.now(); stages[name] = now - mark; mark = now; };
     sizeCanvas(baseCanvas, baseCtx, view.width, view.height, dpr);
     baseCtx.fillStyle = palette.bg.css;
     baseCtx.fillRect(0, 0, view.width, view.height);
-    const draft = scene.quality === 'draft', cell = draft ? 16 : 7;
-    const cols = Math.max(8, Math.min(260, Math.ceil(view.width / cell))), rows = Math.max(8, Math.min(200, Math.ceil(view.height / cell)));
-    const { aMin, aMax, bMin, bMax } = view.area, da = (aMax - aMin) / (2 * cols), db = (bMax - bMin) / (2 * rows);
-    const grid = sampleScalarGrid(
-      scene.field, scene.plane, scene.fixed, { aMin: aMin + da, aMax: aMax - da, bMin: bMin + db, bMax: bMax - db }, cols, rows);
+    const draft = scene.quality === 'draft';
+    stats.gridCached = gridCache?.key === gridKey;
+    const { grid, ref } = sampleGrid(scene, draft, gridKey);
     lap('sample');
-    const ref = typicalMagnitude(grid.values);
     const signed = scene.field.scalarName === 'V';
     if (ref > 0) {
       const colors = { bg: palette.bg.rgb, pos: palette.pos.rgb, neg: palette.neg.rgb, accent: palette.accent.rgb };
@@ -263,17 +272,25 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
     }
     let lines = [];
     if (scene.chips.lines) {
-      lines = computePlaneLines(scene.field, {
-        plane: scene.plane, fixed: scene.fixed, area: view.area, sources: scene.sources, model: scene.model,
-        quality: scene.quality,
-      });
+      if (linesCache?.key !== gridKey) {
+        linesCache = { key: gridKey, lines: computePlaneLines(scene.field, {
+          plane: scene.plane, fixed: scene.fixed, area: view.area, sources: scene.sources, model: scene.model, quality: scene.quality,
+        }) };
+      }
+      lines = linesCache.lines;
       lap('traceLines');
       strokeFieldLines(baseCtx, lines, view, scene.plane, palette);
       lap('strokeLines');
     }
-    strokeFieldArrows(baseCtx, scene.field, scene, palette, view.width, view.height, draft ? 62 : ARROW_SPACING);
+    if (!gridCache.arrows) {
+      const spacing = draft ? 62 : ARROW_SPACING;
+      const cols = Math.max(4, Math.floor(view.width / spacing)), rows = Math.max(3, Math.floor(view.height / spacing));
+      const samples = sampleVectorGrid(scene.field, scene.plane, scene.fixed, view.area, cols, rows);
+      gridCache.arrows = { samples, typical: typicalMagnitude(samples.map(item => item.magnitude), 1) };
+    }
+    strokeFieldArrows(baseCtx, gridCache.arrows, scene, palette);
     lap('arrows');
-    Object.assign(stats, { baseMs: performance.now() - started, cols, rows, lines: lines.length, stages });
+    Object.assign(stats, { baseMs: performance.now() - started, cols: grid.cols, rows: grid.rows, lines: lines.length, stages });
   }
 
   return {
@@ -283,12 +300,13 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
       const { view } = scene;
       if (!(view.width > 1 && view.height > 1)) return stats;
       const palette = getPalette(), dpr = Math.min(2, window.devicePixelRatio || 1);
+      // What the sampled field depends on. Chips and colours are deliberately absent: they only change how it is painted.
+      const gridKey = JSON.stringify([scene.fieldKey, view.width, view.height, view.span, view.offset, scene.plane, scene.fixed, scene.quality]);
       const key = JSON.stringify([
-        scene.fieldKey, view.width, view.height, view.span, view.offset, scene.plane, scene.fixed,
-        scene.chips.lines, scene.chips.contours, scene.quality, palette.bg.css, palette.pos.css, dpr,
+        gridKey, scene.chips.lines, scene.chips.contours, palette.bg.css, palette.pos.css, palette.neg.css, palette.accent.css, palette.text.css, dpr,
       ]);
       stats.baseCached = key === baseKey;
-      if (!stats.baseCached) { drawBase(scene, palette, dpr); baseKey = key; }
+      if (!stats.baseCached) { drawBase(scene, palette, dpr, gridKey); baseKey = key; }
       const started = performance.now();
       sizeCanvas(canvas, ctx, view.width, view.height, dpr);
       ctx.clearRect(0, 0, view.width, view.height);

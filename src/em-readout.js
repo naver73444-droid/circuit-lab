@@ -64,7 +64,10 @@ export function gaussReadout({ enclosure, coarse = null, precise = null }) {
   if (numeric) {
     const isPrecise = numeric === precise;
     converged = isPrecise ? (precise.converged ?? null) : null;
-    const near = isPrecise && enclosure.boundaryGap !== undefined && enclosure.boundaryGap <= NEAR_BOUNDARY * enclosure.radius;
+    // Near the boundary: one charge within NEAR_BOUNDARY * radius, or two or more charges close enough that the precise flux had
+    // to be split per charge (precise.nearCount) and that split did not converge.
+    const near = isPrecise && ((enclosure.boundaryGap !== undefined && enclosure.boundaryGap <= NEAR_BOUNDARY * enclosure.radius)
+      || (precise.nearCount ?? 0) >= 2);
     const tag = !isPrecise ? '근사' : converged === false ? (near ? '경계 근처 · 미수렴' : '미수렴') : converged ? '정밀 · 수렴' : '정밀';
     lines.push(`수치 ∮E·dA = ${fluxText(numeric.flux)}  (${tag})`);
     agrees = converged === false ? null : fluxAgrees(numeric.flux, expected);

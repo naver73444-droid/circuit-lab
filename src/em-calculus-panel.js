@@ -2,12 +2,12 @@
 // sensor or settings recomputes shortly after (never while a drag is still moving), and the result is three lines.
 import { CALCULUS_DEFAULTS, calculusLines, evaluateCalculus } from './em-calculus.js';
 import { drawCalculus } from './em-calculus-view.js';
-import { parseEMNumber } from './em-scenes-panel.js';
+import { parseEMNumber } from './em-source-edit.js';
 
 const INPUTS = ['alpha', 'h', 'radius'];
 const DELAY = 90;
 
-export function createCalculusPanel({ root, editor, isSandbox, getPalette, signal }) {
+export function createCalculusPanel({ root, editor, isSandbox, getPalette, signal, interaction = null }) {
   const $ = selector => root.querySelector(selector), pg = editor.state;
   const canvas = $('#em-c-visual'), result = $('#em-c-result'), details = root.querySelector('#em-advanced');
   let timer = null, lastKey = null, display = null, message = '';
@@ -68,6 +68,9 @@ export function createCalculusPanel({ root, editor, isSandbox, getPalette, signa
   }
   details.addEventListener('toggle', schedule, { signal });
   signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  // A pending computation is dropped the moment any interaction starts (it would run into the drag); the render that follows the
+  // interaction's end asks for a fresh one through update().
+  interaction?.onBegin(() => { clearTimeout(timer); timer = null; });
 
   return {
     settings, setSettings,

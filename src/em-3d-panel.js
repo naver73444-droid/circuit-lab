@@ -72,7 +72,7 @@ export function create3DPanel({
   // Field lines and the in-plane arrows only depend on the field, the plane and the quality.
   function overlays(mode, field) {
     const plane = mode.plane(), fixed = mode.fixed();
-    const key = JSON.stringify([mode.fieldKey(lab.quality), plane, fixed, lab.quality, lab.chips.lines]);
+    const key = JSON.stringify([mode.fieldKey(), plane, fixed, lab.quality, lab.chips.lines]);
     if (lineCache?.key === key) return lineCache.value;
     const lines = lab.chips.lines
       ? computePlaneLines(field, { plane, fixed, area: WINDOW, sources: mode.sources(), model: mode.model(), quality: lab.quality })
@@ -90,9 +90,9 @@ export function create3DPanel({
   }
 
   function draw() {
-    const gl = ensureView(), mode = getMode(), field = mode.field(lab.quality);
+    const gl = ensureView(), mode = getMode(), field = mode.field();
     const { fieldLines, gridVectors } = overlays(mode, field);
-    const sandbox = mode.kind === 'sandbox', display = mode.sensor(), result = mode.field('final').evaluate(display);
+    const sandbox = mode.kind === 'sandbox', display = mode.sensor(), result = field.evaluate(display);
     const frame = {
       camera: s.camera, palette: getPalette(), plane: mode.plane(), fixed: mode.fixed(), fieldLines, gridVectors,
       point: sandbox ? pg.probe : s.point,
@@ -110,7 +110,9 @@ export function create3DPanel({
 
   // Every pointer on the 3D canvas (camera turn, zoom pinch or source drag) counts as an interaction.
   canvas.addEventListener('pointerdown', event => {
-    if (!isActive()) return;
+    // Only the primary button (or a touch / pen contact) starts an interaction; a right or middle press has no matching
+    // release on the canvas, which would leave the shared interaction state active.
+    if (!isActive() || (event.button !== 0 && event.pointerType !== 'touch')) return;
     pointers.add(event.pointerId);
     interaction.begin('3d');
   }, { signal });

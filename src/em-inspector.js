@@ -5,9 +5,10 @@ import { inspectorFields, patchFromField, sliderFromStrength, sourceTitle, stren
 
 const show = value => String(Number(Number(value).toPrecision(6)));
 
-export function createInspector({ host, editor, request, getPlane, signal }) {
+// announce(text): polite live-region message; focusCanvas(): where the keyboard focus goes when the inspector's own button vanishes.
+export function createInspector({ host, editor, request, getPlane, signal, announce = () => {}, focusCanvas = () => {} }) {
   const pg = editor.state;
-  let structure = null;
+  let structure = null, focusStrength = false;
 
   const selected = () => pg.sources.find(source => source.id === pg.selectedId) ?? null;
   const input = id => host.querySelector(`[data-em-field="${id}"]`);
@@ -44,13 +45,17 @@ export function createInspector({ host, editor, request, getPlane, signal }) {
   function sync() {
     const source = selected(), plane = getPlane();
     if (!source) {
-      structure = null;
-      host.innerHTML = '<p class="em-note">전하를 누르면 여기서 세기와 위치를 바꿀 수 있습니다.</p>';
+      // The note never changes: rewriting it on every frame would replace the node under the screen reader's cursor.
+      if (structure !== 'none') {
+        structure = 'none';
+        host.innerHTML = '<p class="em-note">전하를 누르면 여기서 세기와 위치를 바꿀 수 있습니다.</p>';
+      }
       return;
     }
     const key = `${source.id}:${source.type}:${plane}`;
     if (key !== structure) { build(source, plane); structure = key; }
     fill(source, plane);
+    if (focusStrength) { focusStrength = false; input('strength')?.focus({ preventScroll: true }); }
   }
 
   function applyField(id, value) {
@@ -92,10 +97,15 @@ export function createInspector({ host, editor, request, getPlane, signal }) {
     request();
   }, { signal });
   host.addEventListener('click', event => {
-    const action = event.target.closest('[data-em-act]')?.dataset.emAct;
-    if (action === 'clone') editor.cloneSelected();
-    else if (action === 'delete') editor.removeSelected();
-    else return;
+    const action = event.target.closest('[data-em-act]')?.dataset.emAct, before = selected();
+    if (action === 'clone') {
+      // The clone becomes the selection and the inspector is rebuilt for it: the focus follows to its strength field.
+      const clone = editor.cloneSelected();
+      if (clone) { focusStrength = true; announce(`복제했습니다: ${sourceTitle(selected() ?? before)}`); }
+    } else if (action === 'delete') {
+      // The button that was pressed disappears with the source: hand the focus to the plane so keyboard work can continue.
+      if (editor.removeSelected()) { focusCanvas(); announce(`삭제했습니다: ${sourceTitle(before)}`); }
+    } else return;
     request();
   }, { signal });
 

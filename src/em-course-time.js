@@ -21,6 +21,14 @@ export function timeSpec(definition, params) {
   else if (definition.id === 'motional-rod') {
     const { velocity, x0, railLength } = params;
     max = velocity === 0 ? 1 : (velocity > 0 ? railLength - x0 : x0) / Math.abs(velocity) * 0.985;
+    // A rod that already sits at (or beyond) the end it moves towards has no time after t = 0 where the model holds: the range
+    // is empty and the scrubber is disabled with the reason, instead of a made-up one-second range that is all unsupported.
+    if (velocity !== 0 && !(max > 0)) {
+      return {
+        key: TIME_KEY, min: 0, max: 0, displayScale: parameter.displayScale || 1, unit: parameter.displayUnit ?? parameter.unit ?? 's',
+        disabled: true, reason: '막대가 이미 레일 끝에 있어 t > 0은 지원하지 않습니다. x₀나 속도를 바꾸세요.',
+      };
+    }
   } else max = 2 / params.frequency;
   if (!(max > 0) || !Number.isFinite(max)) max = 1;
   return {
@@ -32,6 +40,7 @@ export function timeSpec(definition, params) {
 /** Clock position after `seconds` of playback, wrapping at the end of the sweep. */
 export function advanceTime(spec, time, seconds) {
   const span = spec.max - spec.min;
+  if (!(span > 0)) return spec.min;
   const next = time + seconds * span / SWEEP_SECONDS;
   return next > spec.max ? spec.min + (next - spec.min) % span : Math.max(spec.min, next);
 }
@@ -89,6 +98,28 @@ const INSTANT = {
 // Where the experiment is defined along z: the transmission line only between its input (z = -length) and its load (z = 0).
 // Outside it every sample would be skipped, so the span that sets the sample count is cut to this range.
 const SUPPORT = { 'transmission-lossless': params => [-params.length, 0] };
+
+/** The span of z where the experiment is defined (the transmission line only between its input and its load), or null. */
+export const instantSupport = (definition, params) => SUPPORT[definition.id]?.(params) ?? null;
+
+/**
+ * What to draw for each profile of a profile picture. `profiles` are the experiment's amplitude envelopes (an unresolved one has
+ * no points: the 513-point cap), `instant` the instantaneous curves at the current time (or null). Each entry:
+ * { index, envelope, live, instantUnresolved } where `live` is the resolved instantaneous series (drawn alone when the
+ * envelope is unresolved, with the dashed envelope behind it otherwise) and instantUnresolved says the instantaneous curve could
+ * not be resolved (the picture then says so instead of drawing it). A profile with nothing resolvable is left out.
+ */
+export function profileLayers(profiles, instant) {
+  const layers = [];
+  (profiles || []).slice(0, 3).forEach((data, index) => {
+    const envelope = Boolean(data.points?.length) && data.sampling?.status !== 'unresolved';
+    const item = instant?.[index];
+    const live = item && item.status !== 'unresolved' && item.points?.length > 1 ? item : null;
+    const instantUnresolved = item?.status === 'unresolved';
+    if (envelope || live) layers.push({ index, envelope, live, instantUnresolved: envelope && instantUnresolved });
+  });
+  return layers;
+}
 
 export const MIN_SAMPLES = 161;
 export const SAMPLES_PER_WAVELENGTH = 16;

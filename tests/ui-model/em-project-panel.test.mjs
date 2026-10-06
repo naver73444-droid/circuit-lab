@@ -17,8 +17,8 @@ function openPanel() {
   let settings = { mode: 'electric', differentialMode: 'numeric', alpha: 1, h: 0.005, radius: 1, normal: [0, 0, 1] };
   const calculus = { settings: () => structuredClone(settings), setSettings: value => { settings = structuredClone(value); } };
   const controller = new AbortController();
-  createProjectPanel({ root, editor, store, calculus, onLoaded() {}, signal: controller.signal });
-  return { root, editor, store };
+  const panel = createProjectPanel({ root, editor, store, calculus, onLoaded() {}, signal: controller.signal });
+  return { root, editor, store, panel };
 }
 
 // The panel saves through a Blob URL and a clicked link: capture the saved text instead of downloading.
@@ -93,4 +93,17 @@ test('a file that fails to open leaves the carried fields of the current project
   const saved = JSON.parse(await save(root));
   assert.equal(saved.view.vectorMode, 'gradV');
   assert.deepEqual(saved.world.comparison, project.world.comparison);
+});
+
+test('초기화 clears the carried comparison, vector mode and legend: a reset world does not save the stale fields of the opened file', async () => {
+  const { root, editor, panel } = openPanel();
+  await open(root, JSON.stringify(project));
+  assert.equal(panel.inspectCarried().vectorMode, 'gradV');
+  editor.reset();
+  panel.resetCarried(); // what the 초기화 button of the workspace does
+  assert.deepEqual(panel.inspectCarried(), { comparison: null, vectorMode: 'E', legend: { mode: 'auto' } });
+  const saved = JSON.parse(await save(root));
+  assert.equal(saved.world.comparison, null);
+  assert.equal(saved.view.vectorMode, 'E');
+  assert.deepEqual(saved.legend, { mode: 'auto' });
 });

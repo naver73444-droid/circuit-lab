@@ -36,7 +36,7 @@ function hash(text) {
 
 export function createSceneMode(store) {
   const s = store.state;
-  const caches = { final: null, draft: null }; // one entry per quality, so asking for the draft does not evict the converged field
+  let cache = null;
   return {
     kind: 'scene',
     plane: () => s.slice,
@@ -46,13 +46,14 @@ export function createSceneMode(store) {
     model: () => s.models[s.sceneName],
     sensor() { return toDisplay(this.field(), s.point); },
     moveSensor(display) { return Boolean(store.setPoint(toMetres(this.field(), display))); },
-    // quality 'draft' is for drawing while a drag is in progress; the sensor and a finished render ask for the converged field.
-    field(quality = 'final') {
-      const model = s.models[s.sceneName], time = s.sceneName === 'wave' ? s.timeCycles : 0, draft = quality === 'draft';
-      const key = JSON.stringify([model, time, draft]), slot = draft ? 'draft' : 'final';
-      if (caches[slot]?.key !== key) caches[slot] = { key, field: createSceneField(model, time, slot), fieldKey: `scene:${hash(key)}` };
-      return caches[slot].field;
+    // Scene fields are exact at every quality (the loop is closed form), so the `quality` argument that the sandbox-style
+    // callers pass changes nothing: one cached field serves the sensor, a drag frame and a finished render.
+    field() {
+      const model = s.models[s.sceneName], time = s.sceneName === 'wave' ? s.timeCycles : 0;
+      const key = JSON.stringify([model, time]);
+      if (cache?.key !== key) cache = { key, field: createSceneField(model, time), fieldKey: `scene:${hash(key)}` };
+      return cache.field;
     },
-    fieldKey(quality = 'final') { this.field(quality); return caches[quality === 'draft' ? 'draft' : 'final'].fieldKey; },
+    fieldKey() { this.field(); return cache.fieldKey; },
   };
 }

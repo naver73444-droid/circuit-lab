@@ -99,13 +99,76 @@ export function loopFieldAtN({ current, center = [0, 0, 0], radius, normal = [0,
   return scale3(sum, MU0 * I / (4 * Math.PI));
 }
 
-export function loopCurrentField(model, point) {
-  const p = point.map((x, i) => coordinate(x, `${'xyz'[i]} 좌표`));
+// ---- closed-form loop field --------------------------------------------------------------------------------------------
+// A circular loop has an exact field in complete elliptic integrals (cylindrical coordinates about the loop axis):
+//   B_z   = mu0 I / (2 pi) / sqrt((a+rho)^2+z^2) * [ K(m) + (a^2-rho^2-z^2) / ((a-rho)^2+z^2) * E(m) ]
+//   B_rho = mu0 I / (2 pi) * z / (rho sqrt((a+rho)^2+z^2)) * [ (a^2+rho^2+z^2) / ((a-rho)^2+z^2) * E(m) - K(m) ]
+//   m = 4 a rho / ((a+rho)^2+z^2)
+// K and E come from the arithmetic-geometric mean (a handful of iterations), so the cost of one point is constant and
+// independent of how close it is to the wire.
+
+/** Complete elliptic integrals K(m), E(m) by the AGM; kPrime = sqrt(1-m) is passed in so that m near 1 loses no digits. */
+export function ellipticKE(m, kPrime) {
+  let a = 1, b = kPrime, sum = 0.5 * m, power = 1;
+  for (let i = 0; i < 40 && Math.abs(a - b) > 1e-16 * a; i++) {
+    const next = (a + b) / 2, c = (a - b) / 2;
+    b = Math.sqrt(a * b); a = next; power *= 2;
+    sum += power / 2 * c * c;
+  }
+  const K = Math.PI / (2 * a);
+  return { K, E: K * (1 - sum) };
+}
+
+const LOOP_AXIS_FRACTION = 1e-6; // closer to the axis than this fraction of the radius the on-axis series replaces the closed form
+
+/** B (T) of the loop at `point`: exact, constant cost. The caller handles the wire exclusion zone. */
+export function loopFieldClosedForm({ current, center = [0, 0, 0], radius, normal = [0, 0, 1] }, point) {
+  const I = finite(current, '전류'), a = finite(radius, '고리 반지름');
+  if (Math.abs(I) > 100) throw new EMInputError('전류는 ±100 A 범위여야 합니다.', 'OUT_OF_RANGE');
+  if (a < .05 || a > 5) throw new EMInputError('고리 반지름은 0.05…5 m 범위여야 합니다.', 'OUT_OF_RANGE');
+  if (I === 0) return v();
+  const { n, e1, e2 } = loopBasis(normal), d = sub3(point, center);
+  const z = dot3(d, n), x = dot3(d, e1), y = dot3(d, e2), rho = Math.hypot(x, y);
+  const factor = MU0 * I / (2 * Math.PI);
+  let bRho, bz;
+  if (rho < LOOP_AXIS_FRACTION * a) {
+    // On the axis B_z is the axis formula and B_rho ~ 3 mu0 I a^2 z rho / (4 (a^2+z^2)^(5/2)) to first order.
+    const s2 = a * a + z * z;
+    bz = MU0 * I * a * a / (2 * s2 ** 1.5);
+    bRho = 3 * MU0 * I * a * a * z * rho / (4 * s2 ** 2.5);
+  } else {
+    const alpha2 = (a - rho) ** 2 + z * z, beta2 = (a + rho) ** 2 + z * z, beta = Math.sqrt(beta2);
+    const { K: k, E: e } = ellipticKE(4 * a * rho / beta2, Math.sqrt(alpha2 / beta2));
+    bz = factor / beta * (k + (a * a - rho * rho - z * z) / alpha2 * e);
+    bRho = factor * z / (rho * beta) * ((a * a + rho * rho + z * z) / alpha2 * e - k);
+  }
+  const radial = rho > 0 ? [x / rho, y / rho] : [0, 0];
+  return add3(scale3(n, bz), add3(scale3(e1, bRho * radial[0]), scale3(e2, bRho * radial[1])));
+}
+
+function loopExclusion(model, p) {
   const R = finite(model.radius, '고리 반지름');
   const exclusion = Math.max(EXCLUSION_METERS, .02 * R);
   if (finite(model.current, '전류') !== 0 && loopWireDistance(model, p) <= exclusion) {
     return { status: 'excluded', reason: `고리 도선 ${exclusion.toPrecision(3)} m 모델 제외영역`, B: null };
   }
+  return null;
+}
+
+/** Loop field with the 0.02 R wire exclusion zone; exact (closed form), so it is cheap everywhere and always converged. */
+export function loopCurrentField(model, point) {
+  const p = point.map((x, i) => coordinate(x, `${'xyz'[i]} 좌표`));
+  return loopExclusion(model, p) ?? { status: 'valid', B: loopFieldClosedForm(model, p), converged: true, closedForm: true };
+}
+
+/**
+ * The converged numerical alternative (Biot-Savart segment sums, 64 -> 1024 segments until two passes agree). Kept as the
+ * independent reference the closed form is tested against; it gets slow close to the wire.
+ */
+export function loopCurrentFieldNumeric(model, point) {
+  const p = point.map((x, i) => coordinate(x, `${'xyz'[i]} 좌표`));
+  const excluded = loopExclusion(model, p);
+  if (excluded) return excluded;
   let previous = null, difference = null, B = v(), samples = 64;
   for (samples = 64; samples <= 1024; samples *= 2) {
     B = loopFieldAtN(model, p, samples);

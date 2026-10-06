@@ -13,18 +13,26 @@ import { createInteraction } from './em-interaction.js';
 
 const SENSOR_GRAB = 16;
 const KEY_STEP = 0.05;
+// A burst of wheel turns / resizes renders at draft quality; one converged render follows this long after the last event.
+const VIEW_SETTLE_MS = 150;
 
 export function createPlaneController({
   baseCanvas, canvas, editor, getMode, lab, getPalette, onChange, signal, interaction = createInteraction(), announce = () => {},
 }) {
   const pg = editor.state, renderer = createPlaneRenderer(baseCanvas, canvas, getPalette);
-  let drag = null, preciseTimer = null, preciseKey = null, precise = null;
+  let drag = null, preciseTimer = null, preciseKey = null, precise = null, renderedSize = null;
 
   // One shared interaction state (plane drag, 3D drag, Gauss slider): the precise flux never runs mid-interaction.
   const cancelPrecise = () => { clearTimeout(preciseTimer); preciseTimer = null; preciseKey = null; };
   interaction.onBegin(cancelPrecise);
   const startGesture = next => { drag = next; interaction.begin('plane'); };
   const stopGesture = () => { drag = null; interaction.end('plane'); };
+  // Wheel zoom and window resizes have no release event: they draw at draft quality and the converged picture follows after
+  // the burst (one interaction pulse). A source drag in progress keeps its own draft until it ends.
+  const viewPulse = () => {
+    lab.quality = 'draft';
+    interaction.pulse('plane-view', VIEW_SETTLE_MS, () => { if (!drag && !pg.drag) lab.quality = 'final'; onChange(); });
+  };
 
   const geometry = () => createPlaneView({
     width: canvas.clientWidth, height: canvas.clientHeight, span: lab.view.span, offset: lab.view.offset,
@@ -77,7 +85,7 @@ export function createPlaneController({
 
   // What the readouts show: the sensor's field and the Gauss surface. Cheap enough to run on every frame.
   function measure() {
-    const mode = getMode(), field = mode.field('final'), plane = mode.plane(), [a, b] = planeAxes(plane);
+    const mode = getMode(), field = mode.field(), plane = mode.plane(), [a, b] = planeAxes(plane);
     const sensor = mode.sensor(), result = field.evaluate(sensor);
     const gauss = gaussInfo(mode, field);
     return {
@@ -89,10 +97,11 @@ export function createPlaneController({
   function draw() {
     const view = geometry();
     if (!(view.width > 1 && view.height > 1)) return null;
+    renderedSize = [view.width, view.height];
     const info = measure(), { mode } = info;
-    // The picture uses the coarse field only while a drag is in progress (quality 'draft'); a finished render is converged.
+    // While a drag, a wheel burst or a resize is in progress the picture is sampled coarsely (quality 'draft'); a finished render is fine.
     renderer.render({
-      view, plane: info.plane, fixed: mode.fixed(), field: mode.field(lab.quality), fieldKey: mode.fieldKey(lab.quality), sources: mode.sources(),
+      view, plane: info.plane, fixed: mode.fixed(), field: mode.field(), fieldKey: mode.fieldKey(), sources: mode.sources(),
       model: mode.model(), quality: lab.quality, chips: lab.chips, selectedId: pg.selectedId,
       sensor: { point: info.sensor, vector: info.inPlane, text: info.readout.compact },
       gauss: info.gauss ? { ...lab.gauss, label: info.gauss.status === 'ok' ? info.gauss.lines[1] : '' } : null,
@@ -108,7 +117,8 @@ export function createPlaneController({
   }
 
   function startDrag(event) {
-    if (event.button !== 0) return;
+    // One gesture at a time: a second finger (or button) must not overwrite the drag that is already running.
+    if (event.button !== 0 || (drag && drag.pointerId !== event.pointerId)) return;
     const [x, y] = local(event), view = geometry(), mode = getMode(), plane = mode.plane();
     const [sx, sy] = sensorPixel(view, mode), sensorDistance = Math.hypot(sx - x, sy - y);
     const sandbox = mode.kind === 'sandbox';
@@ -174,8 +184,8 @@ export function createPlaneController({
         const point = pointOnPlane(view, plane, finished.normal, x, y);
         editor.commitDrag(point.map((v, i) => v + finished.offset[i]));
       }
-      lab.quality = 'final';
     }
+    lab.quality = 'final';
     onChange();
   }
 
@@ -200,11 +210,13 @@ export function createPlaneController({
     event.preventDefault();
     const [x, y] = local(event);
     Object.assign(lab.view, zoomAbout(geometry(), x, y, event.deltaY > 0 ? 1.12 : 1 / 1.12));
+    viewPulse();
     onChange();
   }, { passive: false, signal });
 
-  // ---- keyboard selection: [ and ] cycle the selected source (wrapping); Tab / Shift+Tab walk through them and let the
-  // focus leave the canvas after the last / before the first, so the canvas is never a keyboard trap. -----------------------
+  // ---- keyboard selection: [ and ] cycle the selected source (wrapping). Tab / Shift+Tab walk through the sources only while
+  // one is already selected, and let the focus leave the canvas after the last / before the first (and always when nothing is
+  // selected), so the canvas is never a keyboard trap. -----------------------------------------------------------------------
 
   function cycleSelection(step, wrap) {
     if (getMode().kind !== 'sandbox') return false;
@@ -220,6 +232,8 @@ export function createPlaneController({
     if (event.ctrlKey || event.altKey || event.metaKey) return false;
     const step = event.key === ']' ? 1 : event.key === '[' ? -1 : event.key === 'Tab' ? (event.shiftKey ? -1 : 1) : 0;
     if (!step) return false;
+    // Tab never starts a selection: with nothing selected it belongs to the browser (focus leaves the canvas).
+    if (event.key === 'Tab' && !pg.sources.some(source => source.id === pg.selectedId)) return false;
     const handled = cycleSelection(step, event.key !== 'Tab');
     if (handled) event.preventDefault();
     return event.key !== 'Tab' || handled;
@@ -253,7 +267,11 @@ export function createPlaneController({
     onChange();
   }, { signal });
 
-  const observer = new ResizeObserver(() => onChange());
+  const observer = new ResizeObserver(() => {
+    const width = canvas.clientWidth, height = canvas.clientHeight;
+    if (renderedSize && width > 1 && height > 1 && (renderedSize[0] !== width || renderedSize[1] !== height)) viewPulse();
+    onChange();
+  });
   observer.observe(canvas);
   signal.addEventListener('abort', () => { observer.disconnect(); cancelPrecise(); }, { once: true });
 
@@ -265,9 +283,11 @@ export function createPlaneController({
     selectNext: step => cycleSelection(step, true),
     invalidate: () => renderer.invalidate(),
     cancel() {
-      if (!drag) return;
-      if (drag.type === 'source') editor.cancelDrag();
-      stopGesture();
+      interaction.end('plane-view');
+      if (drag) {
+        if (drag.type === 'source') editor.cancelDrag();
+        stopGesture();
+      }
       lab.quality = 'final';
     },
     /** Put the Gauss circle around the selected source (or the first one, or the origin). */

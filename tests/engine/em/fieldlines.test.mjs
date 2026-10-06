@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lineChargeStop, seedsAroundSources, traceSourceLines, traceStreamline } from '../../../src/em-fieldlines.js';
+import { clipSegmentToBox, lineChargeStop, seedsAroundSources, traceSourceLines, traceStreamline } from '../../../src/em-fieldlines.js';
 import { createPointChargeEvaluator, validatePointSources } from '../../../src/em-playground-physics.js';
 import { MU0 } from '../../../src/em-physics.js';
 
@@ -173,4 +173,43 @@ test('a line charge that does not touch the view plane neither absorbs lines nor
   assert.equal(lineChargeStop(offset[0], { axes: [0, 1], normal: 2, fixed: 0, radius: 0.06 }), null);
   const inPlane = lineChargeStop(offset[0], { axes: [0, 1], normal: 2, fixed: 0.5, radius: 0.06 });
   assert.deepEqual([inPlane.center, inPlane.end, inPlane.reason], [[-1, 0], [1, 0], 'charge']);
+});
+
+test('clipSegmentToBox keeps the part of a segment inside the box and rejects a miss', () => {
+  const box = { aMin: -3, aMax: 3, bMin: -2, bMax: 2 };
+  assert.deepEqual(clipSegmentToBox([-15, 0.5], [15, 0.5], box), [0.4, 0.6]);
+  assert.deepEqual(clipSegmentToBox([-1, 0], [1, 1], box), [0, 1], 'a segment inside is returned whole');
+  assert.equal(clipSegmentToBox([-15, 5], [15, 5], box), null);
+  assert.equal(clipSegmentToBox([5, -5], [6, 5], box), null);
+});
+
+test('line charges are seeded along their visible part: a long or off-centre line keeps its full share of lines', () => {
+  const bounds = { aMin: -3, aMax: 3, bMin: -2, bMax: 2 }, options = { axes: [0, 1], normal: 2, fixed: 0, maxPerSource: 12 };
+  const count = (source, view) => seedsAroundSources(validatePointSources([source]), { ...options, bounds: view }).length;
+  const finite = { id: 'f', type: 'finite-line', lambda: 1e-9, start: [-15, 0.5, 0], end: [15, 0.5, 0] };
+  assert.equal(count(finite, null), 12, 'without a view the seeds spread over all 30 m (only ~4 of them would be visible)');
+  assert.equal(count(finite, bounds), 12);
+  const inView = seedsAroundSources(validatePointSources([finite]), { ...options, bounds });
+  assert.ok(inView.every(seed => Math.abs(seed.point[0]) <= 3 + 1e-9 && Math.abs(seed.point[1] - 0.5) <= 0.12 + 1e-9), 'every seed is inside the view');
+  // an infinite line whose reference point (and displayed stretch) is far off screen but which crosses the view
+  const infinite = { id: 'i', type: 'infinite-line', lambda: 1e-9, position: [15, 0.5, 0], direction: [1, 0, 0], sRef: 1, displayLength: 4 };
+  assert.equal(count(infinite, null), 12, 'the old seeding: a displayed stretch around the off-screen point, no line in the view');
+  assert.equal(seedsAroundSources(validatePointSources([infinite]), { ...options, bounds: null }).filter(
+    seed => Math.abs(seed.point[0]) <= 3).length, 0);
+  assert.equal(count(infinite, bounds), 12);
+  assert.ok(seedsAroundSources(validatePointSources([infinite]), { ...options, bounds }).every(seed => Math.abs(seed.point[0]) <= 3 + 1e-9));
+  // a line wholly outside the view gets none
+  assert.equal(count({ ...finite, start: [-15, 5, 0], end: [15, 5, 0] }, bounds), 0);
+});
+
+test('field lines of an off-screen-centred infinite line and of a 30 m finite line are traced in the view', () => {
+  const bounds = { aMin: -3, aMax: 3, bMin: -2, bMax: 2 };
+  for (const source of [
+    { id: 'i', type: 'infinite-line', lambda: 1e-9, position: [15, 0.5, 0], direction: [1, 0, 0], sRef: 1, displayLength: 4 },
+    { id: 'f', type: 'finite-line', lambda: 1e-9, start: [-15, 0.5, 0], end: [15, 0.5, 0] },
+  ]) {
+    const valid = validatePointSources([source]);
+    const lines = traceSourceLines(valid, fieldOf(valid), { axes: [0, 1], normal: 2, fixed: 0, bounds });
+    assert.ok(lines.length >= 10, `${source.id}: ${lines.length} lines`);
+  }
 });

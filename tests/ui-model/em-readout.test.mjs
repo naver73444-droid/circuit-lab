@@ -108,3 +108,16 @@ test('an unconverged precise flux says so; near a charge it says "경계 근처 
   assert.equal(good.agrees, true);
   assert.equal(good.stateText, '가우스 법칙과 일치');
 });
+
+test('two charges near the surface whose per-charge refinement did not converge read "경계 근처 · 미수렴" (never 수렴, never agreeing)', () => {
+  const two = validatePointSources([
+    { id: 'a', q: 1.16e-9, position: [0.4586, 0.8516, 0.2471] }, { id: 'b', q: 0.7e-9, position: [0.9328, -0.3418, -0.1292] },
+  ]);
+  const enclosure = gaussEnclosure(two, [0, 0, 0], 1);
+  const readout = gaussReadout({ enclosure, coarse: { status: 'valid', flux: 100 }, precise: { status: 'valid', flux: 106, converged: false, nearCount: 2 } });
+  assert.match(readout.lines[2], /\(경계 근처 · 미수렴\)$/);
+  assert.doesNotMatch(readout.lines[2], /(?<!미)수렴/);
+  assert.equal(readout.converged, false);
+  assert.equal(readout.agrees, null);
+  assert.equal(readout.stateText, '경계 근처 · 미수렴');
+});

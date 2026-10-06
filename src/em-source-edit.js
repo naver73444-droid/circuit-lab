@@ -23,6 +23,15 @@ export function sliderFromStrength(nc) {
   return Math.sign(nc) * (NOTCH + fraction * (1 - NOTCH));
 }
 
+/** A number typed into a field: empty or non-finite text is an error (never silently 0). */
+export function parseEMNumber(value) {
+  const text = String(value ?? '').trim();
+  if (!text) throw new Error('빈값 또는 유한하지 않은 입력입니다.');
+  const result = Number(text);
+  if (!Number.isFinite(result)) throw new Error('빈값 또는 유한하지 않은 입력입니다.');
+  return result;
+}
+
 const AXIS_NAME = ['x', 'y', 'z'];
 const round = value => Number(value.toFixed(3));
 const degrees = radians => (radians * 180 / Math.PI + 360) % 360;

@@ -39,3 +39,40 @@ test('without the refine option nothing changes: the unconverged result is repor
   assert.equal(result.converged, false);
   assert.equal(result.refined, undefined);
 });
+
+// The review's configuration: a (inside, 1.7 mm from the surface) and b (outside, 1.8 mm) both make a spike on the unit sphere.
+const TWO = () => {
+  const sources = validatePointSources([
+    { id: 'a', q: 1.16e-9, position: [0.4586, 0.8516, 0.2471] }, { id: 'b', q: 0.7e-9, position: [0.9328, -0.3418, -0.1292] },
+  ]);
+  return { sources, field: createPointChargeEvaluator(sources) };
+};
+
+test('two charges near the surface: the flux is refined per charge and sums to Q/eps0 = 131.0 V·m (a inside, b outside)', () => {
+  const { sources, field } = TWO();
+  const plain = sphereFlux(field, [0, 0, 0], 1, sources);
+  assert.equal(plain.converged, false, 'the uniform grids alone do not resolve both spikes');
+  const refined = sphereFlux(field, [0, 0, 0], 1, sources, { refine: true });
+  assert.equal(refined.status, 'valid');
+  assert.equal(refined.nearCount, 2);
+  assert.equal(refined.refined, true);
+  assert.equal(refined.converged, true);
+  const expected = 1.16e-9 / EPS0;
+  assert.ok(Math.abs(expected - 131.0) < 0.05, `${expected}`);
+  assert.ok(Math.abs(refined.flux - expected) < 0.2, `${refined.flux} vs ${expected}`);
+});
+
+test('two charges near the surface are never labelled converged when the split cannot be trusted (21% error otherwise)', () => {
+  const { sources, field } = TWO();
+  // A field that is not the sum of the sources: the per-charge split would integrate something else, so it is refused.
+  const scaled = point => { const r = field(point); return r.status === 'valid' ? { ...r, E: r.E.map(value => value * 1.1) } : r; };
+  const refused = sphereFlux(scaled, [0, 0, 0], 1, sources, { refine: true });
+  assert.equal(refused.converged, false);
+  assert.equal(refused.nearCount, 2);
+  assert.equal(refused.refined, undefined);
+  // the same two charges with a third one inside: still split correctly (one far source rides on the uniform grids)
+  const three = validatePointSources([...sources, { id: 'c', q: -0.4e-9, position: [0.1, 0.1, -0.2] }]);
+  const result = sphereFlux(createPointChargeEvaluator(three), [0, 0, 0], 1, three, { refine: true });
+  assert.equal(result.converged, true);
+  assert.ok(Math.abs(result.flux - (1.16e-9 - 0.4e-9) / EPS0) < 0.2, `${result.flux}`);
+});

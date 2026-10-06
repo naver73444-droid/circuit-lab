@@ -12,7 +12,7 @@ Circuit Lab은 빌드 없는 순수 ES 모듈 웹 앱입니다. 상단 탭 네 �
 | `src/editor-*.js`, `canvas-*.js`, `analysis-runner.js`, `inspector.js`, `project-io.js` | 회로 편집기 컨트롤러 |
 | `src/em-*`, `signals-*`, `circuit-course-*`, `workspace-tabs.js` | 학습 작업공간(탭 진입 때 지연 로딩). EM: 평면 `em-plane-*`·샌드박스 `em-playground-*`·문제 풀이 `em-course-*`. 신호: `signals-<레슨>-model/view.js` 6쌍 + `signals-course-controller.js` |
 | `server.mjs`, `scripts/` | 로컬 서버(`src/*.js` 평면 파일만 제공), 실행기, 경계 검사, 시험 요약 |
-| `tests/` | `engine/`(728) `ui-model/`(445) `tooling/`(8) = 단위 1181개 + `browser/`(헤드리스 Edge 스모크 91개) |
+| `tests/` | `engine/`(739) `ui-model/`(450) `tooling/`(8) = 단위 1197개 + `browser/`(헤드리스 Edge 스모크 98개) |
 | `docs/ARCHITECTURE.md` | 모듈 지도·데이터 흐름·확장 위치 (먼저 읽을 것) |
 | `docs/COMMON-CONTRACTS.md` | 전기량·단위·파일·실행 상태 계약 |
 | `README.md`, `DESIGN.md` | 사용자 기능·조작표, 화면 설계 원칙 |
@@ -23,9 +23,9 @@ Circuit Lab은 빌드 없는 순수 ES 모듈 웹 앱입니다. 상단 탭 네 �
 
 ```powershell
 node server.mjs 0              # 빈 포트로 서버 시작 → 출력된 http://127.0.0.1:<포트> 열기 (또는 start-circuit-lab.cmd)
-npm test                       # engine + ui-model + tooling (1181개), 약 4초
+npm test                       # engine + ui-model + tooling (1197개), 약 4초
 npm run check                  # src 경계·import 사이클 검사
-npm run test:browser           # 헤드리스 Edge 스모크 91개 (Edge 필요, EDGE_PATH로 지정 가능)
+npm run test:browser           # 헤드리스 Edge 스모크 98개 (Edge 필요, EDGE_PATH로 지정 가능)
 npm run test:all               # 위 둘
 ```
 

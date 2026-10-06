@@ -8,7 +8,8 @@ export function createProjectPanel({ root, editor, store, calculus, onLoaded, si
 
   // Fields of a file that this workspace has no control for (the saved "before" comparison, the vector mode and the legend)
   // are kept as loaded and written back unchanged, so opening a file and saving it again loses nothing.
-  let carried = { comparison: null, vectorMode: 'E', legend: { mode: 'auto' } };
+  const freshCarried = () => ({ comparison: null, vectorMode: 'E', legend: { mode: 'auto' } });
+  let carried = freshCarried();
 
   const snapshot = () => ({
     format: 'circuit-lab-em-playground', version: 1,
@@ -68,4 +69,10 @@ export function createProjectPanel({ root, editor, store, calculus, onLoaded, si
     try { apply(makeExampleProject(name, snapshot())); status('예제를 불러왔습니다.'); }
     catch (error) { status(`예제 오류: ${error.message}`); }
   }, { signal });
+
+  return {
+    /** 초기화: the fields that came from a loaded file go back to their defaults together with the world. */
+    resetCarried() { carried = freshCarried(); },
+    inspectCarried: () => structuredClone(carried),
+  };
 }

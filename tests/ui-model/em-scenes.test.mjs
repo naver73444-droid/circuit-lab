@@ -41,3 +41,13 @@ test('a value that cannot be applied leaves the model untouched', () => {
   assert.equal(em.apply(deriveFields('loop', { current: 1, radius: 20, normal: 'z' })), null);
   assert.equal(em.state.models.loop.radius, 1);
 });
+
+test('parseEMNumber lives in the pure em-source-edit module (the calculus panel imports it from there, not from the DOM scenes panel)', async () => {
+  const pure = await import('../../src/em-source-edit.js');
+  assert.equal(pure.parseEMNumber, parseEMNumber, 'the scenes panel re-exports the same function');
+  assert.equal(pure.parseEMNumber(' 2.5e-3 '), 0.0025);
+  assert.throws(() => pure.parseEMNumber(''), /빈값/);
+  const { readFile } = await import('node:fs/promises');
+  const calculusPanel = await readFile(new URL('../../src/em-calculus-panel.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(calculusPanel, /em-scenes-panel/);
+});

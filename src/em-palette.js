@@ -54,3 +54,15 @@ export function createPalette(element, onChange = () => {}) {
     destroy() { observer.disconnect(); media.removeEventListener('change', invalidate); },
   };
 }
+
+/**
+ * prefers-reduced-motion for the playback of the plane wave and the time experiments. Nothing in the EM workspace starts
+ * playing on its own (only the 재생 button does, and that is always allowed); when the preference turns on while something plays,
+ * onReduce() stops it. `matches` is the current preference.
+ */
+export function watchReducedMotion(signal, onReduce = () => {}) {
+  const media = matchMedia('(prefers-reduced-motion: reduce)');
+  const changed = () => { if (media.matches) onReduce(); };
+  media.addEventListener('change', changed, { signal });
+  return { get matches() { return media.matches; } };
+}

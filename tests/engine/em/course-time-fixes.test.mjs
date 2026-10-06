@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getExperiment } from '../../../src/em-course-registry.js';
 import {
-  instantProfiles, MAX_SAMPLES, normalizeTime, SAMPLES_PER_WAVELENGTH, timeSpec, UNRESOLVED_TEXT,
+  advanceTime, instantProfiles, instantSupport, MAX_SAMPLES, normalizeTime, profileLayers, SAMPLES_PER_WAVELENGTH, timeSpec, UNRESOLVED_TEXT,
 } from '../../../src/em-course-time.js';
 
 const defaults = definition => Object.fromEntries(definition.parameters.map(p => [p.key, p.initial]));
@@ -96,4 +96,38 @@ test('a zoomed-out view of a transmission line only counts the samples that lie 
   assert.ok(far.points[0].coordinate >= -1 && far.points.at(-1).coordinate <= 0);
   assert.equal(instantProfiles(line, params, [1, 2]), null, 'a view that does not touch the line has no curve');
   assert.ok(near.points.length >= SAMPLES_PER_WAVELENGTH * 40, `${near.points.length} samples for 40 wavelengths`);
+});
+
+test('a transmission line whose amplitude envelope exceeds the 513-point cap still has its resolved instantaneous curve drawn', () => {
+  const params = { ...defaults(line), frequency: 8e9, length: 3, loadMode: 2 }; // 80 wavelengths on the line
+  const profiles = line.profile({ ...params }, 81);
+  assert.ok(profiles.length >= 2 && profiles.every(p => p.sampling.status === 'unresolved' && p.points.length === 0), 'the envelope is unresolved (needs 961 > 513 points)');
+  const instant = instantProfiles(line, params, [-3, 0]);
+  assert.ok(instant.every(item => item.status === 'resolved' && item.points.length > 1000), 'but the instantaneous waveform is resolved');
+  const layers = profileLayers(profiles, instant);
+  assert.equal(layers.length, 2, 'both profiles are drawn');
+  assert.ok(layers.every(layer => layer.envelope === false && layer.live && layer.instantUnresolved === false), 'as instantaneous curves only (no envelope behind them)');
+  assert.deepEqual(instantSupport(line, params), [-3, 0], 'the picture takes its extent from the line, not from the (empty) envelope');
+  // both unresolved: nothing to draw, the view keeps its message
+  const hopeless = { ...params, frequency: 1e12, length: 1000 };
+  assert.deepEqual(profileLayers(line.profile({ ...hopeless }, 81), instantProfiles(line, hopeless, [-1000, 0])), []);
+  // a resolved envelope with a resolved curve keeps the dashed envelope behind the curve (the previous behaviour)
+  const calm = { ...defaults(line), length: 1, frequency: 1e8 };
+  const normal = profileLayers(line.profile({ ...calm }, 81), instantProfiles(line, calm, [-1, 0]));
+  assert.ok(normal.length === 2 && normal.every(layer => layer.envelope && layer.live));
+});
+
+test('a rod that already sits at the end of its rail has no time range: the scrubber is disabled with a reason, not a made-up second', () => {
+  const rod = getExperiment('motional-rod'), base = { ...defaults(rod), velocity: 3, x0: 2.5, railLength: 2 };
+  const spec = timeSpec(rod, base);
+  assert.equal(spec.disabled, true);
+  assert.equal(spec.max, 0);
+  assert.match(spec.reason, /t > 0/);
+  assert.equal(normalizeTime(rod, { ...base, time: 0.7 }).time, 0, 'a stale time is pulled back to 0 (the only supported instant)');
+  assert.equal(advanceTime(spec, 0, 1), 0, 'playback has nowhere to go');
+  for (const params of [{ ...base, x0: 2 }, { ...base, velocity: -3, x0: 0 }]) assert.equal(timeSpec(rod, params).disabled, true, JSON.stringify([params.velocity, params.x0]));
+  // ordinary rods keep their range, and a rod at rest keeps its one second
+  const moving = timeSpec(rod, { ...base, x0: 0.2 });
+  assert.ok(!moving.disabled && Math.abs(moving.max - 0.985 * 1.8 / 3) < 1e-12);
+  assert.equal(timeSpec(rod, { ...base, velocity: 0, x0: 0.2 }).max, 1);
 });

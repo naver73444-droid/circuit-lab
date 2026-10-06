@@ -6,7 +6,7 @@ import { createCourseView, createRadialProfileView, drawTimeTrace } from './em-c
 import { inductionAfterStructural, inductionAfterNumeric, inductionNumericReason } from './course-illustration-contract.js';
 import { renderSymbolic } from './course-symbolic-view.js';
 import { siText, siVector } from './em-format.js';
-import { createPalette } from './em-palette.js';
+import { createPalette, watchReducedMotion } from './em-palette.js';
 import { paramSpec, parseParam, topicOf, valueFromRange } from './em-course-params.js';
 import { advanceTime, clampTime, instantProfiles, normalizeTime, timeSpec, timeTrace } from './em-course-time.js';
 import { highlightSymbolic } from './em-course-symbolic.js';
@@ -27,6 +27,8 @@ export function createEMCourseController(root, { onClose } = {}) {
   root.innerHTML = SHELL;
   // A theme change recolours every canvas of the screen: the picture and the emf(t) time graph under it.
   const palette = createPalette(root, () => { if (active) renderTime(definition(), record()); schedulePicture(); });
+  // Nothing here starts playing by itself; if the user turns "reduce motion" on while a time experiment plays, it stops.
+  const motion = watchReducedMotion(events.signal, () => { if (playing) { stopPlayback(); scheduleChecks(); } });
   const getPalette = () => palette.current();
 
   const definition = () => getExperiment(selectedId);
@@ -182,10 +184,15 @@ export function createEMCourseController(root, { onClose } = {}) {
     const box = $('#em-course-time'), clock = currentTime(def, data);
     box.hidden = !clock;
     if (!clock) { $('#em-course-trace').hidden = true; return null; }
-    const { spec, t } = clock, slider = $('#em-course-time-slider');
-    if (slider !== document.activeElement) slider.value = String(Math.round((t - spec.min) / (spec.max - spec.min) * 1000));
-    $('#em-course-time-text').textContent = `t = ${Number((t / spec.displayScale).toPrecision(4))} ${spec.unit}`;
-    $('#em-course-play').textContent = playing ? '정지' : '재생';
+    const { spec, t } = clock, slider = $('#em-course-time-slider'), play = $('#em-course-play');
+    // A range that is empty (the rod already at the end of its rail) disables the scrubber and says why.
+    if (spec.disabled && playing) stopPlayback();
+    slider.disabled = play.disabled = Boolean(spec.disabled);
+    slider.title = play.title = spec.disabled ? spec.reason : '';
+    if (slider !== document.activeElement) slider.value = String(spec.max > spec.min ? Math.round((t - spec.min) / (spec.max - spec.min) * 1000) : 0);
+    const clockText = `t = ${Number((t / spec.displayScale).toPrecision(4))} ${spec.unit}`;
+    $('#em-course-time-text').textContent = spec.disabled ? `${clockText} · ${spec.reason}` : clockText;
+    play.textContent = playing ? '정지' : '재생';
     const trace = timeTrace(def, data.params, spec), canvas = $('#em-course-trace');
     canvas.hidden = !trace;
     if (trace) drawTimeTrace(canvas, trace, t, getPalette(), 'ℰ(t)');
@@ -409,7 +416,7 @@ export function createEMCourseController(root, { onClose } = {}) {
   $('#em-course-play').addEventListener('click', () => {
     if (playing) { stopPlayback(); scheduleChecks(); return; }
     const clock = currentTime(definition(), record());
-    if (!clock) return;
+    if (!clock || clock.spec.disabled) return;
     playing = true;
     lastTick = performance.now();
     $('#em-course-play').textContent = '정지';
@@ -533,7 +540,7 @@ export function createEMCourseController(root, { onClose } = {}) {
     deactivate() { active = false; stopPlayback(); view.deactivate(); radialView.deactivate(); },
     inspect() {
       return structuredClone({
-        active, selectedId, playing, records: Object.fromEntries(records), view: view.inspect(), radialView: radialView.inspect(),
+        active, selectedId, playing, reducedMotion: motion.matches, records: Object.fromEntries(records), view: view.inspect(), radialView: radialView.inspect(),
       });
     },
     destroy() {

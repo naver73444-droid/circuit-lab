@@ -2,6 +2,7 @@
 // flux through a sphere and circulation around a circle, each with a coarse/fine convergence check.
 // A field is point => { status, E }; `sources` lets the operators refuse geometry that touches a model exclusion zone.
 import { cross3, dot3, norm3, scale3, add3 } from './em-physics.js';
+import { createPointChargeEvaluator } from './em-playground-physics.js';
 
 const TOUCH = 0.001; // the 1 mm model exclusion zone around a source
 const strengthOf = source => (source.type === 'point' ? source.q : source.lambda);
@@ -134,14 +135,15 @@ function sphereRefusal(sources, center, radius) {
 // the spike is resolved with ~100-300 cells. Two passes of different grading must agree before the result is called converged.
 const REFINE_RANGE = 0.25; // only when the nearest point charge is within this fraction of the radius from the surface
 
-function nearestPointCharge(sources, center, radius) {
-  let best = null;
+// Every point charge within REFINE_RANGE * radius of the surface, nearest first: [{ gap, source }].
+function nearPointCharges(sources, center, radius) {
+  const found = [];
   for (const source of sources) {
     if (!active(source) || source.type !== 'point') continue;
     const gap = Math.abs(norm3(sub(source.position, center)) - radius);
-    if (gap > TOUCH && (!best || gap < best.gap)) best = { gap, source };
+    if (gap > TOUCH && gap <= REFINE_RANGE * radius) found.push({ gap, source });
   }
-  return best;
+  return found.sort((a, b) => a.gap - b.gap);
 }
 
 function gradedPass(field, center, radius, axis, firstCell, growth, maxWidth, phiCount) {
@@ -177,10 +179,47 @@ function refinedSphereFlux(field, center, radius, near) {
   return { flux: fine.flux, coarseFlux: coarse.flux, difference, converged: difference <= limit, samples: fine.samples };
 }
 
+// Two or more charges close to the surface each need their own spike resolved, and a grid graded about one charge leaves the
+// others' spikes unresolved (two passes can then agree on a flux that is 20% off). The field is linear in the sources, so the
+// flux is split: every near charge is integrated alone on a grid graded about its own direction, and the remaining sources
+// (all farther than REFINE_RANGE * radius, smooth) on the uniform grids. null when the split cannot be trusted (the field is
+// not the sum of the sources' fields) or a part hits an exclusion zone; the caller then reports "not converged".
+function splitRefinedFlux(field, center, radius, sources, near) {
+  const nearIds = new Set(near.map(item => item.source.id));
+  const rest = sources.filter(source => !nearIds.has(source.id));
+  const parts = near.map(item => ({ item, evaluate: createPointChargeEvaluator([item.source]) }));
+  const restEvaluate = rest.length ? createPointChargeEvaluator(rest) : () => ({ status: 'valid', E: [0, 0, 0] });
+  // The split is only exact when `field` really is the superposition of `sources`: check it at a few points on the surface.
+  for (const direction of [[1, 0, 0], [0, 1, 0], [0, 0, 1], [-0.6, 0.48, 0.64]]) {
+    const point = add3(center, scale3(direction, radius * 1.37)), whole = field(point);
+    const sum = [restEvaluate(point), ...parts.map(part => part.evaluate(point))];
+    if (whole.status !== 'valid' || sum.some(item => item.status !== 'valid')) return null;
+    const total = sum.reduce((acc, item) => add3(acc, item.E), [0, 0, 0]);
+    if (norm3(sub(total, whole.E)) > 1e-9 * Math.max(norm3(whole.E), 1e-30)) return null;
+  }
+  let coarse = 0, fine = 0, difference = 0, samples = 0;
+  for (const { item, evaluate } of parts) {
+    const axis = scale3(sub(item.source.position, center), 1 / norm3(sub(item.source.position, center)));
+    const first = item.gap / radius / 6;
+    const c = gradedPass(evaluate, center, radius, axis, first, 1.06, 0.015, 64);
+    const f = gradedPass(evaluate, center, radius, axis, first / 2, 1.03, 0.0075, 128);
+    if (c.status !== 'valid' || f.status !== 'valid') return null;
+    coarse += c.flux; fine += f.flux; difference += Math.abs(f.flux - c.flux); samples += f.samples;
+  }
+  if (rest.length) {
+    const c = spherePass(restEvaluate, center, radius, 64, 128), f = spherePass(restEvaluate, center, radius, 128, 256);
+    if (c.status !== 'valid' || f.status !== 'valid') return null;
+    coarse += c.flux; fine += f.flux; difference += Math.abs(f.flux - c.flux); samples += f.samples;
+  }
+  return { flux: fine, coarseFlux: coarse, difference, converged: difference <= 0.05 + 0.001 * Math.abs(fine), samples };
+}
+
 /**
  * Outward flux of E through the sphere (center, radius 0.05...5 m): 64x128 and 128x256 grids must agree.
  * With options.refine, a result that did not converge because a point charge sits close to the surface is recomputed by the
  * graded polar integration above (result.refined = true); if that does not converge either, converged stays false.
+ * With two or more point charges near the surface the single-charge refinement is not trusted (result.nearCount >= 2): the flux
+ * is split per charge (splitRefinedFlux); when that cannot be done or does not converge the result is never marked converged.
  */
 export function sphereFlux(field, center, radius, sources = [], { refine = false } = {}) {
   if (!Number.isFinite(radius) || radius < 0.05 || radius > 5) throw new Error('구/루프 반경은 0.05…5 m여야 합니다.');
@@ -198,10 +237,14 @@ export function sphereFlux(field, center, radius, sources = [], { refine = false
     ...fine, coarseFlux: coarse.flux, difference, converged: difference <= limit,
     noiseScale: Math.max(fine.maxField, coarse.maxField) * 4 * Math.PI * radius * radius,
   };
-  const near = refine && !result.converged ? nearestPointCharge(sources, center, radius) : null;
-  if (near && near.gap <= REFINE_RANGE * radius) {
-    const refined = refinedSphereFlux(field, center, radius, near);
+  const near = refine && !result.converged ? nearPointCharges(sources, center, radius) : [];
+  if (near.length === 1) {
+    const refined = refinedSphereFlux(field, center, radius, near[0]);
     if (refined?.converged) return { ...result, ...refined, refined: true };
+  } else if (near.length >= 2) {
+    const split = splitRefinedFlux(field, center, radius, sources, near);
+    if (split?.converged) return { ...result, ...split, refined: true, nearCount: near.length };
+    return { ...result, converged: false, nearCount: near.length };
   }
   return result;
 }
