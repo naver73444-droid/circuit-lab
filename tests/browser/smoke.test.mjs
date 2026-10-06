@@ -2355,7 +2355,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
 
   // ---- signals workspace: all nine lessons, keyboard, playback, touch, reduced motion, custom input ----------------------
   const SG_LESSONS = [["time", "a", 2.5], ["ops", "B", 2], ["lti", "tau", 0.5], ["convolution", "T1", 3], ["series", "N", 3], ["series", "T0", 2], ["fourier", "T", 2.5], ["fourier", "A", 2], ["freq", "fc", 100], ["roc", "re", -2], ["sampling", "f0", 4]];
-  const SG_KEYED = new Set(["time", "lti", "convolution", "series", "roc"]); // views with key handling are focusable, the others are not
+  const SG_KEYED = new Set(["time", "lti", "convolution", "series", "roc", "freq"]); // views with key handling are focusable, the others are not
   const sgSvgExpr = `document.querySelector(".sg-stage > div:not([hidden]) svg")`;
   const sgState = () => ev(`${L}.getSignalsCourseState()`);
   async function openSignals(lesson, view) {
@@ -2882,9 +2882,9 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await settle();
     const { course, record } = await courseRecord();
     assert.equal(await ev(`document.getElementById("em-lab").hidden && !document.getElementById("em-course-root").hidden`), true, "the course replaces the free lab");
-    assert.equal(course.selectedId, "coax-current", "the default experiment");
+    assert.equal(course.selectedId, "force-lorentz", "the default experiment");
     assert.equal(await ev(`document.getElementById("em-course-select").value`), course.selectedId, "the experiment select shows the current experiment");
-    assert.equal(await ev(`document.getElementById("em-course-topic").selectedOptions[0].textContent`), "정자계·암페어", "the subject select matches the experiment");
+    assert.equal(await ev(`document.getElementById("em-course-topic").selectedOptions[0].textContent`), "자기력·토크", "the subject select matches the experiment");
     assert.equal(record.result.status, "valid");
     assert.ok(await colorCount("em-course-canvas") > 10, "the experiment picture is drawn");
     // a parameter slider changes the answer text and the stored parameter at once
@@ -3869,7 +3869,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await click('[data-em-current-preset="wire-ampere"]');
     await until(`!document.getElementById("em-ampere-readout").hidden && document.getElementById("em-ampere-state").textContent !== ""`, "the Ampère readout");
     const ampere = await ev(`[...document.querySelectorAll("#em-ampere-lines p")].map((p) => p.textContent)`);
-    assert.match(ampere[0], /I내부 = \+10 A/, "the enclosed current reads +10 A");
+    assert.match(ampere[0], /I내부 = ∮H·dl = \+10 A/, "the enclosed current reads +10 A");
     assert.match(ampere.join("\n"), /수치 ∮H·dl = \+10 A/, "and so does the numeric circulation");
     assert.equal(await ev(`document.getElementById("em-ampere-state").textContent`), "암페어 법칙과 일치");
     assert.equal(await ev(`document.getElementById("em-ampere-lines").dataset.agrees`), "true");
@@ -3978,6 +3978,88 @@ describe("browser smoke", { timeout: 600000 }, () => {
     }
   });
 
+  test("signals: the frequency-response dot is dragged on the |H| plot, and the ω axis relabels the input slider", async () => {
+    await openSignals("freq");
+    assert.equal((await sgState()).params.axis ?? 0, 0, "the default axis is f");
+    const spot = await ev(`(() => { const svg = ${sgSvgExpr}; svg.scrollIntoView({ block: "center" }); const r = svg.querySelector(".sg-frame").getBoundingClientRect(); return { x: r.x, y: r.y + r.height / 2, w: r.width }; })()`);
+    const mouse = (type, x, extra = {}) => ctx.cdp.send("Input.dispatchMouseEvent", { type, x, y: spot.y, ...extra });
+    const before = (await sgState()).params.fin;
+    await mouse("mouseMoved", spot.x + spot.w * 0.25);
+    await mouse("mousePressed", spot.x + spot.w * 0.25, { button: "left", buttons: 1, clickCount: 1 });
+    await mouse("mouseMoved", spot.x + spot.w * 0.45, { buttons: 1 });
+    await mouse("mouseMoved", spot.x + spot.w * 0.7, { buttons: 1 });
+    await mouse("mouseReleased", spot.x + spot.w * 0.7, { button: "left", buttons: 0, clickCount: 1 });
+    await settle();
+    const after = (await sgState()).params.fin;
+    assert.notEqual(after, before, `dragging on the |H| plot moved the input frequency (${before} -> ${after})`);
+    assert.equal(await ev(`document.activeElement === ${sgSvgExpr}`), true, "the plot took focus, so the arrow keys work");
+    await press("ArrowRight", "ArrowRight", 39);
+    assert.notEqual((await sgState()).params.fin, after, "ArrowRight steps the input frequency");
+    const label = () => ev(`document.querySelector('[data-signals-param="fin"]').getAttribute("aria-label")`);
+    assert.doesNotMatch(await label(), /ω/, "the f axis names the slider f");
+    await setSgParam("axis", 1);
+    await until(`${L}.getSignalsCourseState().params.axis === 1`, "the ω axis");
+    await settle();
+    assert.match(await label(), /ω/, "the ω axis relabels the slider");
+    assert.match(await ev(`document.querySelector('[data-signals-param="fin"]').closest(".sg-ctl").textContent`), /rad\/s/, "and shows its value in rad/s");
+  });
+
+  test("signals on a phone: the drag hint shows under the plot of time / freq / fourier, controls are touch sized, and the desktop hides the hint", async () => {
+    await openSignals("time", { width: 390, height: 844, mobile: true });
+    const hint = () => ev(`(() => { const h = document.querySelector("[data-signals-hint]"); return Boolean(h && h.offsetParent !== null && h.textContent.length > 0); })()`);
+    for (const lesson of ["time", "freq", "fourier"]) {
+      await click(`[data-signals-lesson="${lesson}"]`);
+      await until(`${L}.getSignalsCourseState().lessonId === ${JSON.stringify(lesson)}`, lesson);
+      await settle();
+      assert.equal(await hint(), true, `${lesson}: the one-line hint is visible on a phone`);
+      const sizes = await ev(`[...document.querySelectorAll("#signals-workspace input[data-signals-param], #signals-workspace select[data-signals-param]")].map((e) => e.getBoundingClientRect().height)`);
+      assert.ok(sizes.length > 0 && sizes.every((h) => h >= 40), `${lesson}: sliders and selects are at least 40px tall (${sizes})`);
+      assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true, `${lesson}: no horizontal scrolling`);
+    }
+    await navigate("/");
+    await click("#signals-workspace-tab");
+    await until(`${L}.getSignalsCourseState()?.active === true && Boolean(${sgSvgExpr})`, "the signals workspace on desktop");
+    await settle();
+    assert.equal(await ev(`(() => { const h = document.querySelector("[data-signals-hint]"); return Boolean(h) && h.offsetParent === null; })()`), true, "the hint exists but is hidden on a wide screen");
+  });
+
+  test("EM course: gap-core inputs follow the solving direction and the core material (visibleWhen); a typed sweep angle updates the answer and an out-of-range one is refused", async () => {
+    await openEM();
+    await click("#em-course-open");
+    await until(`${L}.getEMState().course?.active === true && document.getElementById("em-course-canvas").clientWidth > 100`, "the EM course");
+    await select("#em-course-topic", "자기회로");
+    await until(`${L}.getEMState().course.selectedId === "mcircuit-gap-core"`, "the gap-core experiment");
+    await settle();
+    const shown = () => ev(`[...document.querySelectorAll("#em-course-params .em-param, .em-param")].filter((row) => row.offsetParent !== null).map((row) => row.dataset.param)`);
+    const first = await shown();
+    assert.ok(first.includes("targetB") && !first.includes("turns") && !first.includes("current"), `the target-B direction shows B, not N and I (${first})`);
+    assert.ok(first.includes("h1") && !first.includes("muR"), `the tabulated core shows the B-H points, not μr (${first})`);
+    await select('[data-em-course-parameter="mode"]', "1");
+    await select('[data-em-course-parameter="coreModel"]', "1");
+    await until(`${L}.getEMState().course.records["mcircuit-gap-core"].params.mode === 1`, "the N·I direction");
+    const second = await shown();
+    assert.ok(second.includes("turns") && second.includes("current") && !second.includes("targetB"), `the N·I direction shows N and I (${second})`);
+    assert.ok(second.includes("muR") && !second.includes("h1"), `the linear core shows μr (${second})`);
+
+    await select("#em-course-topic", "자기력·토크");
+    await select("#em-course-select", "force-loop-torque");
+    await until(`${L}.getEMState().course.selectedId === "force-loop-torque" && document.getElementById("em-course-sweep") && !document.getElementById("em-course-sweep").hidden`, "the sweep input");
+    await settle();
+    const setSweep = (text) => ev(`(() => { const input = document.getElementById("em-course-sweep-input"); input.value = ${JSON.stringify(text)}; input.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    const answer0 = await courseText("#em-course-answer");
+    await setSweep("90");
+    await settle();
+    const answer90 = await courseText("#em-course-answer");
+    assert.notEqual(answer90, answer0, "a typed angle changes the answer");
+    assert.equal(await ev(`document.getElementById("em-course-sweep-error").hidden`), true, "90° is inside the range");
+    assert.equal(await ev(`document.getElementById("em-course-sweep-unit").textContent`), "°");
+    await setSweep("300");
+    await settle();
+    assert.equal(await ev(`document.getElementById("em-course-sweep-error").hidden`), false, "300° is refused");
+    assert.match(await courseText("#em-course-sweep-error"), /범위 밖/);
+    assert.equal(await courseText("#em-course-answer"), answer90, "the answer keeps the last valid angle");
+  });
+
   // ---- the EM file carries the magnetic mode (version 2): sources, Ampere loop, chips, current field ------------------------------------------
 
   test("EM file: a magnetic scene saved as JSON, reset and opened again restores the current sources, the Ampère readout, the chips, the magnetic mode and empty histories", async () => {
@@ -3989,14 +4071,14 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await until(`!document.getElementById("em-ampere-readout").hidden && document.getElementById("em-ampere-state").textContent !== ""`, "the Ampère readout");
     await click('[data-em-current-add="loop"]');
     await click("#em-ampere-turn");
-    await click('[data-em-chip="hfield"]');
-    await until(`${L}.getEMState().current.sources.length === 2 && ${L}.getEMState().ampere.orientation === -1 && ${L}.getEMState().chips.hfield === true`, "the edited magnetic scene");
+    await click('[data-em-chip="force"]');
+    await until(`${L}.getEMState().current.sources.length === 2 && ${L}.getEMState().ampere.orientation === -1 && ${L}.getEMState().chips.force === true`, "the edited magnetic scene");
     await settle();
     const scene = () => ev(`(() => {
       const s = ${L}.getEMState();
       return {
         field: s.field, sources: JSON.stringify(s.current.sources), selected: s.current.selectedId, ampere: JSON.stringify(s.ampere),
-        chips: JSON.stringify([s.chips.hfield, s.chips.ampere, s.chips.mcolor, s.chips.arrows, s.chips.force, s.chips.lines]),
+        chips: JSON.stringify([s.chips.force, s.chips.ampere, s.chips.mcolor, s.chips.arrows, s.chips.force, s.chips.lines]),
         readout: [...document.querySelectorAll("#em-ampere-lines p")].map((p) => p.textContent).join("|"), state: document.getElementById("em-ampere-state").textContent,
       };
     })()`);
@@ -4020,7 +4102,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal(file.magnetic.sources.length, 2);
     assert.equal(file.magnetic.ampere.shape, "circle");
     assert.equal(file.magnetic.ampere.orientation, -1);
-    assert.equal(file.magnetic.chips.hfield, true);
+    assert.equal(file.magnetic.chips.force, true);
 
     // Reset the magnetic scene and go back to electric, so every restored value must come from the file.
     await click("#em-pg-reset");
