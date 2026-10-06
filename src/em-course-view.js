@@ -54,6 +54,27 @@ function colorsOf(palette) {
   };
 }
 
+// Lecture overlay: { lines: [{ a, b, label }], glyphs: [{ at, sign, label }], texts: [string] } in world coordinates (m).
+function drawOverlay(ctx, overlay, map, C) {
+  ctx.font = `13px ${FONT}`;
+  for (const line of overlay.lines || []) {
+    const a = map(line.a), b = map(line.b);
+    ctx.strokeStyle = C.gauss; ctx.lineWidth = 2; ctx.setLineDash([8, 5]);
+    ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); ctx.setLineDash([]);
+    if (line.label) { ctx.fillStyle = C.gauss; ctx.fillText(line.label, 12, a[1] - 6); }
+  }
+  for (const glyph of overlay.glyphs || []) {
+    const [x, y] = map(glyph.at), color = glyph.sign ? C.source : C.muted;
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1.7;
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, 2 * Math.PI); ctx.stroke();
+    if (glyph.sign > 0) { ctx.beginPath(); ctx.arc(x, y, 2.5, 0, 2 * Math.PI); ctx.fill(); }
+    else if (glyph.sign < 0) { ctx.beginPath(); ctx.moveTo(x - 4, y - 4); ctx.lineTo(x + 4, y + 4); ctx.moveTo(x + 4, y - 4); ctx.lineTo(x - 4, y + 4); ctx.stroke(); }
+    if (glyph.label) { ctx.fillStyle = color; ctx.fillText(glyph.label, x + 12, y + 4); }
+  }
+  ctx.fillStyle = C.muted;
+  (overlay.texts || []).forEach((text, i) => ctx.fillText(text, 12, 44 + 18 * i));
+}
+
 export function createCourseView(canvas, onProbe, getPalette) {
   const events = new AbortController();
   let current = null, active = false, dragging = false, pendingMove = null, moveFrame = null;
@@ -63,7 +84,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
     const axes = definition.id === 'motional-rod' ? [0, 1] : view.probeAxes?.length === 2 ? view.probeAxes : axesFor(view.plane);
     const base = isCoax(definition) ? Math.max(params.b, params.c || 0) * 1.55
       : Number(view.extent) > 0 ? Number(view.extent) : Math.max(0.01, ...point.map(Math.abs)) * 1.6;
-    return { axes, extent: base * viewScale, axisOnly: view.kind === 'axis-only', profileMode: view.kind === 'profile' };
+    return { axes, extent: base * viewScale, axisOnly: view.kind === 'axis-only', profileMode: view.kind === 'profile', curveMode: view.kind === 'xy-curve' };
   };
   const profileDomain = () => {
     const points = current.profiles?.[0]?.points || [];
@@ -140,8 +161,45 @@ export function createCourseView(canvas, onProbe, getPalette) {
     const noEnvelope = layers.some(layer => layer.live && !layer.envelope);
     const withEnvelope = layers.every(layer => layer.live && layer.envelope);
     const note = noEnvelope ? ' · 진폭 포락선은 표본 상한으로 생략' : withEnvelope ? ' · 파선: 진폭 포락선' : '';
-    ctx.fillText(`z ${xMin.toPrecision(3)} … ${xMax.toPrecision(3)} m · 점선: 측정 위치${note}`, 10, h - 17);
+    const axis = current.definition.view?.coordinate || { key: 'z', unit: 'm' };
+    ctx.fillText(`${axis.key} ${xMin.toPrecision(3)} … ${xMax.toPrecision(3)} ${axis.unit} · 점선: 측정 위치${note}`, 10, h - 17);
     Object.assign(canvas.dataset, { profileSeries: String(layers.length), profileXMin: String(xMin), profileXMax: String(xMax) });
+  }
+
+  // Parametric curves (orbit, B–H loop): every series is a polyline of { coordinate: x, value: y }; the marker follows the result's scalars.
+  const curveBox = (w, h) => ({ left: 64, right: w - 16, top: 30, bottom: h - 46 });
+  const curveSweep = () => current.definition.view?.curve?.sweep?.(current.params) ?? [0, 1];
+  function renderCurve(ctx, w, h, C) {
+    const spec = current.definition.view.curve || {}, box = curveBox(w, h), list = (current.profiles || []).filter(item => item.points?.length > 1);
+    ctx.font = `12px ${FONT}`;
+    if (!list.length) { ctx.fillStyle = C.muted; ctx.fillText('표시할 곡선이 없습니다.', 16, 44); canvas.dataset.curveSeries = '0'; return; }
+    const scalar = key => current.result?.scalars?.find(item => item.key === key)?.value;
+    const marker = spec.marker ? [scalar(spec.marker.x), scalar(spec.marker.y)] : null;
+    const xs = list.flatMap(item => item.points.map(q => q.coordinate)), ys = list.flatMap(item => item.points.map(q => q.value));
+    const span = (lo, hi) => { const pad = hi > lo ? (hi - lo) * 0.08 : Math.max(Math.abs(hi), 1e-30); return [lo - pad, hi + pad]; };
+    const [x0, x1] = span(Math.min(...xs), Math.max(...xs)), [y0, y1] = span(Math.min(...ys), Math.max(...ys));
+    const width = box.right - box.left, height = box.bottom - box.top;
+    let sx = width / (x1 - x0), sy = height / (y1 - y0);
+    if (spec.equal) sx = sy = Math.min(sx, sy);
+    const cx = box.left + width / 2 - (x0 + x1) / 2 * sx, cy = box.top + height / 2 + (y0 + y1) / 2 * sy;
+    const mapX = x => cx + x * sx, mapY = y => cy - y * sy, fmt = value => String(Number(value.toPrecision(3)));
+    ctx.strokeStyle = C.grid; ctx.lineWidth = 1; ctx.strokeRect(box.left, box.top, width, height);
+    ctx.save(); ctx.beginPath(); ctx.rect(box.left, box.top, width, height); ctx.clip();
+    ctx.strokeStyle = C.line; ctx.beginPath(); ctx.moveTo(mapX(0), box.top); ctx.lineTo(mapX(0), box.bottom); ctx.moveTo(box.left, mapY(0)); ctx.lineTo(box.right, mapY(0)); ctx.stroke();
+    list.forEach((item, index) => {
+      ctx.strokeStyle = [C.field, C.source, C.pos][index % 3]; ctx.lineWidth = 2; ctx.beginPath();
+      item.points.forEach((q, i) => { if (i) ctx.lineTo(mapX(q.coordinate), mapY(q.value)); else ctx.moveTo(mapX(q.coordinate), mapY(q.value)); });
+      ctx.stroke();
+    });
+    if (marker && marker.every(Number.isFinite)) {
+      ctx.fillStyle = C.probe; ctx.strokeStyle = C.text; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(mapX(marker[0]), mapY(marker[1]), 6, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+    ctx.fillStyle = C.text; ctx.fillText(`${spec.yLabel || 'y'} (${spec.yUnit || ''}) ${fmt(y0)} … ${fmt(y1)}`, box.left, 18);
+    ctx.fillStyle = C.muted; ctx.fillText(`${spec.xLabel || 'x'} (${spec.xUnit || ''}) ${fmt(x0)} … ${fmt(x1)} · ${list.map(item => item.label).join(' / ')}`, 10, h - 26);
+    ctx.fillText('그림을 가로로 끌면 위상(관측 위치)이 바뀝니다 · 채운 점: 현재 위치', 10, h - 8);
+    Object.assign(canvas.dataset, { curveSeries: String(list.length), curveXMin: String(x0), curveXMax: String(x1), curveYMin: String(y0), curveYMax: String(y1) });
   }
 
   function renderAxisOnly(ctx, w, h, C, scale, extent, vectorKey) {
@@ -272,18 +330,22 @@ export function createCourseView(canvas, onProbe, getPalette) {
       ctx.fillStyle = C.gauss; ctx.font = `13px ${FONT}`;
       ctx.fillText(`εr1=${params.epsilon1R} · εr2=${params.epsilon2R} · 선: 재료/도체 경계`, 12, 44);
     }
+    // Lecture experiments may describe extra structure (an interface line, an image current) in world coordinates.
+    const overlay = typeof definition.view?.overlay === 'function' ? definition.view.overlay(params) : null;
+    if (overlay) drawOverlay(ctx, overlay, map, C);
   }
 
   function render() {
     if (!active || !current || !canvas.clientWidth || !canvas.clientHeight) return;
     const ctx = canvas.getContext('2d'), dpr = Math.min(1.5, devicePixelRatio || 1), C = colorsOf(getPalette());
     prepareCanvas(canvas, ctx, dpr);
-    const w = canvas.clientWidth, h = canvas.clientHeight, { axes, extent, axisOnly, profileMode } = geometry();
+    const w = canvas.clientWidth, h = canvas.clientHeight, { axes, extent, axisOnly, profileMode, curveMode } = geometry();
     const scale = Math.min(w, h) / (2 * extent), map = point => [w / 2 + point[axes[0]] * scale, h / 2 - point[axes[1]] * scale];
     canvas.dataset.metersPerPixel = String(1 / scale);
     canvas.dataset.physicalAspect = 'equal';
     ctx.fillStyle = C.bg; ctx.fillRect(0, 0, w, h);
     if (profileMode) { renderProfile(ctx, w, h, C); drawClock(ctx, w, C); return; }
+    if (curveMode) { renderCurve(ctx, w, h, C); drawClock(ctx, w, C); return; }
     const fieldKeys = ['E', 'D', 'B', 'H'], vectorKey = current.vectorKey || fieldKeys.find(key => current.result?.vectors?.[key]) || 'E';
     ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
     if (!isCoax(current.definition)) {
@@ -352,8 +414,15 @@ export function createCourseView(canvas, onProbe, getPalette) {
 
   const move = event => {
     if (!active || !current) return;
-    const { axes, extent, axisOnly, profileMode } = geometry(), r = canvas.getBoundingClientRect(), point = [...current.point];
+    const { axes, extent, axisOnly, profileMode, curveMode } = geometry(), r = canvas.getBoundingClientRect(), point = [...current.point];
     const scale = Math.min(canvas.clientWidth, canvas.clientHeight) / (2 * extent);
+    if (curveMode) {
+      const box = curveBox(canvas.clientWidth, canvas.clientHeight), [lo, hi] = curveSweep();
+      const fraction = Math.max(0, Math.min(1, (event.clientX - r.left - canvas.clientLeft - box.left) / (box.right - box.left)));
+      point[0] = 0; point[1] = 0; point[2] = lo + fraction * (hi - lo);
+      onProbe(point);
+      return;
+    }
     if (profileMode) {
       const [lo, hi] = profileDomain();
       point[0] = 0; point[1] = 0; point[2] = lo + (event.clientX - r.left - 58) / (r.width - 72) * (hi - lo);
@@ -391,7 +460,14 @@ export function createCourseView(canvas, onProbe, getPalette) {
     if (!active || !current || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
     event.preventDefault();
     if (event.key === 'Home') { onProbe([...current.definition.probeDefault]); return; }
-    const { axes, extent, axisOnly, profileMode } = geometry(), point = [...current.point], vertical = ['ArrowUp', 'ArrowDown'].includes(event.key);
+    const { axes, extent, axisOnly, profileMode, curveMode } = geometry(), point = [...current.point], vertical = ['ArrowUp', 'ArrowDown'].includes(event.key);
+    if (curveMode) {
+      if (vertical) return;
+      const [lo, hi] = curveSweep();
+      point[2] = Math.max(lo, Math.min(hi, point[2] + (event.key === 'ArrowLeft' ? -1 : 1) * (hi - lo) * 0.025));
+      onProbe(point);
+      return;
+    }
     if (profileMode) {
       if (vertical) return;
       const [lo, hi] = profileDomain();

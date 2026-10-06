@@ -33,6 +33,8 @@ export function paramSpec(param) {
     key, label: shortLabel(param.label), fullLabel: param.label, min, max, initial,
     displayScale, unit: unit === '1' ? '' : unit, integer: INTEGER_KEYS.has(key) || undefined,
   };
+  // A parameter may carry its own named cases: choices = [[value, label], ...] (the Hayt Ch.8 lecture experiments do).
+  if (Array.isArray(param.choices)) return { ...spec, kind: 'select', options: param.choices };
   const choice = CHOICES[key];
   if (choice?.match(param)) return { ...spec, kind: 'select', options: choice.options };
   if (param.unit === 'rad' && Number.isFinite(min) && Number.isFinite(max)) return { ...spec, kind: 'range', scale: 'linear', lo: min, hi: max };
@@ -97,6 +99,10 @@ export function parseParam(spec, text) {
 
 /** Subject (분야) an experiment belongs to; the subject list follows the selected experiment. */
 export function topicOf(id) {
+  if (id.startsWith('force-')) return '자기력·토크';
+  if (id.startsWith('matter-')) return '자성체·경계';
+  if (id.startsWith('mcircuit-')) return '자기회로';
+  if (id.startsWith('induct-')) return '에너지·인덕턴스';
   if (id.startsWith('gauss-')) return '가우스법칙';
   if (id.startsWith('wave-')) return '파동·반사';
   if (id.startsWith('transmission-')) return '전송선';

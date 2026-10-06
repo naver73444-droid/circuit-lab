@@ -16,7 +16,12 @@ import {
 
 const TOPICS = [...new Set(EXPERIMENTS.map(d => topicOf(d.id)))];
 const CHECK_DELAY = 300;
-const MODEL_KIND = { 'finite-integration': '유한 형상 · 적분 모델', 'boundary-solver': '경계값 수치해석' };
+const MODEL_KIND = {
+  'finite-integration': '유한 형상 · 적분 모델', 'boundary-solver': '경계값 수치해석',
+  'lecture-closed-form': '강의 공식 · 닫힌 형태 모델', 'lecture-concept': '개념 모형 · 강의 설명용',
+};
+// Views that read the probe as a sweep coordinate (profile graph, parametric curve): no vector picker, no arrow grid.
+const isSweepView = def => ['profile', 'xy-curve'].includes(def.view?.kind);
 const option = (value, text) => Object.assign(document.createElement('option'), { value, textContent: text });
 
 export function createEMCourseController(root, { onClose } = {}) {
@@ -171,6 +176,7 @@ export function createEMCourseController(root, { onClose } = {}) {
     if (def.id === 'motional-rod') return '시간을 끌거나 재생하면 도선이 레일 위를 달립니다. 위치는 x₀+vt입니다.';
     if (kind === 'axis-only') return '축 위의 흰 점을 끌어 답을 확인하세요.';
     if (kind === 'profile') return '그래프를 끌어 관측 위치를 옮기세요.';
+    if (kind === 'xy-curve') return '그림을 가로로 끌거나 좌우 방향키로 위상(관측 위치)을 옮기세요.';
     if (def.id.startsWith('coax-current')) return '흰 점을 끌거나 아래 반경을 조절하세요.';
     return '흰 점을 끌어 관측 위치를 바꾸세요.';
   }
@@ -234,10 +240,12 @@ export function createEMCourseController(root, { onClose } = {}) {
     }
     if (!choices.includes(data.vectorKey)) data.vectorKey = choices[0];
     select.value = data.vectorKey;
-    $('#em-course-vector-pick').hidden = keys.length < 2 || def.view?.kind === 'profile';
+    $('#em-course-vector-pick').hidden = keys.length < 2 || isSweepView(def);
     $('#em-course-grid-chip').setAttribute('aria-pressed', String(data.display.vectors));
-    $('#em-course-grid-chip').hidden = def.view?.kind === 'profile' || def.view?.kind === 'axis-only';
+    $('#em-course-grid-chip').hidden = isSweepView(def) || def.view?.kind === 'axis-only';
     const numericText = $('#em-course-answer');
+    // A lecture experiment opens on its headline number (r, L, NI ...) rather than on the field vector that only draws the picture.
+    if (def.lecture && !data.requestedKey && result.scalars?.length) { data.requestedKey = `scalar:${result.scalars[0].key}`; data.requestedLabel = result.scalars[0].label; }
     renderRequested($('#em-course-requested'), numericText, data, result);
     if (flags.symbolicOnly) numericText.textContent = NOTE_SYMBOLIC_ONLY;
     const parameterText = (def.parameters || []).filter(p => p.key !== 'time').map(p => {
@@ -245,7 +253,9 @@ export function createEMCourseController(root, { onClose } = {}) {
       return spec.kind === 'select' ? '' : `${spec.label}: ${siText(data.params[p.key], p.unit)}`;
     }).filter(Boolean).join(' · ');
     const region = result.region ? ` · 영역 ${result.region}` : '';
-    $('#em-course-substitution').textContent = `${parameterText} · 측정점 ${siVector(data.point, 'm')}${region}`;
+    const coordinate = def.view?.coordinate; // lecture sweeps read point[2] as an angle, a distance, a field strength ...
+    const where = coordinate ? `${coordinate.label || coordinate.key} ${coordinate.key} = ${siText(data.point[2], coordinate.unit)}` : `측정점 ${siVector(data.point, 'm')}`;
+    $('#em-course-substitution').textContent = `${parameterText} · ${where}${region}`;
     renderValues($('#em-course-values'), result);
     const unresolved = (data.profiles || []).filter(p => p.sampling?.status === 'unresolved')
       .map(p => p.sampling?.reason || p.notes?.join(' ') || '표본 해상도 제한: 이 곡선은 그리지 않습니다.');
