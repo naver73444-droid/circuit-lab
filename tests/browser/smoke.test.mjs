@@ -4127,4 +4127,69 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal(await ev(`document.getElementById("em-pg-undo").disabled`), true, "nothing to undo after opening");
   });
 
+
+  // ---- later additions: signals sifting + convolution flip, EM Lorentz E_y, circuit-course two-wattmeter preset ----------------------------
+
+  test("signals: the ops lesson's sifting example reads x(t₁) and draws; the convolution flip select swaps the flipped side but not y", async () => {
+    await openSignals("ops");
+    await select("[data-signals-family]", "sift");
+    await until(`${L}.getSignalsCourseState().family === "sift"`, "the sifting example");
+    await until(`Boolean(${sgSvgExpr}) && ${sgSvgExpr}.querySelectorAll("path,line,circle").length > 10`, "the sifting plot");
+    assert.match(await ev(`document.querySelector("[data-signals-read]").textContent`), /x\(t₁\)/, "the read line names x(t₁)");
+    await openSignals("convolution");
+    const readText = () => ev(`document.querySelector("[data-signals-live]").textContent`);
+    await pauseSignals().catch(() => {});
+    const yValue = (text) => text.match(/y\(t\)=[-−+0-9.e]+/)?.[0] ?? null;
+    const before = await readText();
+    assert.ok(yValue(before), `the read line shows a y value: ${before}`);
+    await setSgParam("flip", 1);
+    await until(`${L}.getSignalsCourseState().params.flip === 1`, "the flip select");
+    await settle();
+    const after = await readText();
+    assert.match(before, /h\(t−λ\)를 뒤집음/, "the default flips h");
+    assert.match(after, /x\(t−λ\)를 뒤집음/, `the live line names the flipped side: ${after}`);
+    assert.match(after, /h∗x|x∗h/);
+    assert.equal(yValue(after), yValue(before), "y does not change when the other signal is flipped");
+  });
+
+  test("EM course: the Lorentz experiment's E_y input reports straight-line motion at E = vB and drops it at 0", async () => {
+    await openEM();
+    await click("#em-course-open");
+    await until(`${L}.getEMState().course?.active === true && Boolean(document.querySelector("#em-course-select"))`, "the EM course");
+    await select("#em-course-topic", "자기력·토크");
+    if ((await emState()).course.selectedId !== "force-lorentz") await select("#em-course-select", "force-lorentz");
+    await until(`${L}.getEMState().course?.active === true && ${L}.getEMState().course.selectedId === "force-lorentz" &&${L}.getEMState().course.records["force-lorentz"]?.result?.status === "valid"`, "the Lorentz experiment");
+    const setEy = async (value) => { await typeInto('[data-em-course-parameter="Ey"]', value); await settle(); await until(`${L}.getEMState().course.records["force-lorentz"].params.Ey === ${Number(value)}`, `E_y = ${value}`); };
+    const notes = () => courseText("#em-course-notes");
+    await setEy("1e5");
+    assert.match(await notes(), /E = vB라 직진합니다/, "E = vB goes straight");
+    await setEy("0");
+    assert.doesNotMatch(await notes(), /E = vB라 직진합니다/, "E = 0 no longer goes straight");
+    assert.match(await notes(), /E=0이라 순수 원운동/);
+  });
+
+  test("circuit course: the two-wattmeter preset checks out, notes what changed, drops the note on the next edit and hides the select for an unbalanced load", async () => {
+    await openCircuitCourse();
+    await click(`${CC_HOST} [data-circuit-course-tool="three-phase-ext"]`);
+    const panel = ccPanel("three-phase-ext");
+    const index = await ev(`[...document.querySelectorAll("${panel} [data-cc-preset]")].findIndex((b) => b.textContent.includes("pf<0.5, W1 음수"))`);
+    assert.ok(index >= 0, "the preset 'pf<0.5, W1 음수' exists");
+    await click(`${panel} [data-cc-preset="${index}"]`);
+    const verification = await ev(`document.querySelector("${panel} [data-circuit-course-verification]").textContent`);
+    assert.match(verification, /W1\s*\+\s*W2\s*=\s*P/);
+    assert.equal((verification.match(/PASS/g) ?? []).length, 3, "all three rows pass");
+    assert.match(verification, /PASS/);
+    assert.doesNotMatch(verification, /FAIL/);
+    const read = await ev(`document.querySelector("${panel} [data-cc-read]").textContent`);
+    assert.match(read, /W1/);
+    assert.match(read, /음수/);
+    const status = () => ev(`document.querySelector("${panel} [data-cc-status]").textContent`);
+    assert.match(await status(), /^\s*예제 적용:/, "the example note leads the status line");
+    await typeInto(`${panel} [data-cc-key="voltage"]`, "100");
+    assert.doesNotMatch(await status(), /예제 적용:/, "the next edit drops the note");
+    const hidden = () => ev(`document.querySelector('${panel} [data-cc-key="wattmeter"]').closest("[hidden]") !== null`);
+    assert.equal(await hidden(), false, "the wattmeter select shows for a balanced load");
+    await select(`${panel} [data-cc-key="balanced"]`, "no");
+    assert.equal(await hidden(), true, "the wattmeter select is hidden for an unbalanced load");
+  });
 });
