@@ -3,8 +3,9 @@ import { resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root=fileURLToPath(new URL('..',import.meta.url));
 const files=(await readdir(resolve(root,'src'))).filter(name=>name.endsWith('.js')).sort();
+const MAX_LINE=240;
 const errors=[],warnings=[],graph=new Map();
-const pure=new Set(['circuit-engine.js','circuit-edit.js','circuit-geometry.js','circuit-status.js','analysis-policy.js','scope-model.js','plot-format.js','measurement-format.js','phasor-format.js','project-format.js','csv-format.js','union-find.js','pointer-session.js','ui-model.js','analysis-diagnostics.js','input-drafts.js','color-model.js','interaction-math.js','persistence.js','share-url.js','measure-model.js','wave-measure-model.js','cursor-delta-model.js','cursor-label-model.js','sweep-model.js','value-series.js','editor-shortcuts.js','node-readout-model.js','em-format.js','selection-model.js','group-edit.js','clipboard-model.js','touch-targets.js','port-ui-state.js','current-direction.js','port-analysis.js','analysis-worker-client.js','wire-current-model.js','id-allocator.js']);
+const pure=new Set(['circuit-engine.js','circuit-edit.js','circuit-geometry.js','circuit-status.js','analysis-policy.js','scope-model.js','plot-format.js','phasor-format.js','project-format.js','csv-format.js','union-find.js','ui-model.js','analysis-diagnostics.js','input-drafts.js','interaction-math.js','persistence.js','share-url.js','measure-model.js','wave-measure-model.js','cursor-delta-model.js','cursor-label-model.js','sweep-model.js','value-series.js','editor-shortcuts.js','node-readout-model.js','em-format.js','selection-model.js','group-edit.js','clipboard-model.js','current-direction.js','port-analysis.js','analysis-worker-client.js','wire-current-model.js','id-allocator.js','signals-util.js','signals-course-model.js','signals-time-model.js','signals-convolution-model.js','signals-series-model.js','signals-transform-model.js','signals-roc-model.js','signals-sampling-model.js','signals-custom-input.js','signals-expression.js','signals-playback.js']);
 for(const file of files){
  const source=await readFile(resolve(root,'src',file),'utf8');
  const imports=[...source.matchAll(/\b(?:from\s*|import\s*)["'](\.[^"']+)["']/g)].map(match=>match[1]);
@@ -14,8 +15,10 @@ for(const file of files){
  if(pure.has(file)&&imports.some(path=>/\/(?:app|scope-view|phasor-view|theme|trace-color)\.js$/.test(path)))errors.push(`${file}: model imports a view/controller`);
  if(file!=='app.js'&&imports.some(path=>/(?:^|\/)app\.js$/.test(path)))errors.push(`${file}: imports the app coordinator; pass dependencies from app.js instead`);
  if(['scope-view.js','phasor-view.js'].includes(file)&&imports.some(path=>path.includes('circuit-engine')))errors.push('scope-view.js: display imports solver');
- const lineCount=source.split(String.fromCharCode(10)).length;
+ const lines=source.split(String.fromCharCode(10)),lineCount=lines.length;
  if(lineCount>800)warnings.push(`${file}: ${lineCount} lines; consider splitting a focused module out (warning threshold 800).`);
+ const longLines=lines.filter(line=>line.length>MAX_LINE).length;
+ if(longLines)warnings.push(`${file}: ${longLines} line(s) longer than ${MAX_LINE} characters (compressed one-liners hide structure from review; break them up).`);
 }
 const visited=new Set(),active=new Set();
 function visit(file,chain=[]){

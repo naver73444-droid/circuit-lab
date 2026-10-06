@@ -686,9 +686,24 @@ describe("browser smoke", { timeout: 600000 }, () => {
 
   test("circuit course opens and lists its experiments", async () => {
     await navigate("/");
-    await click("#circuit-course-open");
+    // The course is the fourth top-level workspace tab (not a file-menu entry): tab semantics like the other workspaces.
+    assert.equal(await ev(`document.getElementById("circuit-course-open")`), null, "no file-menu entry any more");
+    assert.equal(await ev(`document.querySelectorAll('[data-workspace-tab]').length`), 4);
+    assert.equal(await ev(`document.getElementById("circuit-course-workspace-tab").getAttribute("role")`), "tab");
+    await click("#circuit-course-workspace-tab");
     await until(`${L}.getCircuitCourseState()?.active === true && document.querySelectorAll("#circuit-course-host [data-circuit-course-experiment]").length > 0`, "the circuit course");
     assert.equal(await ev(`document.getElementById("workbench").hidden`), true);
+    assert.equal(await ev(`${L}.getWorkspace()`), "circuit-course");
+    assert.equal(await ev(`document.getElementById("circuit-course-workspace-tab").getAttribute("aria-selected")`), "true");
+    assert.equal(await ev(`document.getElementById("circuit-course-workspace").getAttribute("role")`), "tabpanel");
+    // The course follows the theme (CSS tokens, no hard-coded dark palette): the light page background shows through.
+    const courseBackground = () => ev(`getComputedStyle(document.querySelector(".circuit-course")).backgroundColor`);
+    const darkBackground = await courseBackground();
+    await ev(`(() => { const s = document.getElementById("appearance"); s.value = "light"; s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    const lightBackground = await courseBackground();
+    assert.notEqual(lightBackground, darkBackground, "switching to the light theme repaints the course");
+    assert.equal(lightBackground, "rgb(243, 241, 233)", "light course background is the --bg token");
+    await ev(`(() => { const s = document.getElementById("appearance"); s.value = "dark"; s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
     // Problem worksheet: 100 V across 3 ohm + j(2 pi 50 12.7324 mH = 4 ohm) is 100 / 5 = 20 A.
     await click('[data-circuit-course-experiment="problem"]');
     const field = (key) => `#circuit-course-host [data-circuit-course-key="${key}"]`;
@@ -706,7 +721,8 @@ describe("browser smoke", { timeout: 600000 }, () => {
     const answer = await ev(`${L}.getCircuitCourseState().result.solution.answers[0].value`);
     assert.ok(Math.abs(answer - 20) < 1e-9, `numeric current ${answer}`);
     await click("#circuit-course-back");
-    await until(`!document.getElementById("workbench").hidden && document.getElementById("circuit-course-shell").hidden`, "the editor to return");
+    await until(`!document.getElementById("workbench").hidden && document.getElementById("circuit-course-workspace").hidden && ${L}.getWorkspace() === "circuit"`, "the editor to return");
+    assert.equal(await ev(`document.getElementById("circuit-workspace-tab").getAttribute("aria-selected")`), "true");
   });
 
   test("phone layout (390x844): one panel at a time, transient and AC still run", async () => {
@@ -1154,6 +1170,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal(await ev(`location.search`), "");
 
     // 무시: the banner goes away, the editor stays as it is (empty), and nothing is written over the autosave.
+    await sleep(1100); // the restored project is saved right away (800 ms debounce); wait for that before taking the reference
     const before = (await autosaveSlots())[tabId];
     await reloadPage();
     await until(`document.querySelectorAll("#canvas-notices .canvas-notice").length === 1`, "the restore banner again");
@@ -1213,7 +1230,12 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.deepEqual(restored.components.map((item) => item.id).sort(), ownBefore.project.circuit.components.map((item) => item.id).sort(), "the restored circuit replaced the half-made edit");
     await sleep(1400); // longer than the 800 ms debounce
     assert.deepEqual((await state()).circuit, restored, "the restored content is still there after the old save would have fired");
-    assert.deepEqual((await autosaveSlots())[tab1], ownBefore, "the pending save of the replaced edit was dropped, not written");
+    // The replaced (half-made) edit is the old project's final state: it is flushed, never dropped, and the restored project is saved on top
+    // of it, so the replaced work stays available as this tab's prev slot.
+    await waitFor(async () => (await autosaveSlots())[tab1]?.project?.circuit?.components?.length === ownBefore.project.circuit.components.length, "the restored circuit to be saved");
+    const slotsAfter = await autosaveSlots();
+    assert.deepEqual(slotsAfter[tab1].project.circuit.components.map((item) => item.id).sort(), restored.components.map((item) => item.id).sort(), "the own slot holds the restored content");
+    assert.equal(slotsAfter[`${tab1}.prev`].project.circuit.components.length, 1, "the half-made edit of the replaced project is kept in prev, not lost");
   });
 
   test("share link: the copied URL opens in a new page with the same circuit and a notice; an oversize #p= link is refused", async () => {
@@ -1522,6 +1544,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal(now.pendingPin, null, "nothing is left pending after the drag");
     let added = await newWires();
     assert.equal(added.length, 1, "one wire was created");
+    assert.match(added[0].id, /^W\d+$/, "wire ids come from the allocator, not the clock");
     assert.deepEqual([added[0].a, added[0].b], [pinEnd("R1", 0), pinEnd("R2", 1)], "its endpoints are the two pins");
     assert.equal(now.historyDepth, depth2 + 1);
     wireIds.add(added[0].id);
@@ -1953,4 +1976,627 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal((await counts()).components, base + 3);
   });
 
+
+  // ---- review fixes: project replacement, undo, probe labels, history grouping, hashchange -----------------------------------------
+
+  test("loading another example never carries the previous project's typed settings into it (rc-charge end 200m, then rlc)", async () => {
+    await navigate("/?example=rc-charge");
+    await autoUpdateOff();
+    await openSettings();
+    await typeInto('#analysis-settings [data-setting="end"]', "200m");
+    await press("Enter", "Enter", 13);
+    await waitFor(async () => (await state()).settings.end === "200m", "the typed end time to commit");
+    await ev(`(() => { const s = document.getElementById("example-select"); s.value = "rlc"; s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    await until(`${L}.getState().circuit.components.some((item) => item.id === "L1")`, "the RLC example to load");
+    const loaded = await state();
+    assert.notEqual(loaded.settings.end, "200m", "the typed end time did not travel into the new example");
+    assert.equal(loaded.settings.analysis, "transient");
+    await runAnalysis("transient");
+    assert.equal((await state()).runState.status, "success", "the example runs with its own settings (no TOO_MANY_POINTS)");
+    // A new circuit starts from the defaults too.
+    await click("#new-button");
+    await until(`${L}.getState().circuit.components.length === 0`, "the new circuit");
+    assert.equal((await state()).settings.end, "5m");
+  });
+
+  test("a failed run keeps its whole diagnostic (code, message, hint, details) in the run state, and the box shows the hint", async () => {
+    await navigate("/?example=rc-charge");
+    await autoUpdateOff();
+    await openSettings();
+    await typeInto('#analysis-settings [data-setting="step"]', "1n");
+    await press("Enter", "Enter", 13);
+    await click("#run-button");
+    await until(`${L}.getState().runState.status === "error"`, "the run to fail");
+    const failed = await state();
+    assert.equal(failed.runState.error.code, "TOO_MANY_POINTS");
+    assert.deepEqual(Object.keys(failed.runState.error).sort(), ["code", "details", "hint", "message"]);
+    assert.match(failed.runState.error.hint, /시간 간격/);
+    const boxText = () => ev(`document.getElementById("error-box").innerText`);
+    assert.match(await boxText(), /시간 간격/, "the hint is on screen");
+    // Leaving the circuit workspace and coming back re-renders from the stored record, not from the thrown error: nothing may be lost.
+    await click("#circuit-course-workspace-tab");
+    await click("#circuit-workspace-tab");
+    assert.match(await boxText(), /시간 간격/, "the hint is still there after a workspace round trip");
+    assert.equal((await state()).runState.error.code, "TOO_MANY_POINTS");
+  });
+
+  test("undo/redo keep the finished result (marked stale), the scope cursor and the scope zoom; only the in-flight run is dropped", async () => {
+    await navigate("/?example=rc-charge");
+    await autoUpdateOff();
+    await runAnalysis("transient");
+    const point = await plotPoint(0.4);
+    await clickAt(point.x, point.y);
+    await settle();
+    const before = await state();
+    assert.notEqual(before.scope.pinnedIndex, null, "a cursor is pinned on the plot");
+    await click('#scope-controls [data-scale-step="1"]');
+    const scopeBefore = (await state()).scope;
+    await selectPart("R1");
+    await press("r", "KeyR", 82);
+    assert.equal((await state()).stale, true, "the edit made the result stale");
+    await click("#undo-button");
+    const after = await state();
+    assert.notEqual(after.result, null, "undo does not discard the finished result");
+    assert.equal(after.stale, true, "…it is marked stale instead");
+    assert.equal(after.runState.status, "stale");
+    assert.equal(after.scope.pinnedIndex, scopeBefore.pinnedIndex, "the pinned cursor survives an undo");
+    assert.deepEqual(after.scope.x, scopeBefore.x, "the scope zoom survives an undo");
+    await click("#redo-button");
+    assert.notEqual((await state()).result, null, "…and a redo");
+    // A run that is still in flight is cancelled by an undo, never adopted afterwards.
+    await runAnalysis("transient");
+    await installWorkerGate(0);
+    await click("#run-button");
+    await until(`${L}.getState().runState.status === "running"`, "a run to be in flight");
+    await click("#undo-button");
+    await ev(`window.__gate.release()`);
+    await sleep(300);
+    assert.notEqual((await state()).runState.status, "success", "the cancelled run is not adopted");
+  });
+
+  test("renaming a part relabels its voltage probes (R2 -> Rload shows V(Rload.1))", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    const chip = () => ev(`[...document.querySelectorAll("#probe-list .probe-chip > span")].map((item) => item.textContent)`);
+    assert.ok((await chip()).includes("V(R2.1)"), `the example probes R2: ${await chip()}`);
+    await selectPart("R2");
+    await click("#inspector-tab");
+    await typeInto('#inspector-content [data-prop="ref"]', "Rload");
+    await press("Enter", "Enter", 13);
+    await waitFor(async () => (await component("R2")).props.ref === "Rload", "the new name to commit");
+    await waitFor(async () => (await chip()).includes("V(Rload.1)"), "the probe chip to follow the new name");
+    assert.equal((await chip()).includes("V(R2.1)"), false);
+    assert.equal((await state()).probes.find((probe) => probe.key === "V:R2:0").label, "V(Rload.1)", "the stored label follows too");
+  });
+
+  test("holding an arrow is ONE history step even across the OS key-repeat delay; releasing and pressing again is a new one", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await selectPart("R1");
+    const start = await component("R1");
+    const depth0 = (await state()).historyDepth;
+    const fire = (type, repeat) => `window.dispatchEvent(new KeyboardEvent(${JSON.stringify(type)}, { key: "ArrowRight", code: "ArrowRight", bubbles: true, cancelable: true, repeat: ${repeat} }))`;
+    await ev(`(async () => {
+      const wait = (ms) => new Promise((done) => setTimeout(done, ms));
+      ${fire("keydown", false)};
+      await wait(550); // Windows' default key-repeat delay is longer than the old 400 ms grouping window
+      for (let n = 0; n < 5; n += 1) { ${fire("keydown", true)}; await wait(35); }
+      ${fire("keyup", false)};
+    })()`);
+    await settle();
+    const held = await state();
+    assert.equal((await component("R1")).x, start.x + 6 * GRID, "six repeats moved the part six grid steps");
+    assert.equal(held.historyDepth, depth0 + 1, "the whole hold is one undo step");
+    await ev(`(${fire("keydown", false)}, ${fire("keyup", false)})`);
+    assert.equal((await state()).historyDepth, depth0 + 2, "a fresh press after the release is a new step");
+    await click("#undo-button");
+    assert.equal((await component("R1")).x, start.x + 6 * GRID);
+    await click("#undo-button");
+    assert.equal((await component("R1")).x, start.x, "one undo takes back the entire held move");
+  });
+
+  test("dragging a part back to where it started records no history and keeps the result fresh", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await runAnalysis("dc");
+    const before = await state();
+    const home = await partPoint("R1");
+    const send = (type, x, y, extra = {}) => ctx.cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra });
+    await send("mouseMoved", home.x, home.y);
+    await send("mousePressed", home.x, home.y, { button: "left", buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 5; step += 1) await send("mouseMoved", home.x + 12 * step, home.y + 8 * step, { buttons: 1 });
+    assert.equal((await state()).drag?.moved, true, "the part is really being carried");
+    for (let step = 4; step >= 0; step -= 1) await send("mouseMoved", home.x + 12 * step, home.y + 8 * step, { buttons: 1 });
+    await send("mouseReleased", home.x, home.y, { button: "left", buttons: 0, clickCount: 1 });
+    await settle();
+    const after = await state();
+    assert.deepEqual(after.circuit, before.circuit, "the part is exactly where it was");
+    assert.equal(after.historyDepth, before.historyDepth, "no history entry for a net displacement of zero");
+    assert.equal(after.stale, false, "the result is not marked stale");
+    assert.equal(after.generation, before.generation, "nothing changed, so the generation did not move");
+    // A real move still counts.
+    await dragPart("R1", 40, 0);
+    assert.equal((await state()).historyDepth, before.historyDepth + 1);
+    assert.equal((await state()).stale, true);
+  });
+
+  test("Backspace deletes the selection like Delete (one undo step), but not while typing in a field", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await selectPart("R1");
+    const count = (await state()).circuit.components.length;
+    const depth0 = (await state()).historyDepth;
+    await press("Backspace", "Backspace", 8);
+    assert.equal((await state()).circuit.components.length, count - 1, "Backspace removed the selected part");
+    assert.equal((await state()).historyDepth, depth0 + 1);
+    await click("#undo-button");
+    assert.equal((await state()).circuit.components.length, count);
+    // In a text field Backspace edits the text and leaves the circuit alone.
+    await selectPart("R2");
+    await click("#inspector-tab");
+    await typeInto(VALUE_INPUT, "1k");
+    await press("Backspace", "Backspace", 8);
+    assert.equal((await state()).circuit.components.length, count, "Backspace in an input does not delete the part");
+    await click("#discard-drafts-button").catch(() => {});
+  });
+
+  test("pasting a #p= link into an open tab opens it (one undo step), clears the address bar and keeps the old work in the prev slot", async () => {
+    await clearBrowserStorage();
+    await navigate("/?example=rc-lowpass");
+    await ev(`Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { window.__copied = text; } } })`);
+    const label = await center('.component[data-id="R1"] .value-label');
+    await wheelAt(label.x, label.y, -100);
+    await settle();
+    await click("#share-button");
+    const url = await until(`window.__copied`, "the share link to be copied");
+    const original = await state();
+
+    const second = await openTab();
+    try {
+      await second.run(async () => {
+        await clearBrowserStorage();
+        await navigate("/?example=divider");
+        await selectPart("R1");
+        await press("r", "KeyR", 82);
+        const tab = await tabIdOf();
+        await waitFor(async () => Boolean((await autosaveSlots())[tab]), "the divider to be autosaved");
+        const depth0 = (await state()).historyDepth;
+        // What the user does: paste the link into the address bar of this very tab (a hash-only navigation raises hashchange).
+        await ev(`location.hash = ${JSON.stringify(url.slice(url.indexOf("#")))}`);
+        await until(`${L}.getState().circuit.components.some((item) => item.id === "R1") && ${L}.getState().title !== "분압기 (DC)"`, "the shared circuit to replace the divider");
+        const opened = await state();
+        assert.deepEqual(opened.circuit, original.circuit, "the pasted link shows the shared circuit");
+        assert.equal(opened.historyDepth, depth0 + 1, "opening the link is one undo step");
+        await until(`document.getElementById("canvas-notices").textContent.includes("공유 링크에서 불러왔습니다")`, "the notice");
+        assert.equal(await ev(`location.hash`), "", "the link is spent: a reload does not bring it back over later work");
+        // The old project survives: its slot (own or prev) still holds the divider after the shared circuit gets its first save.
+        await selectPart("R1");
+        await press("r", "KeyR", 82);
+        await waitFor(async () => (await autosaveSlots())[`${tab}.prev`]?.project?.title === "분압기 (DC)", "the divider to be kept in the prev slot");
+        const slots = await autosaveSlots();
+        assert.equal(slots[tab].project.title !== "분압기 (DC)", true, "the tab's own slot now holds the shared circuit");
+        assert.equal(Object.keys(slots).filter((key) => key.startsWith(tab)).length, 2, "exactly one own slot and one prev slot");
+        await click("#undo-button");
+        await click("#undo-button");
+        assert.equal((await state()).circuit.components.some((item) => item.id === "R2"), true, "undo brings the divider back");
+      });
+    } finally { await second.close(); }
+  });
+
+  test("autosave on replacement: the last edit before 'new circuit' is saved, and the next edit does not overwrite it (prev slot)", async () => {
+    await clearBrowserStorage();
+    await navigate("/?example=divider");
+    const tab = await tabIdOf();
+    await selectPart("R1");
+    await press("r", "KeyR", 82);
+    const rotated = (await component("R1")).rotation;
+    // Replace the project inside the 0.8 s debounce window: the pending save must be flushed, not dropped.
+    await click("#new-button");
+    await until(`${L}.getState().circuit.components.length === 0`, "the empty circuit");
+    const slots = await autosaveSlots();
+    assert.equal(slots[tab]?.project?.circuit?.components?.find((item) => item.id === "R1")?.rotation, rotated, "the final state of the replaced project is in the slot");
+    // The first save of the new project moves it to prev.
+    await click('.palette-item[data-type="R"]');
+    const spot = await bgPoint();
+    await clickAt(spot.x, spot.y);
+    await settle();
+    await waitFor(async () => (await autosaveSlots())[`${tab}.prev`]?.project?.circuit?.components?.find((item) => item.id === "R1")?.rotation === rotated, "the replaced project to be kept as prev");
+    const after = await autosaveSlots();
+    assert.equal(after[tab].project.circuit.components.length, 1, "the own slot holds the new work");
+    // After a reload the banner offers the most recent work that is not already on screen.
+    await reloadPage();
+    await until(`document.querySelectorAll("#canvas-notices .canvas-notice").length >= 1`, "the restore banner");
+  });
+
+  // ---- review fixes: share-link autosave/race, prev-slot safety, undo across a project boundary, late drag frame ----------------------------------------
+
+  const titleNow = () => ev(`document.getElementById("canvas-title").textContent`);
+  /** The share URL of an example, copied through a stubbed clipboard. */
+  async function shareUrlOf(exampleId) {
+    await navigate(`/?example=${exampleId}`);
+    await ev(`window.__copied = null; Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { window.__copied = text; } } })`);
+    await click("#share-button");
+    const url = await until(`window.__copied`, "the share link to be copied");
+    return { url, hash: url.slice(url.indexOf("#")), title: await titleNow() };
+  }
+
+  test("a #p= link pasted into an open tab is autosaved right away: a reload before any edit does not lose it", async () => {
+    await clearBrowserStorage();
+    const shared = await shareUrlOf("rc-lowpass");
+    await clearBrowserStorage();
+    await navigate("/?example=divider");
+    const tab = await tabIdOf();
+    await selectPart("R1");
+    await press("r", "KeyR", 82);
+    await waitFor(async () => Boolean((await autosaveSlots())[tab]), "the divider to be autosaved");
+    await ev(`location.hash = ${JSON.stringify(shared.hash)}`);
+    await until(`document.getElementById("canvas-title").textContent === ${JSON.stringify(shared.title)}`, "the shared circuit to replace the divider");
+    assert.equal(await ev(`location.hash`), "", "the link is spent");
+    // No edit at all: the opened circuit must still reach the autosave (the address bar no longer carries it).
+    await waitFor(async () => (await autosaveSlots())[tab]?.project?.title === shared.title, "the opened share link to be autosaved without any edit");
+    await waitFor(async () => (await autosaveSlots())[`${tab}.prev`]?.project?.title === "분압기 (DC)", "the divider to be kept in prev");
+  });
+
+  test("two share links opened in quick succession: the newer one wins (the older request is superseded, not the newer cancelled)", async () => {
+    await clearBrowserStorage();
+    await navigate("/?example=rlc");
+    const linkOf = (id) => ev(`(async () => {
+      const share = await import("/src/share-url.js");
+      const examples = await import("/src/examples.js");
+      const e = examples.cloneExample(${JSON.stringify(id)});
+      const out = await share.encodeProjectToHash({ title: e.name, subtitle: e.description, circuit: e.circuit, settings: e.settings, probes: [] }, { baseHref: location.href.split("#")[0], compress: true });
+      return { hash: out.hash, title: e.name };
+    })()`);
+    const first = await linkOf("rc-lowpass");
+    const second = await linkOf("divider");
+    assert.notEqual(first.title, second.title);
+    // Decoding is made slow in the page (the first link ~150 ms, the second ~700 ms), so the first request finishes while the second is still decoding.
+    await ev(`(() => {
+      let count = 0; const seen = new WeakSet(); const original = ReadableStreamDefaultReader.prototype.read;
+      window.__origRead = original;
+      ReadableStreamDefaultReader.prototype.read = function (...args) {
+        if (seen.has(this)) return original.apply(this, args);
+        seen.add(this); count += 1;
+        const delay = count === 1 ? 150 : count === 2 ? 700 : 0;
+        return new Promise((resolve) => setTimeout(resolve, delay)).then(() => original.apply(this, args));
+      };
+      location.hash = ${JSON.stringify(first.hash)};
+      setTimeout(() => { location.hash = ${JSON.stringify(second.hash)}; }, 50);
+    })()`);
+    try {
+      await until(`document.getElementById("canvas-title").textContent === ${JSON.stringify(second.title)}`, "the newer link to be opened");
+      await sleep(300);
+      assert.equal(await titleNow(), second.title);
+      assert.equal((await noticeTexts()).some((text) => text.includes("취소")), false, "the newer link was not cancelled");
+    } finally {
+      await ev(`if (window.__origRead) ReadableStreamDefaultReader.prototype.read = window.__origRead`);
+    }
+  });
+
+  test("restore candidate is the tab's .prev while own is corrupt: the next save neither rotates the corrupt own over prev nor loses the offered work", async () => {
+    await clearBrowserStorage();
+    await navigate("/?example=divider");
+    const tab = await tabIdOf();
+    await selectPart("R1");
+    await press("r", "KeyR", 82);
+    await waitFor(async () => Boolean((await autosaveSlots())[tab]), "the divider to be autosaved");
+    // own becomes unreadable, the good copy sits in prev.
+    await ev(`(() => { const own = ${JSON.stringify(AUTOSAVE_PREFIX)} + sessionStorage.getItem("circuit-lab.tab-id"); localStorage.setItem(own + ".prev", localStorage.getItem(own)); localStorage.setItem(own, "{corrupt"); })()`);
+    await navigate("/");
+    await until(`document.querySelectorAll("#canvas-notices .canvas-notice").length >= 1`, "the restore banner offering prev");
+    await click('.palette-item[data-type="R"]');
+    const spot = await bgPoint();
+    await clickAt(spot.x, spot.y);
+    await settle();
+    await waitFor(async () => {
+      const own = await ev(`localStorage.getItem(${JSON.stringify(AUTOSAVE_PREFIX + tab)})`);
+      try { return JSON.parse(own).project.circuit.components.length === 1; } catch { return false; }
+    }, "the new edit to be saved into own");
+    const slots = await autosaveSlots(); // throws if prev became the corrupt text
+    assert.equal(slots[`${tab}.prev`]?.project?.title, "분압기 (DC)", "the offered prev survives the first save");
+    await clickNoticeButton("복원");
+    assert.equal((await state()).circuit.components.some((item) => item.id === "R2"), true, "restoring still brings the divider back");
+  });
+
+  test("undo across a project boundary keeps the project it leaves: own=B, prev=A -> undo to A -> own=A, prev=B", async () => {
+    await clearBrowserStorage();
+    await navigate("/?example=divider");
+    const tab = await tabIdOf();
+    await selectPart("R1");
+    await press("r", "KeyR", 82);
+    await waitFor(async () => Boolean((await autosaveSlots())[tab]), "the divider to be autosaved");
+    await click("#new-button");
+    await until(`${L}.getState().circuit.components.length === 0`, "the empty circuit");
+    await sleep(300);
+    await click('.palette-item[data-type="R"]');
+    const spot = await bgPoint();
+    await clickAt(spot.x, spot.y);
+    await settle();
+    await waitFor(async () => (await autosaveSlots())[tab]?.project?.circuit?.components?.length === 1 && (await autosaveSlots())[`${tab}.prev`]?.project?.title === "분압기 (DC)", "own=new circuit, prev=divider");
+    await click("#undo-button"); // the placed part
+    await click("#undo-button"); // the new circuit -> back to the divider (another project)
+    await until(`document.getElementById("canvas-title").textContent === "분압기 (DC)"`, "the divider to be restored");
+    await waitFor(async () => (await autosaveSlots())[tab]?.project?.title === "분압기 (DC)", "own to hold the restored divider");
+    await sleep(900);
+    const slots = await autosaveSlots();
+    assert.equal(slots[tab].project.title, "분압기 (DC)");
+    assert.equal(slots[`${tab}.prev`]?.project?.circuit?.components?.length, 1, "the one-part project undo left behind is kept in prev (not overwritten with the divider)");
+    assert.notEqual(slots[`${tab}.prev`]?.project?.title, "분압기 (DC)");
+  });
+
+  test("move drag: a drag frame still queued when the pointer is released does not hide the flow overlay afterwards", async () => {
+    await navigate("/?example=divider");
+    await autoUpdateOff();
+    await runAnalysis("dc");
+    await ev(`${L}.setFlow(true)`);
+    assert.equal((await flowState()).status, "flow");
+    await click('[data-tool="select"]');
+    const grab = await partPoint("R2");
+    // Out and straight back to the start: the move is a no-op, so the result stays fresh and the overlay has to be visible after the release.
+    // Frames requested during the last moves are held back and run only after the release (a drag frame that is still pending when the pointer goes up).
+    const send = (type, x, y, extra = {}) => ctx.cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra });
+    await dragBetween(grab, { x: grab.x + 40, y: grab.y }, {
+      steps: 3,
+      beforeRelease: async () => {
+        await ev(`(() => { window.__heldFrames = []; window.__realRaf = window.requestAnimationFrame; window.requestAnimationFrame = (callback) => window.__heldFrames.push(callback); })()`);
+        await send("mouseMoved", grab.x + 20, grab.y, { buttons: 1 });
+        await send("mouseMoved", grab.x, grab.y, { buttons: 1 });
+        assert.ok((await ev(`window.__heldFrames.length`)) >= 1, "a drag frame is queued");
+        assert.equal((await flowState()).suspended, true, "hidden while the drag is active");
+      },
+    });
+    // dragBetween released at (grab + 40) without moving there: the item sits at its start position, so nothing changed.
+    assert.equal((await state()).pointerOwnerId, null, "the gesture is over");
+    await ev(`(() => { window.requestAnimationFrame = window.__realRaf; const held = window.__heldFrames; window.__heldFrames = []; for (const callback of held) callback(performance.now()); })()`);
+    await sleep(150);
+    assert.equal((await flowState()).status, "flow", "the move was a no-op: the result is still fresh");
+    assert.equal((await flowState()).suspended, false, "the late drag frame did not hide the overlay after the release");
+  });
+
+  // ---- signals workspace: all six lessons, keyboard, playback, touch, reduced motion, custom input ----------------------
+  const SG_LESSONS = [["time", "a", 2.5], ["convolution", "T1", 3], ["series", "N", 3], ["fourier", "T", 2.5], ["roc", "re", -2], ["sampling", "f0", 4]];
+  const SG_KEYED = new Set(["time", "convolution", "series", "roc"]); // views with key handling are focusable, the others are not
+  const sgSvgExpr = `document.querySelector(".sg-stage > div:not([hidden]) svg")`;
+  const sgState = () => ev(`${L}.getSignalsCourseState()`);
+  async function openSignals(lesson, view) {
+    await navigate("/", view);
+    await click("#signals-workspace-tab");
+    await until(`${L}.getSignalsCourseState()?.active === true`, "the signals workspace");
+    await until(`document.querySelectorAll("[data-signals-lesson]").length > 0`, "lesson buttons");
+    if (lesson !== "time") await click(`[data-signals-lesson="${lesson}"]`);
+    await until(`${L}.getSignalsCourseState().lessonId === ${JSON.stringify(lesson)}`, `the ${lesson} lesson`);
+    await until(`Boolean(${sgSvgExpr}) && ${sgSvgExpr}.querySelectorAll("path,line,circle").length > 10`, "the plot to be drawn");
+    await settle();
+  }
+  async function pauseSignals() {
+    if ((await sgState()).playing) await click("[data-signals-play]");
+    await until(`${L}.getSignalsCourseState().playing === false`, "playback to be paused");
+  }
+  const sgSignature = () => ev(`(() => { const svg = ${sgSvgExpr}; return svg.innerHTML.length + ":" + [...svg.querySelectorAll("[d],[x1],[cx],[x]")].map((e) => e.getAttribute("d") ?? e.getAttribute("x1") ?? e.getAttribute("cx") ?? e.getAttribute("x")).join("|"); })()`);
+  const sgNodeCount = () => ev(`document.querySelectorAll("#signals-workspace *").length`);
+  const setSgParam = (key, value) => ev(`(() => { const input = document.querySelector('[data-signals-param="${key}"]'); input.value = ${JSON.stringify(String(value))}; input.dispatchEvent(new Event("input", { bubbles: true })); return input.value; })()`);
+
+  test("signals: every lesson renders and a slider change redraws it; a11y wiring of controls and plots", async () => {
+    for (const [lesson, key, value] of SG_LESSONS) {
+      await openSignals(lesson);
+      await pauseSignals().catch(() => {}); // lessons without a scrubber have nothing to pause
+      const before = await sgSignature();
+      await setSgParam(key, value);
+      await until(`${L}.getSignalsCourseState().params[${JSON.stringify(key)}] === ${value}`, `${lesson}: the parameter ${key}`);
+      await settle();
+      assert.notEqual(await sgSignature(), before, `${lesson}: the plot changed with ${key}`);
+      const a11y = await ev(`(() => {
+        const svg = ${sgSvgExpr};
+        const outputs = [...document.querySelectorAll("#signals-workspace .sg-ctl output")];
+        const sliders = [...document.querySelectorAll('#signals-workspace input[data-signals-param]')];
+        const describedBy = svg.getAttribute("aria-describedby");
+        return {
+          outputsLiveOff: outputs.length > 0 && outputs.every((o) => o.getAttribute("aria-live") === "off"),
+          valueText: sliders.length > 0 && sliders.every((s) => (s.getAttribute("aria-valuetext") || "").length > 0),
+          noPressed: !document.querySelector("[data-signals-play]")?.hasAttribute("aria-pressed"),
+          tabindex: svg.getAttribute("tabindex"),
+          descValid: describedBy ? svg.querySelector("#" + describedBy)?.textContent.length > 5 : null,
+          titleLength: svg.querySelector("title").textContent.length,
+          touchAction: getComputedStyle(svg).touchAction,
+        };
+      })()`);
+      assert.equal(a11y.outputsLiveOff, true, `${lesson}: <output> is aria-live off`);
+      assert.equal(a11y.valueText, true, `${lesson}: sliders carry aria-valuetext`);
+      assert.equal(a11y.noPressed, true, `${lesson}: the play button swaps its label instead of aria-pressed`);
+      assert.ok(a11y.titleLength > 0 && a11y.titleLength <= 40, `${lesson}: short svg title (${a11y.titleLength})`);
+      assert.equal(a11y.touchAction, "pan-y", `${lesson}: the page keeps vertical touch scrolling`);
+      if (SG_KEYED.has(lesson)) {
+        assert.equal(a11y.tabindex, "0", `${lesson}: a view with key handling is focusable`);
+        assert.equal(a11y.descValid, true, `${lesson}: key hints are exposed through aria-describedby`);
+      } else {
+        assert.equal(a11y.tabindex, null, `${lesson}: a view without key handling is not a tab stop`);
+        assert.equal(a11y.descValid, null);
+      }
+    }
+  });
+
+  test("signals: the keyboard moves the cursor (arrows, Home/End) and Space toggles playback", async () => {
+    await openSignals("convolution");
+    await pauseSignals();
+    await ev(`${sgSvgExpr}.focus()`);
+    const start = (await sgState()).cursor;
+    await press("ArrowRight", "ArrowRight", 39);
+    const moved = (await sgState()).cursor;
+    assert.ok(moved > start, `ArrowRight moves the cursor right (${start} -> ${moved})`);
+    await press("ArrowLeft", "ArrowLeft", 37);
+    near((await sgState()).cursor, start, 0, "ArrowLeft goes back", 1e-9);
+    await press("ArrowRight", "ArrowRight", 39, MOD.shift);
+    assert.ok((await sgState()).cursor - start > (moved - start) * 5, "Shift moves ten steps");
+    await press("End", "End", 35);
+    const end = (await sgState()).cursor;
+    await press("Home", "Home", 36);
+    assert.ok((await sgState()).cursor < end);
+    await press(" ", "Space", 32);
+    await until(`${L}.getSignalsCourseState().playing === true`, "Space to start playback");
+    assert.equal(await ev(`document.querySelector("[data-signals-play]").textContent`), "일시정지");
+    await press(" ", "Space", 32);
+    await until(`${L}.getSignalsCourseState().playing === false`, "Space to pause playback");
+    assert.equal(await ev(`document.querySelector("[data-signals-play]").textContent`), "재생");
+    // the time lesson has a draggable marker moved by the same keys
+    await openSignals("time");
+    await ev(`${sgSvgExpr}.focus()`);
+    const marker = (await sgState()).cursor;
+    await press("ArrowRight", "ArrowRight", 39);
+    assert.ok((await sgState()).cursor > marker, "ArrowRight moves the time-lesson marker");
+    // the ROC view moves the pole with the arrows
+    await openSignals("roc");
+    await ev(`${sgSvgExpr}.focus()`);
+    const pole = (await sgState()).params.re;
+    await press("ArrowRight", "ArrowRight", 39);
+    assert.ok((await sgState()).params.re > pole, "ArrowRight moves the pole");
+  });
+
+  test("signals: a plot drag takes playback over, parameter sliders do not; reaching the end clears the playing flag", async () => {
+    await openSignals("convolution");
+    await until(`${L}.getSignalsCourseState().playing === true`, "autoplay to start");
+    await setSgParam("T1", 3);
+    await settle();
+    assert.equal((await sgState()).playing, true, "turning a parameter slider keeps the animation running");
+    const box = await ev(`(() => { const r = ${sgSvgExpr}.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
+    await dragBetween({ x: box.x + box.w * 0.4, y: box.y + box.h * 0.2 }, { x: box.x + box.w * 0.6, y: box.y + box.h * 0.2 });
+    assert.equal((await sgState()).playing, false, "dragging in the plot stops playback");
+    const dropped = (await sgState()).cursor;
+    await sleep(300);
+    assert.equal((await sgState()).cursor, dropped, "and the cursor stays where it was dropped");
+    // end of the sweep: scrub almost to the end, press play, and the animation ends by itself with playing === false
+    const scrub = await ev(`(() => { const i = document.querySelector("[data-signals-cursor]"); return { max: Number(i.max), min: Number(i.min) }; })()`);
+    await ev(`(() => { const i = document.querySelector("[data-signals-cursor]"); i.value = ${scrub.max - (scrub.max - scrub.min) / 200}; i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    await click("[data-signals-play]");
+    await until(`${L}.getSignalsCourseState().playing === false && document.querySelector("[data-signals-play]").textContent === "재생"`, "the animation to end", 8000);
+    near((await sgState()).cursor, scrub.max, 0, "the cursor ended at the end", 1e-6);
+    await sleep(200);
+    assert.equal((await sgState()).playing, false, "an ended animation does not restart by itself");
+  });
+
+  test("signals: leaving the workspace stops playback and every animation frame", async () => {
+    await openSignals("convolution");
+    await until(`${L}.getSignalsCourseState().playing === true`, "autoplay to start");
+    await click("#circuit-workspace-tab");
+    await until(`${L}.getSignalsCourseState().active === false`, "signals to be deactivated");
+    const after = await sgState();
+    assert.equal(after.playing, false, "no playback while hidden");
+    await sleep(400);
+    assert.equal((await sgState()).cursor, after.cursor, "the cursor no longer advances");
+    // frames requested from here on must not come from the signals workspace: count them while it is idle
+    await ev(`(() => { window.__sgFrames = 0; const raf = window.requestAnimationFrame.bind(window); window.requestAnimationFrame = (cb) => { window.__sgFrames += 1; return raf(cb); }; })()`);
+    await sleep(400);
+    const frames = await ev(`window.__sgFrames`);
+    assert.ok(frames <= 3, `an idle page keeps no animation loop running (${frames} frames)`);
+    // coming back resumes only because playback was still wanted (it never reached the end)
+    await click("#signals-workspace-tab");
+    await until(`${L}.getSignalsCourseState().active === true && ${L}.getSignalsCourseState().playing === true`, "playback to resume on return");
+  });
+
+  test("signals: parameter drags and repaints never create new SVG nodes", async () => {
+    for (const [lesson, key] of SG_LESSONS) {
+      await openSignals(lesson);
+      await pauseSignals().catch(() => {});
+      const spec = await ev(`(() => { const i = document.querySelector('[data-signals-param="${key}"]'); return { min: Number(i.min), max: Number(i.max), step: Number(i.step) }; })()`);
+      const sweep = () => ev(`(async () => {
+        const input = document.querySelector('[data-signals-param="${key}"]');
+        const steps = Math.floor((${spec.max} - ${spec.min}) / ${spec.step});
+        for (let i = 0; i < 100; i += 1) {
+          input.value = String(${spec.min} + ((i * 7) % (steps + 1)) * ${spec.step});
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          if (i % 10 === 9) await new Promise((done) => requestAnimationFrame(done));
+        }
+      })()`);
+      await sweep(); // warm-up: pooled tick/stem elements are created lazily up to their maximum
+      await settle();
+      const before = await sgNodeCount();
+      await sweep();
+      await settle();
+      assert.equal(await sgNodeCount(), before, `${lesson}: node count is stable across 100 slider inputs`);
+    }
+  });
+
+  test("signals: time lesson writes a = 0 back as a legal value and says why", async () => {
+    await openSignals("time");
+    assert.equal(await setSgParam("a", 0), "0");
+    await until(`${L}.getSignalsCourseState().params.a !== 0`, "a to be normalized");
+    await settle();
+    const after = await sgState();
+    assert.equal(after.params.a, 0.1);
+    assert.equal(await ev(`document.querySelector('[data-signals-param="a"]').value`), "0.1", "the slider jumped to the value that is drawn");
+    assert.match(await ev(`document.querySelector("[data-signals-read]").textContent`), /a=0은 정의되지 않음/);
+    await setSgParam("a", 2);
+    await settle();
+    assert.doesNotMatch(await ev(`document.querySelector("[data-signals-read]").textContent`), /정의되지 않음/, "the note goes away with a legal a");
+  });
+
+  test("signals: touch only claims the gesture on a draggable handle; elsewhere the page can scroll", async () => {
+    await openSignals("roc", { width: 390, height: 844, mobile: true });
+    await ev(`window.__touchStarts = []; window.addEventListener("touchstart", (event) => window.__touchStarts.push(event.defaultPrevented), { passive: true });`);
+    const spots = await ev(`(() => {
+      const svg = ${sgSvgExpr};
+      svg.scrollIntoView({ block: "center" });
+      const cross = [...svg.querySelectorAll("path.ref.thick.c4")].find((p) => p.getAttribute("visibility") === "visible").getBoundingClientRect();
+      const frame = svg.querySelector(".sg-frame").getBoundingClientRect();
+      return { pole: { x: cross.x + cross.width / 2, y: cross.y + cross.height / 2 }, empty: { x: frame.x + frame.width - 14, y: frame.y + frame.height - 14 } };
+    })()`);
+    const tap = async (point) => {
+      await ctx.cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+      await ctx.cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await settle();
+    };
+    await tap(spots.pole); // a tap on the plane moves the pole, so the pole goes first
+    await tap(spots.empty);
+    assert.deepEqual(await ev(`window.__touchStarts`), [true, false], "a pole is grabbed, an empty spot of the plane scrolls the page");
+    await navigate("/"); // back to the desktop viewport for the next scenarios
+  });
+
+  test("signals: reduced motion switches auto-play off but a press on play still plays", async () => {
+    await openSignals("convolution");
+    await until(`${L}.getSignalsCourseState().playing === true`, "autoplay to start");
+    await ctx.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    try {
+      await until(`${L}.getSignalsCourseState().reducedMotion === true && ${L}.getSignalsCourseState().playing === false`, "the setting to stop playback");
+      assert.equal(await ev(`document.querySelector("[data-signals-play]").disabled`), false, "the play button stays usable");
+      assert.match(await ev(`document.querySelector("[data-signals-play]").title`), /움직임 줄이기/);
+      await click("[data-signals-play]");
+      await until(`${L}.getSignalsCourseState().playing === true`, "a pressed play button to play");
+      await click("[data-signals-play]");
+      await until(`${L}.getSignalsCourseState().playing === false`, "a second press to pause");
+      // a new lesson does not start by itself under the setting
+      await click('[data-signals-lesson="series"]');
+      await until(`${L}.getSignalsCourseState().lessonId === "series"`, "the series lesson");
+      await sleep(250);
+      assert.equal((await sgState()).playing, false, "no auto-play under reduced motion");
+    } finally {
+      await ctx.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "" }] });
+    }
+  });
+
+  test("signals: invalid first input draws an explicit empty state; a valid one clears the message and the picture returns", async () => {
+    await openSignals("convolution");
+    await pauseSignals();
+    await click("[data-signals-advanced] summary");
+    await typeInto('[data-signals-field="x"]', "1,,2");
+    await until(`${L}.getSignalsCourseState().family === "custom-dt" && ${L}.getSignalsCourseState().numericStatus === "invalid"`, "the invalid sequence to be reported");
+    await settle();
+    assert.match(await ev(`document.querySelector("[data-signals-status]").textContent`), /\S/, "an error message is shown");
+    assert.equal(await ev(`[...${sgSvgExpr}.querySelectorAll("text")].some((t) => t.textContent === "수열을 입력하세요" && t.getAttribute("visibility") === "visible")`), true, "the empty state replaces the previous picture");
+    await typeInto('[data-signals-field="x"]', "1,2,1");
+    await until(`${L}.getSignalsCourseState().numericStatus === "valid"`, "the valid sequence");
+    await settle();
+    assert.equal(await ev(`document.querySelector("[data-signals-status]").textContent`), "", "the message is cleared once a paint succeeds");
+    assert.equal(await ev(`[...${sgSvgExpr}.querySelectorAll("text")].some((t) => t.textContent === "수열을 입력하세요" && t.getAttribute("visibility") === "visible")`), false);
+  });
+
+  test("signals: the window losing focus pauses playback and regaining it resumes", async () => {
+    await openSignals("convolution");
+    await until(`${L}.getSignalsCourseState().playing === true`, "autoplay to start");
+    await ev(`window.dispatchEvent(new Event("blur"))`);
+    await until(`${L}.getSignalsCourseState().playing === false`, "blur to pause");
+    const paused = (await sgState()).cursor;
+    await sleep(250);
+    assert.equal((await sgState()).cursor, paused, "no progress while blurred");
+    await ev(`window.dispatchEvent(new Event("focus"))`);
+    await until(`${L}.getSignalsCourseState().playing === true`, "focus to resume");
+  });
 });

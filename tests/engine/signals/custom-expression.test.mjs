@@ -114,3 +114,12 @@ test('course stylesheet is injected once per document',()=>{
   ensureCourseStyle(node,'b','.b{}');
   assert.deepEqual(styles.map(s=>s.dataset.courseStyle),['a','b']);
 });
+
+test('playback: explicit rate and looping (Fourier series phase)',()=>{
+  const d={min:0,max:2,rate:.25,loop:true};
+  near(playbackCursor(0,4000,d,1,false,true),1);
+  near(playbackCursor(1.5,4000,d,1,false,true),.5);   // wraps past max
+  near(playbackCursor(0,8000,d,1,false,true),0);      // exactly one lap
+  near(playbackCursor(0,4000,{min:0,max:2,rate:.25},1),1);
+  assert.equal(playbackCursor(0,99999,{min:0,max:2,rate:.25},1),2); // without loop it stops at the end
+});

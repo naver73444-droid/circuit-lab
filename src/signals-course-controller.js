@@ -1,152 +1,542 @@
-import { SIGNALS_LESSONS, SIGNALS_CONVENTIONS, getSignalsLesson, initialSignalsOptions, evaluateSignalsLesson, parseSignalsNumber, parseSignalsSequence, discreteConvolution, samplingAlias } from './signals-course-model.js';
-import { prepareCustomConvolution, EXPRESSION_LIMITS } from './signals-expression.js';
+// Signals workspace controller: lesson tabs, one control strip, one live view per lesson.
+// Everything repaints from `input` events, coalesced into one requestAnimationFrame.
+// Playback policy: it pauses when the tab is hidden or the window loses focus (and resumes after), a plot drag, key or
+// scrubber input takes it over for good, and parameter sliders do NOT stop it (the animation keeps running while you
+// turn a knob). prefers-reduced-motion switches AUTO-play off (and stops a running one); a press on the play button
+// still plays.
+import { SIGNALS_LESSONS } from './signals-course-model.js';
 import { ensureCourseStyle } from './course-style.js';
-import { playbackCursor } from './signals-playback.js';
-import { renderSignalsVisual, cursorDomain } from './signals-visual.js';
+import { SIGNALS_STYLE } from './signals-style.js';
 import { appendCourseMath } from './course-math-view.js';
-import { renderSymbolic } from './course-symbolic-view.js';
-import { preserveCourseFocus } from './course-focus.js';
+import { clamp, controlDefaults, formatQuantity } from './signals-util.js';
+import { playbackCursor } from './signals-playback.js';
+import { CUSTOM_FIELDS, CUSTOM_HELP, customDefaults, parseCustomInput } from './signals-custom-input.js';
+import { timeLesson } from './signals-time-model.js';
+import { convolutionLesson, isCustomFamily } from './signals-convolution-model.js';
+import { seriesLesson } from './signals-series-model.js';
+import { transformLesson } from './signals-transform-model.js';
+import { rocLesson } from './signals-roc-model.js';
+import { samplingLesson } from './signals-sampling-model.js';
+import { createTimeView } from './signals-time-view.js';
+import { createConvolutionView } from './signals-convolution-view.js';
+import { createSeriesView } from './signals-series-view.js';
+import { createTransformView } from './signals-transform-view.js';
+import { createRocView } from './signals-roc-view.js';
+import { createSamplingView } from './signals-sampling-view.js';
 
-// Fixed examples first (the graph is visible immediately); free input is the last two options.
-const convolutionFamilies=[['rect','직사각 × 직사각 (예제)'],['exp','우측 지수 × 우측 지수 (예제)'],['custom','직접 입력 · 연속식 x(t), h(t)'],['sequence','직접 입력 · 이산수열 x[n], h[n]']];
-const lessonControls=id=>getSignalsLesson(id).controls.map(c=>id==='convolution'&&c.key==='family'?{...c,choices:convolutionFamilies.map(([value,label])=>({value,label}))}:c);
-const freeInput=(id,family)=>id==='convolution'&&(family==='custom'||family==='sequence');
-const numericFields = (id,o) => {
-  if(id==='time' && o.family==='sequence') return [['x','x 표본 · 쉼표 구분','2,4,6'],['start','원 시작 인덱스','-1'],['a','정수 배율 a',o.sign==='negative'?'-1':'2'],['b','정수 내부 이동 b','1']];
-  if(id==='time' && o.family!=='sequence') return [['a','배율 a',o.sign==='negative'?'-2':'2'],['b','내부 이동 b','1']];
-  if(id==='convolution'&&o.family==='custom')return [['xExpression','x(t) 식','u(t)-u(t-2)'],['hExpression','h(t) 식','exp(-t)*u(t)'],['windowT','양쪽 입력 창 ±T [s]','4'],['dt','적분 Δτ [s]','0.02']];
-  if(id==='convolution') return o.family==='rect'?[['T1','폭 T₁ [s]','2'],['T2','폭 T₂ [s]','1']]:o.family==='exp'?[['a','감쇠 α [1/s]','1'],['b','감쇠 β [1/s]','2']]:[['x','x 표본 · 쉼표 구분','1,2,1'],['h','h 표본 · 쉼표 구분','1,-1'],['xStart','x 시작 인덱스','0'],['hStart','h 시작 인덱스','0']];
-  if(id==='series') return o.family==='pulse'?[['D','듀티비 D','0.5']]:[];
-  if(id==='fourier') return o.family==='rect'?[['T','폭 T [s]','2']]:o.family==='exp'?[['a','감쇠 α [1/s]','1']]:o.family==='sequence'?[['x','x 표본 · 쉼표 구분','1,2,1'],['start','시작 인덱스','0']]:[];
-  if(id==='sampling') return [['f','f₀ [Hz]','7'],['fs','fₛ [sample/s]','10'],['phase','위상 φ [rad]','0']];
-  return [];
+const REGISTRY = {
+  time: [timeLesson, createTimeView],
+  convolution: [convolutionLesson, createConvolutionView],
+  series: [seriesLesson, createSeriesView],
+  fourier: [transformLesson, createTransformView],
+  roc: [rocLesson, createRocView],
+  sampling: [samplingLesson, createSamplingView],
 };
-const styles=`.signals-course{box-sizing:border-box;color:inherit;font:16px/1.5 system-ui,sans-serif;padding:clamp(12px,3vw,28px);max-width:1120px;margin:auto;overflow-wrap:anywhere}.signals-course *{box-sizing:border-box}.signals-course h2{font-size:26px;margin:0 0 12px}.signals-course nav{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px}.signals-course button,.signals-course select,.signals-course input{font:inherit;color:inherit;background:#172332;border:1px solid #678099;border-radius:7px;padding:9px;min-height:44px;max-width:100%}.signals-course button{cursor:pointer}.signals-course button:disabled{opacity:.45;cursor:default}.signals-course :is(button,input,select):focus-visible{outline:2px solid #9addf0;outline-offset:2px}.signals-course .signals-numeric form>button{margin:4px 6px 0 0}.signals-course button[aria-current=step]{background:#244d60;border-color:#9addf0}.signals-course label{display:flex;flex-direction:column;gap:4px;min-width:0}.signals-course .signals-controls{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}.signals-course .signals-controls label{flex:1 1 190px}.signals-course .signals-answer{padding:18px;border:1px solid #81b69f;border-radius:12px;font:17px/1.65 ui-monospace,monospace;white-space:pre-wrap;margin:16px 0}.signals-course .signals-picture{background:#142435;padding:20px;border-radius:12px;text-align:center;font-size:clamp(18px,2.2vw,25px);min-height:130px;display:grid;place-content:center;gap:14px}.signals-course .signals-picture small{font:14px system-ui;color:#b6c8d9}.signals-course details{border-top:1px solid #536478;padding:13px 0}.signals-course summary{cursor:pointer;font-weight:600;min-height:30px}.signals-course pre{white-space:pre-wrap;overflow-wrap:anywhere}.signals-course svg{width:100%;height:auto;display:block;min-width:0}.signals-course .signals-error{color:#ffd1a8;white-space:pre-wrap}.signals-course [hidden]{display:none!important}.signals-course .signals-numeric{padding-top:12px}.signals-course .signals-cursor input{width:100%}.signals-course .signals-cursor{margin:12px 0}.signals-course .signals-graph-card{border:1px solid #536478;border-radius:12px;padding:10px;margin:12px 0;background:#142435}.signals-course .signals-graph-card h3{font-size:17px;margin:4px 0}.signals-course .signals-playback{display:flex;gap:6px;flex-wrap:wrap}.signals-course p{margin:10px 0}.signals-course .signals-caption{font-size:14px;color:#c3d1dd}.signals-course .signals-snippets{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}.signals-course [data-signals-numeric-status]:empty{display:none}.signals-course svg[data-signals-plot]{max-height:300px}.signals-course .signals-cursor>label:has([data-signals-speed]){flex-direction:row;align-items:center;gap:8px}.signals-course .signals-cursor [data-signals-speed]{width:auto}@media(max-width:520px){.signals-course h2{font-size:22px}.signals-course .signals-answer{font-size:15px;padding:12px}.signals-course nav button{font-size:14px;flex:1 1 145px}}`;
 
 export function createSignalsCourseController(host) {
-  if(!host||typeof host.querySelector!=='function') throw new TypeError('신호 학습 패널 host가 필요합니다.');
-  const doc=host.ownerDocument,win=doc.defaultView;const motion=win.matchMedia?.('(prefers-reduced-motion: reduce)');let timer=null,playStart=0,playCursor=0;let id=SIGNALS_LESSONS[0].id,active=false,destroyed=false;
-  const states=new Map();
-  const makeState=(lessonId) => ({ options:initialSignalsOptions(lessonId),drafts:{},inputBackup:null,snippetTarget:'xExpression',numeric:null,numericDirty:false,numericError:'',numericUnsupported:false,cursor:0,solutionOpen:false,numericOpen:false,toolsOpen:false,initialized:false,speed:1,familyStates:{} });
-  for(const l of SIGNALS_LESSONS)states.set(l.id,makeState(l.id));
-  const current=()=>states.get(id);
-  function el(tag,text,parent,attrs={}) { const n=doc.createElement(tag);if(text!==undefined)n.textContent=text;for(const [k,v]of Object.entries(attrs))n.setAttribute(k,String(v));parent?.append(n);return n; }
-  function render() {
-    if(destroyed)return;const state=current();
-    if(!state.initialized){state.initialized=true;const fields=numericFields(id,state.options);for(const[k,,initial]of fields)if(!Object.hasOwn(state.drafts,k))state.drafts[k]=initial;if(fields.length){calculate(false);return;}}
-    const lesson=getSignalsLesson(id),custom=id==='convolution'&&state.options.family==='custom',free=freeInput(id,state.options.family),symbolic=custom?null:evaluateSignalsLesson(id,state.options);
-    const restoreFocus=preserveCourseFocus(host,['data-signals-key','data-signals-control','data-signals-lesson','data-signals-calculate','data-signals-reset','data-signals-expression-example','data-signals-sequence-example']);
-    host.replaceChildren();const root=el('div',undefined,host,{class:'signals-course'});ensureCourseStyle(host,'signals-course',styles);el('h2','신호 및 시스템',root);
-    const nav=el('nav',undefined,root,{'aria-label':'학습 단계'});for(const l of SIGNALS_LESSONS)el('button',l.title,nav,{'type':'button','data-signals-lesson':l.id,...(l.id===id?{'aria-current':'step'}:{})});
-    const controls=el('div',undefined,root,{class:'signals-controls'});
-    for(const c of lessonControls(id)) {const label=el('label',c.label,controls);const input=el('select',undefined,label,{'data-signals-control':c.key});for(const v of c.choices)el('option',v.label,input,{value:v.value});input.value=state.options[c.key];}
-    const picture=el('div',undefined,root,{class:'signals-picture',...(id==='roc'?{'data-signals-condition-context':''}:{})});
-    if(id==='roc'){el('small','변환할 신호',picture);for(const condition of symbolic.conditions)appendCourseMath(picture,condition);el('small',symbolic.givens.map(g=>g.constraint).filter(Boolean).join(' · '),picture);}
-    else el('div',lesson.picture,picture);
-    const preview=el('section',undefined,root,{'data-signals-visual-preview':''});
-    el('h3','수치 예시',preview);
-    el('p',state.numericError,preview,{class:'signals-error',role:'status','data-signals-numeric-status':''});const projection=el('div',undefined,preview,{'data-signals-projection':''});
-    if(state.numericDirty)el('p','수치 조건을 수정했습니다. 예시 계산을 눌러 다시 확인하세요.',projection);else if(state.numeric)renderNumeric(projection);else el('p',id==='roc'?'ROC는 아래 문자 조건과 수렴영역으로 판단합니다.':'이 분포/함수 선택은 보통함수 수치 그래프를 제공하지 않습니다.',projection);
-    const box=el('div',undefined,root,{class:'signals-answer','data-signals-answer':''});
-    if(custom)el('p','직접 입력한 식의 유한창 근사입니다. 기존 함수족의 기호 정답을 이 식의 정답으로 사용하지 않습니다.',box);else for(const a of symbolic.answers) {el('strong',a.quantity,box);appendCourseMath(box,a.formula);}
-    const details=el('details',undefined,root,{'data-signals-solution':''});details.open=state.solutionOpen;el('summary','문자 조건 · 법칙 · 유도 펼치기',details);const symbolicHost=el('div',undefined,details);if(custom)el('p','y(t) ≈ Δτ Σ x(τᵢ)h(t−τᵢ). x와 h는 각각 선언된 입력 창 밖에서 0으로 취급합니다. 일반 해석적 적분/기호 풀이를 생성하지 않습니다.',symbolicHost);else renderSymbolic(symbolicHost,symbolic);
-    const numericDetails=el('details',undefined,root,{'data-signals-numeric-details':''});numericDetails.open=state.numericOpen;el('summary',free?'직접 입력':'예시 조건 바꾸기',numericDetails);if(free)root.insertBefore(numericDetails,picture);
-    const numeric=el('div',undefined,numericDetails,{class:'signals-numeric'}),fields=numericFields(id,state.options);
-    if(!custom)el('p','기호답을 바꾸지 않는 수치 입력입니다.',numeric,{class:'signals-caption'});
-    if(fields.length) {
-      const form=el('form',undefined,numeric,{'data-signals-numeric-form':''}),row=el('div',undefined,form,{class:'signals-controls'});
-      for(const[key,label,initial]of fields){if(!Object.hasOwn(state.drafts,key))state.drafts[key]=initial;const lab=el('label',label,row);const input=el('input',undefined,lab,{'data-signals-key':key,'type':'text',...(!['x','h','xExpression','hExpression'].includes(key)?{'inputmode':'decimal'}:{}),...(key.endsWith('Expression')?{maxlength:EXPRESSION_LIMITS.length}:{})});input.value=state.drafts[key];}
-      // Primary actions first; the editing helpers (snippets, swap, restore) live in one folded tool group.
-      if(custom){for(const[k,text]of [['rect','직사각 예제식'],['exp','지수 예제식']])el('button',text,form,{type:'button','data-signals-expression-example':k});}
-      if(id==='convolution'&&state.options.family==='sequence')for(const[k,text]of [['basic','기본'],['difference','차분'],['average','3점 평균']])el('button',text,form,{type:'button','data-signals-sequence-example':k});
-      el('button',id==='convolution'?'입력으로 컨볼루션 계산':'예시 계산',form,{type:'submit','data-signals-calculate':''});el('button','초기 조건',form,{type:'button','data-signals-reset':''});
-      if(id==='convolution'){el('p','',form,{role:'status','data-signals-input-status':''});el('button','그래프 보기',form,{type:'button','data-signals-show-graph':''});syncInputStatus();}
-      if(free){
-        const tools=el('details',undefined,form,{'data-signals-tools':''});tools.open=state.toolsOpen;el('summary',custom?'입력 도구 · 문법·한도 · 함수 넣기 · x ↔ h':'입력 도구 · x ↔ h · 이전 입력 복구',tools);
-        if(custom){el('p',`숫자, t, pi, e, + - * /, 괄호와 u/rect/exp/sin/cos 함수만 지원합니다. ^ 거듭제곱과 암시적 곱셈은 지원하지 않습니다. u(0)=1/2, rect(t)는 |t|<1/2에서 1입니다. 한도: 길이 ${EXPRESSION_LIMITS.length}자 · 연산 ${EXPRESSION_LIMITS.nodes}개 · 괄호/함수 중첩 ${EXPRESSION_LIMITS.depth} · 적분 ${EXPRESSION_LIMITS.minCells}~${EXPRESSION_LIMITS.maxCells}구간 · 출력 ${EXPRESSION_LIMITS.outputPoints}점 · 사전계산 안전시간 ${EXPRESSION_LIMITS.timeBudgetMs/1000}초. 분모가 창 안 0일 가능성이 있는 식은 보수적으로 거절합니다.`,tools,{class:'signals-caption'});const label=el('label','함수 넣을 곳',tools),target=el('select',undefined,label,{'data-signals-snippet-target':''});for(const[key,text]of [['xExpression','x(t)'],['hExpression','h(t)']])el('option',text,target,{value:key});target.value=state.snippetTarget;const snippets=el('div',undefined,tools,{class:'signals-snippets'});for(const text of ['u(t)','rect(t)','exp(-t)','sin(2*pi*t)','cos(2*pi*t)'])el('button',text,snippets,{type:'button','data-signals-snippet':text});el('p','선택한 부분에 삽입 · 곱셈은 *를 직접 입력',tools,{class:'signals-caption'});}
-        const edit=el('div',undefined,tools,{class:'signals-snippets'});el('button','x ↔ h 바꾸기',edit,{type:'button','data-signals-swap':''});const undo=el('button','이전 입력 복구',edit,{type:'button','data-signals-restore-input':''});undo.disabled=!state.inputBackup;el('p','도구 사용 직전 입력 1회 복구 · 직접 수정하면 해제',tools,{class:'signals-caption'});el('p','',tools,{role:'status','data-signals-tool-status':''});
-      }
-    } else el('p',id==='roc'?'ROC는 위의 문자 조건으로 판단합니다. 이 단계에는 수치 그래프가 없습니다.':'이 선택에는 수치 예시를 제공하지 않습니다. 이산 시간축 보간과 Dirac/PV의 보통함수 그래프는 지원하지 않습니다.',numeric);
-    const conventions=el('details',undefined,root);el('summary','관례와 지원 범위',conventions);el('p',SIGNALS_CONVENTIONS,conventions);el('p','지원 함수족: 지수, 계단, 직사각, 정현파, 유한 이산수열. 직접 CT 입력은 제한된 사칙/함수만 수치적으로 계산하며 임의 기호 해석은 지원하지 않습니다.',conventions);
-    restoreFocus();
+  if (!host || typeof host.querySelector !== 'function') throw new TypeError('신호 학습 패널 host가 필요합니다.');
+  const doc = host.ownerDocument;
+  const win = doc.defaultView;
+  const motion = win.matchMedia?.('(prefers-reduced-motion: reduce)');
+  const states = new Map();
+  const views = new Map();
+  let lessonId = SIGNALS_LESSONS[0].id;
+  let active = false;
+  let destroyed = false;
+  let mounted = false;
+  let frame = 0;
+  let playTimer = 0;
+  let layoutWidth = 0;
+  let resizer = null;
+  const ui = {};
+
+  // ---------------------------------------------------------------- state
+  const lessonOf = (id = lessonId) => REGISTRY[id][0];
+  const defaultsOf = (lesson, family) => controlDefaults(lesson.controls(family, {}));
+  function makeState(id) {
+    const lesson = lessonOf(id);
+    const state = {
+      family: lesson.initialFamily,
+      params: defaultsOf(lesson, lesson.initialFamily),
+      saved: {},
+      cursor: 0,
+      extra: { drafts: customDefaults(), custom: null, customFamily: null, error: '' },
+      note: '',
+      playing: Boolean(lesson.scrub) && !motion?.matches,
+    };
+    state.cursor = lesson.cursor?.(state.family, state.params, state.extra)?.initial ?? 0;
+    return state;
   }
-  function syncInputStatus(){const s=current(),valid=Boolean(s.numeric&&!s.numericDirty&&!s.numericError),status=host.querySelector('[data-signals-input-status]'),button=host.querySelector('[data-signals-show-graph]');if(status)status.textContent=s.numericError?'입력 오류 · '+s.numericError:valid?'적용됨 · 현재 입력의 그래프':'미적용 · 계산을 눌러 주세요';if(button)button.disabled=!valid;}
-  function renderNumeric(parent=host.querySelector('[data-signals-projection]')) { try{renderSignalsVisual(parent,current(),id,{playing:timer!==null,reducedMotion:Boolean(motion?.matches)});}catch(error){stopPlayback();current().numericDirty=true;current().numericError=error.message;parent.textContent=error.message;syncInputStatus();} }
-  function stopPlayback(){if(timer!==null){win.cancelAnimationFrame(timer);timer=null;}const button=host.querySelector('[data-signals-play="play"]');if(button){button.textContent='재생';button.setAttribute('aria-pressed','false');}}
-  function advance(direction=1){const s=current(),d=cursorDomain(id,s.options,s.numeric);if(!d||s.numericDirty)return;const next=Math.min(d.max,Math.max(d.min,s.cursor+direction*d.step));s.cursor=s.options.family==='sequence'?Math.round(next):next;if(s.cursor>=d.max)stopPlayback();renderNumeric();}
-  function startPlayback(){const s=current(),d=cursorDomain(id,s.options,s.numeric);if(!d||s.numericDirty||motion?.matches||doc.hidden)return;if(s.cursor>=d.max)s.cursor=d.min;playStart=win.performance.now();playCursor=s.cursor;
-    const tick=timestamp=>{if(!active||destroyed||doc.hidden||motion?.matches){stopPlayback();return;}const next=playbackCursor(playCursor,timestamp-playStart,d,s.speed,s.options.family==='sequence');if(next!==s.cursor){s.cursor=next;renderNumeric();}if(s.numericDirty||s.cursor>=d.max){stopPlayback();return;}timer=win.requestAnimationFrame(tick);};timer=win.requestAnimationFrame(tick);renderNumeric();
+  for (const { id } of SIGNALS_LESSONS) states.set(id, makeState(id));
+  const current = () => states.get(lessonId);
+
+  const cursorSpec = (state = current()) => lessonOf().cursor?.(state.family, state.params, state.extra) ?? null;
+
+  // The one-line hint under the plot, plus the note about a value that had to be moved (a = 0).
+  const readText = (state) => {
+    const text = lessonOf().read(state.family, state.params);
+    return state.note ? `${text} (${state.note})` : text;
+  };
+
+  function clampCursor(state) {
+    const spec = cursorSpec(state);
+    if (!spec) return;
+    const value = clamp(state.cursor, spec.min, spec.max);
+    state.cursor = spec.discrete ? Math.round(value) : value;
   }
-  function onVisibility(){if(doc.hidden)stopPlayback();}
-  function onBlur(){stopPlayback();}
-  function onMotion(){stopPlayback();if(active&&!current().numericDirty&&current().numeric)renderNumeric();}
-  function calculate(reveal=true) {
-    stopPlayback();const s=current(),o=s.options,read=(key,opts)=>parseSignalsNumber(s.drafts[key],opts);let p;
-    try {
-      if(id==='time'){p={a:read('a',{min:-100,max:100,integer:o.family==='sequence'}),b:read('b',{min:-100,max:100,integer:o.family==='sequence'})};if(o.family==='sequence'){p.x=parseSignalsSequence(s.drafts.x);p.start=read('start',{integer:true,min:-1000,max:1000});}if(p.a===0||Math.abs(p.a)<.01||(o.sign==='positive'?p.a<0:p.a>0))throw new RangeError('a는 선택한 부호와 같고 0.01≤|a|≤100이어야 합니다.');}
-      if(id==='convolution'){if(o.family==='custom')p=prepareCustomConvolution(s.drafts.xExpression,s.drafts.hExpression,read('windowT',{min:.05,max:20}),read('dt',{min:.00001,max:1}));else if(o.family==='rect')p={T1:read('T1',{min:.001,max:100}),T2:read('T2',{min:.001,max:100})};else if(o.family==='exp')p={a:read('a',{min:.01,max:100}),b:read('b',{min:.01,max:100})};else{p={x:parseSignalsSequence(s.drafts.x),h:parseSignalsSequence(s.drafts.h),xStart:read('xStart',{integer:true,min:-1000,max:1000}),hStart:read('hStart',{integer:true,min:-1000,max:1000})};p.output=discreteConvolution(p.x,p.h,p.xStart,p.hStart);}}
-      if(id==='series'){p={D:read('D',{min:.001,max:.999})};}
-      if(id==='fourier'){p=o.family==='rect'?{T:read('T',{min:.001,max:100})}:o.family==='exp'?{a:read('a',{min:.01,max:100})}:{x:parseSignalsSequence(s.drafts.x),start:read('start',{integer:true,min:-1000,max:1000})};}
-      if(id==='sampling'){p={f:read('f',{min:0,max:10000}),fs:read('fs',{min:.001,max:10000}),phase:read('phase',{min:-100,max:100})};samplingAlias(p.f,p.fs);}
-      if(!numericFields(id,o).length)throw new RangeError('이 선택에는 수치 예시가 없습니다.');
-      if(id==='time'&&o.family!=='sequence'){const lo=Math.min(p.b/p.a,(p.b+1)/p.a)-2/Math.abs(p.a),hi=Math.max(p.b/p.a,(p.b+1)/p.a)+2/Math.abs(p.a);if(lo < -10000 || hi > 10000){s.numeric=null;s.numericDirty=false;s.numericUnsupported=true;s.numericError='이 시간좌표범위 수치그래프 미지원: 표시 범위가 −10000~10000 s를 벗어납니다. 입력과 기호답은 유지됩니다.';s.numericOpen=true;render();return;}}
-      s.numericUnsupported=false;s.numeric=p;s.numericDirty=false;s.numericError='';if(reveal)s.numericOpen=true;s.cursor=id==='convolution'?(o.family==='rect'?Math.min(p.T1,p.T2):o.family==='sequence'?p.output.start:o.family==='custom'?0:1/Math.min(p.a,p.b)):0;render();
-    }catch(error){s.numericUnsupported=false;s.numericDirty=true;s.numericError=error.message;s.numericOpen=true;render();}
+
+  // ---------------------------------------------------------------- DOM helpers
+  function el(tag, attrs = {}, parent = null, text) {
+    const node = doc.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+    if (text !== undefined) node.textContent = text;
+    parent?.append(node);
+    return node;
   }
-  function invalidateNumeric() {
-    const s=current();
-    stopPlayback();s.numeric=null;s.numericUnsupported=false;s.numericDirty=true;s.numericError='';syncInputStatus();
-  }
-  function switchFamily(family) {
-    // Keep the complete applied/draft state, not just strings that would be auto-applied.
-    const {familyStates,...saved}=current();
-    familyStates[saved.options.family]=saved;
-    const next=familyStates[family]||{...makeState(id),options:{...saved.options,family},numericOpen:freeInput(id,family)};
-    states.set(id,{...next,familyStates});
-  }
-  function onInput(event) {
-    if(!active||destroyed)return;const t=event.target,s=current();
-    if(t.hasAttribute?.('data-signals-snippet-target')){if(['xExpression','hExpression'].includes(t.value))s.snippetTarget=t.value;return;}
-    if(t.hasAttribute?.('data-signals-speed')){stopPlayback();s.speed=Number(t.value);renderNumeric();return;}
-    if(t.hasAttribute?.('data-signals-cursor')){stopPlayback();if(s.numeric&&!s.numericDirty){s.cursor=Number(t.value);renderNumeric();}return;}
-    if(t.dataset?.signalsControl){
-      const c=lessonControls(id).find(c=>c.key===t.dataset.signalsControl);
-      if(!c?.choices.some(v=>v.value===t.value)||s.options[c.key]===t.value)return;
-      stopPlayback();
-      if(c.key==='family')switchFamily(t.value);
-      else {
-        s.options[c.key]=t.value;
-        // A sign control changes only a's sign; unrelated sequence/offset drafts survive.
-        if(id==='time'&&c.key==='sign'){
-          try { const a=parseSignalsNumber(s.drafts.a,{min:-100,max:100,integer:s.options.family==='sequence'});
-            if(Math.abs(a)>=.01)s.drafts.a=String((t.value==='negative'?-1:1)*Math.abs(a));
-          } catch { /* Keep incomplete input visible for correction. */ }
-        }
-        if(numericFields(id,s.options).length)invalidateNumeric();
-      }
-      render();return;
+
+  function mount() {
+    ensureCourseStyle(host, 'signals-course', SIGNALS_STYLE);
+    host.replaceChildren();
+    ui.root = el('div', { class: 'sg' }, host);
+    ui.tabs = el('nav', { class: 'sg-tabs', 'aria-label': '학습 단계' }, ui.root);
+    for (const lesson of SIGNALS_LESSONS) {
+      el('button', { type: 'button', 'data-signals-lesson': lesson.id, title: lesson.title }, ui.tabs, lesson.tab);
     }
-    if(t.dataset?.signalsKey){s.inputBackup=null;const undo=host.querySelector('[data-signals-restore-input]');if(undo)undo.disabled=true;const note=host.querySelector('[data-signals-tool-status]');if(note)note.textContent='';s.drafts[t.dataset.signalsKey]=t.value;invalidateNumeric();host.querySelector('[data-signals-numeric-status]').textContent='';host.querySelector('[data-signals-projection]').textContent='수치 조건을 수정했습니다. 예시 계산을 눌러 다시 확인하세요.';}
+    ui.head = el('div', { class: 'sg-head' }, ui.root);
+    ui.title = el('h2', {}, ui.head);
+    ui.controls = el('section', { class: 'sg-controls', 'aria-label': '조건 슬라이더' }, ui.root);
+    ui.stage = el('div', { class: 'sg-stage' }, ui.root);
+    ui.read = el('p', { class: 'sg-read', 'data-signals-read': '' }, ui.root);
+    ui.live = el('p', { class: 'sg-live', 'data-signals-live': '' }, ui.root);
+    ui.status = el('p', { class: 'sg-status', role: 'status', 'data-signals-status': '' }, ui.root);
+    buildAdvanced();
+    ui.formula = el('details', { class: 'sg-details', 'data-signals-formula-box': '' }, ui.root);
+    el('summary', {}, ui.formula, '핵심 수식');
+    ui.formulaBody = el('div', { 'data-signals-formula': '' }, ui.formula);
+    ui.formula.addEventListener('toggle', () => { ui.formulaSource = null; schedule(); });
+    if (typeof win.ResizeObserver === 'function') {
+      resizer = new win.ResizeObserver(() => schedule());
+      resizer.observe(ui.stage);
+    }
+    mounted = true;
   }
-  function onClick(event){if(!active||destroyed)return;const b=event.target.closest?.('button');if(!b||!host.contains(b)||b.disabled)return;
-    const s=current(),inputTools=id==='convolution'&&['custom','sequence'].includes(s.options.family);
-    if(inputTools&&b.hasAttribute('data-signals-restore-input')){if(!s.inputBackup)return;s.drafts={...s.inputBackup};s.inputBackup=null;invalidateNumeric();render();return;}
-    if(inputTools&&b.hasAttribute('data-signals-swap')){s.inputBackup={...s.drafts};const pairs=s.options.family==='custom'?[['xExpression','hExpression']]:[['x','h'],['xStart','hStart']];for(const[a,c]of pairs)[s.drafts[a],s.drafts[c]]=[s.drafts[c],s.drafts[a]];invalidateNumeric();render();return;}
-    if(inputTools&&s.options.family==='custom'&&b.dataset.signalsSnippet){const text=b.dataset.signalsSnippet;if(!['u(t)','rect(t)','exp(-t)','sin(2*pi*t)','cos(2*pi*t)'].includes(text))return;const key=s.snippetTarget,input=host.querySelector('[data-signals-key="'+key+'"]'),value=s.drafts[key],start=input.selectionStart??value.length,end=input.selectionEnd??start,next=value.slice(0,start)+text+value.slice(end);if(next.length>EXPRESSION_LIMITS.length){host.querySelector('[data-signals-tool-status]').textContent=`${EXPRESSION_LIMITS.length}자 이내로 줄인 뒤 넣어 주세요.`;input.focus({preventScroll:true});input.setSelectionRange(start,end);return;}s.inputBackup={...s.drafts};s.drafts[key]=next;invalidateNumeric();render();const replacement=host.querySelector('[data-signals-key="'+key+'"]');replacement.focus({preventScroll:true});replacement.setSelectionRange(start+text.length,start+text.length);return;}
-    if(inputTools&&(b.dataset.signalsExpressionExample||b.dataset.signalsSequenceExample))s.inputBackup={...s.drafts};
-    if(b.hasAttribute('data-signals-show-graph')){const s=current();if(!s.numeric||s.numericDirty||s.numericError)return;const target=host.querySelector('[data-signals-cursor]');target?.scrollIntoView({block:'center'});target?.focus({preventScroll:true});return;}
-    if(b.dataset.signalsSequenceExample){const s=current();if(id!=='convolution'||s.options.family!=='sequence')return;const presets={basic:['1,2,1','1,1'],difference:['1,2,1','1,-1'],average:['1,2,1','0.3333333333333333,0.3333333333333333,0.3333333333333333']},values=presets[b.dataset.signalsSequenceExample];if(!values)return;Object.assign(s.drafts,{x:values[0],h:values[1],xStart:'0',hStart:'0'});invalidateNumeric();render();return;}
-    if(b.dataset.signalsJump){const s=current(),d=cursorDomain(id,s.options,s.numeric);if(!d||s.numericDirty||!s.numeric)return;stopPlayback();const target=b.dataset.signalsJump==='first'?d.min:b.dataset.signalsJump==='last'?d.max:0;if(target<d.min||target>d.max)return;s.cursor=s.options.family==='sequence'?Math.round(target):target;renderNumeric();return;}
-    if(b.dataset.signalsExpressionExample){stopPlayback();const s=current();s.drafts.xExpression=b.dataset.signalsExpressionExample==='rect'?'u(t)-u(t-2)':'exp(-t)*u(t)';s.drafts.hExpression=b.dataset.signalsExpressionExample==='rect'?'u(t)-u(t-1)':'exp(-t)*u(t)';invalidateNumeric();render();return;}if(b.dataset.signalsPlay){if(b.dataset.signalsPlay==='play'){if(timer!==null)stopPlayback();else startPlayback();}else{stopPlayback();advance(b.dataset.signalsPlay==='previous'?-1:1);}return;}if(b.dataset.signalsLesson){stopPlayback();id=getSignalsLesson(b.dataset.signalsLesson).id;render();}else if(b.hasAttribute('data-signals-reset')){stopPlayback();states.set(id,makeState(id));render();}}
-  function onSubmit(event){if(event.target.matches?.('[data-signals-numeric-form]')){event.preventDefault();if(active&&!destroyed)calculate();}}
-  function onToggle(event){if(destroyed||!host.contains(event.target))return;if(event.target.hasAttribute?.('data-signals-solution'))current().solutionOpen=event.target.open;if(event.target.hasAttribute?.('data-signals-numeric-details'))current().numericOpen=event.target.open;if(event.target.hasAttribute?.('data-signals-tools'))current().toolsOpen=event.target.open;}
-  host.addEventListener('input',onInput);host.addEventListener('click',onClick);host.addEventListener('submit',onSubmit);host.addEventListener('toggle',onToggle,true);doc.addEventListener('visibilitychange',onVisibility);win.addEventListener('blur',onBlur);motion?.addEventListener?.('change',onMotion);host.hidden=true;host.inert=true;
-  // Lazy first render: the initial lesson is computed/rendered on first activate()/inspect(), not at construction.
-  let rendered=false;const ensureRendered=()=>{if(!rendered&&!destroyed){rendered=true;render();}};
+
+  function buildAdvanced() {
+    ui.advanced = el('details', { class: 'sg-details sg-advanced', 'data-signals-advanced': '' }, ui.root);
+    el('summary', {}, ui.advanced, '고급 입력 (수식 · 수열 직접 입력)');
+    const fields = el('div', { class: 'sg-fields' }, ui.advanced);
+    for (const [group, list] of Object.entries(CUSTOM_FIELDS)) {
+      for (const field of list) {
+        const label = el('label', {}, fields, field.label);
+        const input = el('input', {
+          type: 'text', spellcheck: 'false', autocomplete: 'off',
+          'data-signals-field': field.key, 'data-signals-group': group,
+          ...(field.maxLength ? { maxlength: field.maxLength } : {}),
+        }, label);
+        input.value = field.initial;
+      }
+    }
+    el('p', { class: 'sg-help' }, fields, CUSTOM_HELP);
+  }
+
+  // ---------------------------------------------------------------- control strip
+  function buildControls() {
+    const lesson = lessonOf();
+    const state = current();
+    ui.controls.replaceChildren();
+    ui.sliders = new Map();
+    if (lesson.families) {
+      const wrap = el('label', { class: 'sg-ctl' }, ui.controls);
+      el('span', { class: 'sg-name' }, wrap, '예시');
+      ui.select = el('select', { 'data-signals-family': '' }, wrap);
+      for (const family of lesson.families) el('option', { value: family.value }, ui.select, family.label);
+      ui.select.value = state.family;
+    } else ui.select = null;
+    ui.dynamic = el('div', { class: 'sg-dyn' }, ui.controls);
+    buildDynamicControls();
+  }
+
+  function buildDynamicControls() {
+    const lesson = lessonOf();
+    const state = current();
+    ui.dynamic.replaceChildren();
+    ui.sliders.clear();
+    for (const spec of lesson.controls(state.family, state.params)) {
+      const wrap = el('label', { class: 'sg-ctl' }, ui.dynamic);
+      el('span', { class: 'sg-name' }, wrap, spec.label);
+      const output = el('output', { 'aria-live': 'off' }, wrap);
+      const input = el('input', {
+        type: 'range', min: spec.min, max: spec.max, step: spec.step, 'data-signals-param': spec.key,
+        'aria-label': spec.label,
+      }, wrap);
+      ui.sliders.set(spec.key, { spec, input, output });
+    }
+    const scrub = cursorSpec(state);
+    ui.scrub = null;
+    if (lesson.scrub && scrub) {
+      const wrap = el('div', { class: 'sg-ctl sg-scrub' }, ui.dynamic);
+      el('span', { class: 'sg-name' }, wrap, scrub.discrete ? '관측 위치 n (정수)' : '관측 시각 (플롯을 끌거나 ←/→)');
+      const play = el('button', { type: 'button', 'data-signals-play': '' }, wrap, '재생');
+      const input = el('input', { type: 'range', 'data-signals-cursor': '', 'aria-label': '관측 위치' }, wrap);
+      const output = el('output', { 'aria-live': 'off' }, wrap);
+      ui.scrub = { play, input, output };
+    }
+  }
+
+  const cursorText = (spec, value) => `${spec.symbol} = ${formatQuantity(value, spec.unit === 's' ? 's' : '')}`;
+
+  function syncControls() {
+    const state = current();
+    for (const { spec, input, output } of ui.sliders.values()) {
+      const value = state.params[spec.key];
+      if (Number(input.value) !== value) input.value = String(value);
+      output.textContent = formatQuantity(value, spec.unit);
+      input.setAttribute('aria-valuetext', output.textContent);
+    }
+    const spec = cursorSpec(state);
+    if (ui.scrub && spec) {
+      const { play, input, output } = ui.scrub;
+      input.min = spec.min; input.max = spec.max; input.step = spec.discrete ? 1 : 'any';
+      if (Number(input.value) !== state.cursor) input.value = String(state.cursor);
+      output.textContent = cursorText(spec, state.cursor);
+      input.setAttribute('aria-valuetext', output.textContent);
+      const playing = playTimer !== 0;
+      play.textContent = playing ? '일시정지' : '재생';
+      play.title = motion?.matches ? '움직임 줄이기 설정이라 자동 재생은 꺼져 있습니다. 눌러서 직접 재생합니다.' : '';
+    }
+  }
+
+  // ---------------------------------------------------------------- lessons and views
+  function ensureView(id) {
+    if (!views.has(id)) {
+      const [, createView] = REGISTRY[id];
+      views.set(id, createView({ doc, parent: ui.stage, emit: (patch) => applyPatch(patch) }));
+    }
+    return views.get(id);
+  }
+
+  function showLesson(id) {
+    stopPlayback();
+    lessonId = id;
+    const state = current();
+    ensureView(id);
+    for (const [other, v] of views) v.root.hidden = other !== id;
+    for (const button of ui.tabs.querySelectorAll('[data-signals-lesson]')) {
+      if (button.dataset.signalsLesson === id) button.setAttribute('aria-current', 'step');
+      else button.removeAttribute('aria-current');
+    }
+    ui.title.textContent = SIGNALS_LESSONS.find((l) => l.id === id).title;
+    ui.read.textContent = readText(state);
+    ui.advanced.hidden = id !== 'convolution';
+    if (id === 'convolution' && isCustomFamily(state.family)) applyCustom();
+    clampCursor(state);
+    buildControls();
+    layoutWidth = 0;
+    ui.formulaSource = null;
+    ui.status.textContent = state.extra.error;
+    autoPlay();
+  }
+
+  function setFamily(family) {
+    const state = current();
+    const lesson = lessonOf();
+    if (!lesson.families?.some((f) => f.value === family) || family === state.family) return;
+    stopPlayback();
+    state.saved[state.family] = { params: state.params, cursor: state.cursor };
+    state.family = family;
+    const restored = state.saved[family];
+    state.params = restored?.params ?? defaultsOf(lesson, family);
+    state.note = '';
+    if (lessonId === 'convolution' && isCustomFamily(family)) applyCustom();
+    const spec = cursorSpec(state);
+    state.cursor = restored?.cursor ?? spec?.initial ?? 0;
+    clampCursor(state);
+    if (ui.select) ui.select.value = family;
+    buildDynamicControls();
+    ui.read.textContent = readText(state);
+    ui.formulaSource = null;
+    if (lessonId === 'convolution' && isCustomFamily(family)) ui.advanced.open = true;
+    autoPlay();
+    schedule();
+  }
+
+  // views and the keyboard report changes as patches: { cursor?, params? }
+  function applyPatch(patch) {
+    const state = current();
+    if (patch.params) {
+      const controls = lessonOf().controls(state.family, state.params);
+      for (const [key, value] of Object.entries(patch.params)) {
+        const spec = controls.find((c) => c.key === key);
+        if (!spec || !Number.isFinite(value)) continue;
+        const next = clamp(spec.integer ? Math.round(value) : value, spec.min, spec.max);
+        state.params[key] = next;
+      }
+      // Values the lesson cannot use (a = 0) are written back so the slider jumps to what is really drawn.
+      const normalized = lessonOf().normalize?.(state.family, state.params);
+      if (normalized) {
+        Object.assign(state.params, normalized.params);
+        state.note = normalized.note;
+      }
+    }
+    if (patch.cursor !== undefined && Number.isFinite(patch.cursor)) {
+      stopPlayback(true);
+      state.cursor = patch.cursor;
+    }
+    clampCursor(state);
+    schedule();
+  }
+
+  // ---------------------------------------------------------------- advanced convolution input
+  function applyCustom() {
+    const state = current();
+    const { family, extra } = state;
+    try {
+      extra.custom = parseCustomInput(family, extra.drafts);
+      extra.customFamily = family;
+      extra.error = '';
+      const spec = cursorSpec(state);
+      if (spec && extra.lastCustomFamily !== family) state.cursor = spec.initial;
+      extra.lastCustomFamily = family;
+      // The scrubber only exists while there is a valid input to scrub: build it when the first one arrives.
+      if (lessonOf().scrub && spec && !ui.scrub) buildDynamicControls();
+    } catch (error) {
+      extra.error = error.message;
+      // A previous valid input of the same kind stays on screen; one of the other kind (or none) would be wrong
+      // for this example, so the view shows its empty state instead.
+      if (extra.customFamily !== family) extra.custom = null;
+    }
+    ui.status.textContent = extra.error;
+  }
+
+  // ---------------------------------------------------------------- playback
+  // startPlayback is the user-level "play": it ignores prefers-reduced-motion. autoPlay is what activation, lesson
+  // changes and returning focus use, and it respects the setting.
+  function startPlayback() {
+    const spec = cursorSpec();
+    if (playTimer || !active || !spec || doc.hidden) return;
+    const state = current();
+    if (!spec.loop && state.cursor >= spec.max) state.cursor = spec.min;
+    const origin = { time: 0, cursor: state.cursor };
+    const tick = (timestamp) => {
+      onMotion();
+      if (!playTimer) return;
+      if (!active || destroyed || doc.hidden) { stopPlayback(); return; }
+      const s = current();
+      const range = cursorSpec(s);
+      if (!range) { stopPlayback(); return; }
+      origin.time ||= timestamp;
+      s.cursor = playbackCursor(origin.cursor, timestamp - origin.time, range, 1, Boolean(range.discrete), Boolean(range.loop));
+      // Reaching the end finishes the animation for good: coming back to the tab must not restart it by itself.
+      if (!range.loop && s.cursor >= range.max) stopPlayback(true);
+      paint();
+      if (playTimer) playTimer = win.requestAnimationFrame(tick);
+    };
+    playTimer = win.requestAnimationFrame(tick);
+    syncControls();
+  }
+
+  function autoPlay() {
+    if (active && lessonOf().scrub && current().playing && !motion?.matches) startPlayback();
+  }
+
+  // `user`: the learner took over (drag, key, slider, end reached), so remember that playback is over.
+  function stopPlayback(user = false) {
+    if (playTimer) { win.cancelAnimationFrame(playTimer); playTimer = 0; }
+    if (user) current().playing = false;
+    if (ui.scrub) syncControls();
+  }
+
+  // ---------------------------------------------------------------- painting
+  function schedule() {
+    if (frame || !active || destroyed) return;
+    frame = win.requestAnimationFrame(() => { frame = 0; paint(); });
+  }
+
+  function paint() {
+    if (!active || destroyed || !mounted) return;
+    const state = current();
+    const view = views.get(lessonId);
+    const read = readText(state);
+    if (ui.read.textContent !== read) ui.read.textContent = read;
+    const width = Math.floor(ui.stage.clientWidth);
+    if (width > 0 && width !== layoutWidth) { layoutWidth = width; view.layout(width); }
+    if (!layoutWidth) return;
+    const lesson = lessonOf();
+    clampCursor(state);
+    syncControls();
+    const info = { family: state.family, params: state.params, cursor: state.cursor, extra: state.extra, playing: playTimer !== 0 };
+    try {
+      view.update(info);
+      ui.live.textContent = lesson.describe?.(info) ?? '';
+      ui.status.textContent = state.extra.error; // an earlier paint error goes away once a paint succeeds
+    } catch (error) {
+      ui.status.textContent = error.message;
+    }
+    if (ui.formula.open) refreshFormula(lesson, state);
+  }
+
+  function refreshFormula(lesson, state) {
+    const source = lesson.formula(state.family, state.params);
+    if (source === ui.formulaSource) return;
+    ui.formulaSource = source;
+    ui.formulaBody.replaceChildren();
+    appendCourseMath(ui.formulaBody, source);
+  }
+
+  // ---------------------------------------------------------------- events
+  function onInput(event) {
+    if (!active || destroyed) return;
+    const target = event.target;
+    if (target.dataset?.signalsParam) {
+      const entry = ui.sliders.get(target.dataset.signalsParam);
+      if (entry) applyPatch({ params: { [entry.spec.key]: Number(target.value) } });
+    } else if (target.dataset?.signalsCursor !== undefined) {
+      applyPatch({ cursor: Number(target.value) });
+    } else if (target.dataset?.signalsField) {
+      const state = current();
+      const group = target.dataset.signalsGroup;
+      state.extra.drafts[target.dataset.signalsField] = target.value;
+      if (state.family !== group) setFamily(group);
+      applyCustom();
+      schedule();
+    }
+  }
+
+  function onChange(event) {
+    if (!active || destroyed) return;
+    if (event.target.dataset?.signalsFamily !== undefined) setFamily(event.target.value);
+  }
+
+  function onClick(event) {
+    if (!active || destroyed) return;
+    const button = event.target.closest?.('button');
+    if (!button || !host.contains(button)) return;
+    if (button.dataset.signalsLesson) {
+      showLesson(button.dataset.signalsLesson);
+      paint();
+    } else if (button.hasAttribute('data-signals-play')) {
+      if (playTimer) stopPlayback(true);
+      else { current().playing = true; startPlayback(); }
+    }
+  }
+
+  function onKeyDown(event) {
+    if (!active || destroyed || !event.target.classList?.contains('sg-svg')) return;
+    const state = current();
+    const view = views.get(lessonId);
+    const patch = view.onKey?.(event, { family: state.family, params: state.params, cursor: state.cursor });
+    if (patch) { applyPatch(patch); event.preventDefault(); return; }
+    const spec = cursorSpec(state);
+    if (!spec) return;
+    const unit = (event.shiftKey ? 10 : 1) * (spec.discrete ? 1 : spec.step);
+    if (event.key === ' ' && lessonOf().scrub) {
+      if (playTimer) stopPlayback(true); else { state.playing = true; startPlayback(); }
+    } else if (event.key === 'ArrowLeft') applyPatch({ cursor: state.cursor - unit });
+    else if (event.key === 'ArrowRight') applyPatch({ cursor: state.cursor + unit });
+    else if (event.key === 'Home') applyPatch({ cursor: spec.min });
+    else if (event.key === 'End') applyPatch({ cursor: spec.max });
+    else return;
+    event.preventDefault();
+  }
+
+  const onVisibility = () => { if (doc.hidden) stopPlayback(); else autoPlay(); };
+  const onBlur = () => stopPlayback();
+  const onFocus = () => autoPlay();
+  // Turning "reduce motion" on stops a running animation and keeps it stopped.
+  // Reading `matches` elsewhere can use up the browser's change notification, so every animation frame re-checks it too.
+  let reduced = Boolean(motion?.matches);
+  const onMotion = () => {
+    const now = Boolean(motion?.matches);
+    if (now === reduced) return;
+    reduced = now;
+    if (now) stopPlayback(true);
+    else if (ui.scrub) syncControls();
+  };
+
+  host.addEventListener('input', onInput);
+  host.addEventListener('change', onChange);
+  host.addEventListener('click', onClick);
+  host.addEventListener('keydown', onKeyDown);
+  doc.addEventListener('visibilitychange', onVisibility);
+  win.addEventListener('blur', onBlur);
+  win.addEventListener('focus', onFocus);
+  motion?.addEventListener?.('change', onMotion);
+  host.hidden = true;
+  host.inert = true;
+
+  // Lazy first render: built on the first activate()/inspect(), not at construction.
+  function ensureMounted() {
+    if (mounted || destroyed) return;
+    mount();
+    showLesson(lessonId);
+  }
+
   return {
-    activate(){if(destroyed)return;ensureRendered();active=true;host.hidden=false;host.inert=false;},
-    deactivate(){if(destroyed)return;stopPlayback();active=false;host.hidden=true;host.inert=true;},
-    inspect(){if(destroyed)return{active:false,destroyed:true,lessonId:id};ensureRendered();const s=current();return JSON.parse(JSON.stringify({active,destroyed,lessonId:id,options:s.options,drafts:s.drafts,status:'supported',numericStatus:s.numericUnsupported?'unsupported':s.numericDirty?(s.numericError?'invalid':'draft'):s.numeric?'valid':'not-run',numeric:s.numericDirty?null:s.numeric,numericError:s.numericError,cursor:s.cursor,playing:timer!==null,symbolic:evaluateSignalsLesson(id,s.options)}));},
-    destroy(){if(destroyed)return;stopPlayback();active=false;host.hidden=true;host.inert=true;host.removeEventListener('input',onInput);host.removeEventListener('click',onClick);host.removeEventListener('submit',onSubmit);host.removeEventListener('toggle',onToggle,true);doc.removeEventListener('visibilitychange',onVisibility);win.removeEventListener('blur',onBlur);motion?.removeEventListener?.('change',onMotion);host.replaceChildren();states.clear();destroyed=true;}
+    activate() {
+      if (destroyed) return;
+      ensureMounted();
+      active = true;
+      host.hidden = false;
+      host.inert = false;
+      layoutWidth = 0;
+      autoPlay();
+      paint();
+    },
+    deactivate() {
+      if (destroyed) return;
+      stopPlayback();
+      if (frame) { win.cancelAnimationFrame(frame); frame = 0; }
+      active = false;
+      host.hidden = true;
+      host.inert = true;
+    },
+    inspect() {
+      if (destroyed) return { active: false, destroyed: true, lessonId };
+      ensureMounted();
+      const state = current();
+      const lesson = lessonOf();
+      return JSON.parse(JSON.stringify({
+        active, destroyed, lessonId,
+        family: state.family,
+        options: { family: state.family },
+        params: state.params,
+        drafts: state.extra.drafts,
+        cursor: state.cursor,
+        playing: playTimer !== 0,
+        reducedMotion: Boolean(motion?.matches),
+        note: state.note,
+        status: 'supported',
+        numericStatus: state.extra.error ? 'invalid' : 'valid',
+        numericError: state.extra.error,
+        symbolic: {
+          status: 'supported',
+          formula: lesson.formula(state.family, state.params),
+          read: readText(state),
+          live: ui.live?.textContent ?? '',
+        },
+      }));
+    },
+    destroy() {
+      if (destroyed) return;
+      stopPlayback();
+      if (frame) win.cancelAnimationFrame(frame);
+      resizer?.disconnect();
+      active = false;
+      host.hidden = true;
+      host.inert = true;
+      host.removeEventListener('input', onInput);
+      host.removeEventListener('change', onChange);
+      host.removeEventListener('click', onClick);
+      host.removeEventListener('keydown', onKeyDown);
+      doc.removeEventListener('visibilitychange', onVisibility);
+      win.removeEventListener('blur', onBlur);
+      win.removeEventListener('focus', onFocus);
+      motion?.removeEventListener?.('change', onMotion);
+      for (const view of views.values()) view.destroy();
+      views.clear();
+      host.replaceChildren();
+      states.clear();
+      destroyed = true;
+    },
   };
 }
