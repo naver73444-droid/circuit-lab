@@ -1,4 +1,4 @@
-import { parseValue } from "./circuit-engine.js";
+import { coupledInductorParameters, parseValue } from "./circuit-engine.js";
 import { classifyNumericInput } from "./circuit-edit.js";
 import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
@@ -8,7 +8,12 @@ import { describeSelection, selectedItems, setSingleSelection } from "./selectio
 import { yDeltaCommandState } from "./y-delta-circuit.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
-const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원" };
+const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기" };
+
+/** Props that hold text choices, not numbers: they skip the numeric input classification. */
+const TEXT_PROPS = new Set(["ref", "mode", "coupling", "dots"]);
+/** Props that must be strictly positive (R, C, L value; coupled-inductor L1/L2; transformer ratio n). */
+const needsPositive = (type, key) => (["R", "C", "L"].includes(type) && key === "value") || (type === "COUPLED_L" && (key === "L1" || key === "L2")) || (type === "XFMR_IDEAL" && key === "n");
 
 export function createInspector(deps) {
   const { state, elements, workspace, inputDrafts, phasorView, mutate, currentConnections, synchronizeIntent, cancelScheduledRun, markInputDirty, scheduleAutoRun, renderPhasorLearning,
@@ -38,8 +43,8 @@ export function createInspector(deps) {
       const draft = inputDrafts.get(kind, component?.id ?? null, key);
       if (draft === undefined) continue;
       control.value = draft;
-      const classified = key === "ref" || key === "mode" ? { status: "valid" } : classifyNumericInput(draft, {
-        positive: kind === "setting" ? key !== "start" : ["R", "C", "L"].includes(component?.type) && key === "value",
+      const classified = kind === "prop" && TEXT_PROPS.has(key) ? { status: "valid" } : classifyNumericInput(draft, {
+        positive: kind === "setting" ? key !== "start" : needsPositive(component?.type, key),
       });
       control.classList.toggle("input-invalid", classified.status === "invalid");
       control.classList.toggle("input-editing", classified.status !== "invalid");
@@ -65,9 +70,9 @@ export function createInspector(deps) {
     for (const control of elements["analysis-settings"].querySelectorAll("[data-setting]")) add("setting", null, control.dataset.setting, control.value, control);
     if (state.inlineEdit) add("prop", state.inlineEdit.componentId, state.inlineEdit.prop, elements["inline-value-editor"].value, elements["inline-value-editor"]);
     for (const update of updates.values()) {
-      if (update.key === "ref" || update.key === "mode") continue;
+      if (update.kind === "prop" && TEXT_PROPS.has(update.key)) continue;
       const classified = update.component
-        ? controlledSourceInputModel(update.component.type, update.value) ?? classifyNumericInput(update.value, { positive: ["R", "C", "L"].includes(update.component.type) && update.key === "value" })
+        ? controlledSourceInputModel(update.component.type, update.value) ?? classifyNumericInput(update.value, { positive: needsPositive(update.component.type, update.key) })
         : classifyNumericInput(update.value, { positive: update.key !== "start" });
       if (classified.status === "valid") continue;
       inputDrafts.set(update.kind, update.id, update.key, update.value, update.object[update.key]);
@@ -127,7 +132,7 @@ export function createInspector(deps) {
     if (commit) {
       const component = state.circuit.components.find((item) => item.id === edit.componentId);
       if (!component) { state.inlineEdit = null; editor.classList.add("hidden"); return false; }
-      const classified = controlledSourceInputModel(component.type, editor.value) ?? classifyNumericInput(editor.value, { positive: ["R", "C", "L"].includes(component.type) && edit.prop === "value" });
+      const classified = controlledSourceInputModel(component.type, editor.value) ?? classifyNumericInput(editor.value, { positive: needsPositive(component.type, edit.prop) });
       if (classified.status !== "valid") {
         editor.classList.add(classified.status === "editing" ? "input-editing" : "input-invalid");
         setStatus(classified.status === "editing" ? "입력 중" : "잘못된 값", classified.status === "editing" ? "running" : "error");
@@ -165,6 +170,32 @@ export function createInspector(deps) {
       : control;
     const outside = slider?.outside ? `<span class="field-help range-note">슬라이더 범위 밖의 값입니다.</span>` : "";
     return `<div class="field${active ? " active-field" : ""}"><label>${label}</label>${combined}${help ? `<span class="field-help">${help}</span>` : ""}${outside}</div>`;
+  }
+
+  /** Fields of a COUPLED_L part: L1, L2, the chosen one of k / M (the other is shown derived), dot placement, initial currents. */
+  function couplingFields(p) {
+    let derived;
+    try {
+      const parameters = coupledInductorParameters({ id: "", props: p });
+      derived = p.coupling === "M" ? `유도값 k = M/√(L1·L2) = ${Number(parameters.k.toPrecision(5))}` : `유도값 M = k·√(L1·L2) = ${engineering(parameters.M, "H")}`;
+    } catch {
+      derived = "L1, L2와 결합 입력값이 올바르면 유도값이 여기에 표시됩니다.";
+    }
+    return field("1차 인덕턴스 L1 (H)", "L1", p.L1 ?? "10m", "핀 1(1a, 점) · 핀 2(1b)")
+      + field("2차 인덕턴스 L2 (H)", "L2", p.L2 ?? "10m", "핀 3(2a, 점) · 핀 4(2b)")
+      + field("결합 입력", "coupling", p.coupling === "M" ? "M" : "k", "", [["k", "결합계수 k"], ["M", "상호 인덕턴스 M"]])
+      + (p.coupling === "M" ? field("상호 인덕턴스 M (H)", "M", p.M ?? "5m", `${derived}<br>0 ≤ M ≤ √(L1·L2)`) : field("결합계수 k (0~1)", "k", p.k ?? "0.5", `${derived}<br>k=1은 완전 결합(특이해질 수 있음)`))
+      + field("점 위치", "dots", p.dots === "opposite" ? "opposite" : "same", "", [["same", "같은 쪽 · 점이 1a, 2a (M 항 +)"], ["opposite", "반대쪽 · 점이 1a, 2b (M 항 −)"]])
+      + field("1차 초기 전류 IC1 (A)", "ic1", p.ic1 ?? "0", "시간응답 시작 시 핀 1(1a)로 들어가는 전류")
+      + field("2차 초기 전류 IC2 (A)", "ic2", p.ic2 ?? "0", "시간응답 시작 시 핀 3(2a)로 들어가는 전류")
+      + `<p class="model-note">v1 = L1·di1/dt + M·di2/dt, v2 = M·di1/dt + L2·di2/dt. i1, i2는 점 핀 1a, 2a로 들어가는 방향이 양수이며, 점이 서로 반대쪽이면 M 항의 부호가 −입니다. DC에서는 두 코일이 모두 단락이고 AC에서는 jωL1, jωL2, jωM으로 계산합니다. 1차와 2차 회로는 서로 절연되어 각각 GND 기준이 필요합니다. 전류 프로브는 I 프로브 도구로 부품의 왼쪽 절반(I(K.1)) 또는 오른쪽 절반(I(K.2))을 누르세요.</p>`;
+  }
+
+  /** Fields of an XFMR_IDEAL part: turns ratio n = N2/N1 and dot placement; the sign convention follows the lecture table. */
+  function transformerFields(p) {
+    return field("권수비 n = N2/N1", "n", p.n ?? "2", "1 : n · 2차/1차 권수비 (n > 0)")
+      + field("점 위치", "dots", p.dots === "opposite" ? "opposite" : "same", "", [["same", "같은 쪽 · 점이 1a, 2a (+n)"], ["opposite", "반대쪽 · 점이 1a, 2b (−n)"]])
+      + `<div class="connection-detail status-referenced"><strong>이상 변압기 부호 규약</strong><span>V1, V2 점 극성 같으면 +n; I1, I2 모두 점으로 들어가면 −n.</span><small>v2 = ±n·v1, i1 = ∓n·i2 (i1, i2는 점 핀 1a, 2a로 들어가는 방향이 양수). S1 = S2, Zin = ZL/n². 핀 1(1a)·2(1b)가 1차, 핀 3(2a)·4(2b)가 2차이며 각각 GND 기준이 필요합니다. 전류 프로브는 I 프로브 도구로 부품의 왼쪽 절반(I(T.1)) 또는 오른쪽 절반(I(T.2))을 누르세요.</small></div>`;
   }
 
   function selectedConnectionStatus(componentId) {
@@ -304,6 +335,8 @@ export function createInspector(deps) {
       html += `<div class="field"><label>제어 방향</label><select data-control-direction><option value="1"${component.control?.direction === 1 ? " selected" : ""}>+1 · 대상 p→n 그대로</option><option value="-1"${component.control?.direction === -1 ? " selected" : ""}>−1 · 반전</option></select></div>`;
       if (control.status !== "valid") html += `<div class="connection-detail status-analysis-floating"><strong>제어 대상 오류</strong><span>${escapeHtml(control.reason)}</span><small>해결할 때까지 실행·저장할 수 없습니다.</small></div>`;
     }
+    if (component.type === "COUPLED_L") html += couplingFields(p);
+    if (component.type === "XFMR_IDEAL") html += transformerFields(p);
     if (component.type === "GND") html += `<p class="field-help">0 V 기준점입니다.</p>`;
     html += sweepMarkup(component, state);
     const savedFocus = captureInspectorFocus();
@@ -332,7 +365,7 @@ export function createInspector(deps) {
         inputDrafts.set("prop", current.id, control.dataset.prop, control.value, current.props[control.dataset.prop]);
         if (current.props[control.dataset.prop] === control.value) { inputDrafts.delete("prop", current.id, control.dataset.prop); updateDraftNotice(); scheduleAutoRun(); return; }
         if (control.dataset.prop !== "ref") {
-          const classified = controlledSourceInputModel(current.type, control.value) ?? classifyNumericInput(control.value, { positive: ["R", "C", "L"].includes(current.type) && control.dataset.prop === "value" });
+          const classified = controlledSourceInputModel(current.type, control.value) ?? classifyNumericInput(control.value, { positive: needsPositive(current.type, control.dataset.prop) });
           if (classified.status !== "valid" && control.tagName !== "SELECT") {
             control.classList.add(classified.status === "editing" ? "input-editing" : "input-invalid");
             setStatus(classified.status === "editing" ? "입력 중" : "잘못된 값", classified.status === "editing" ? "running" : "error");
@@ -342,11 +375,11 @@ export function createInspector(deps) {
         }
         inputDrafts.delete("prop", current.id, control.dataset.prop);
         mutate(() => { current.props[control.dataset.prop] = control.value; });
-        if (control.dataset.prop === "mode") renderInspector();
+        if (control.dataset.prop === "mode" || control.dataset.prop === "coupling") renderInspector();
       };
       if (control.tagName === "INPUT") control.addEventListener("input", () => {
         inputDrafts.set("prop", component.id, control.dataset.prop, control.value, component.props[control.dataset.prop]);
-        const classified = control.dataset.prop === "ref" ? { status: "valid" } : controlledSourceInputModel(component.type, control.value) ?? classifyNumericInput(control.value, { positive: ["R", "C", "L"].includes(component.type) && control.dataset.prop === "value" });
+        const classified = control.dataset.prop === "ref" ? { status: "valid" } : controlledSourceInputModel(component.type, control.value) ?? classifyNumericInput(control.value, { positive: needsPositive(component.type, control.dataset.prop) });
         control.classList.toggle("input-editing", classified.status === "editing");
         control.classList.toggle("input-invalid", classified.status === "invalid");
         setStatus(classified.status === "valid" ? "입력 대기" : classified.status === "editing" ? "입력 중" : "잘못된 값", classified.status === "invalid" ? "error" : "running");

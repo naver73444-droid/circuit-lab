@@ -4,7 +4,7 @@ import { acMagnitudeLevel, acPhaseDegrees, currentDisplayScale } from "./plot-fo
 import { suggestAnalysis } from "./analysis-policy.js";
 import { AnalysisCancelledError, AnalysisWorkerClient } from "./analysis-worker-client.js";
 import { describeCircuitFailure, failureRecord, resultAvailabilityText } from "./analysis-diagnostics.js";
-import { currentDirectionGuide, currentProbeLabel } from "./current-direction.js";
+import { currentDirectionGuide, currentProbeLabel, probeCurrentKey } from "./current-direction.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
@@ -299,7 +299,7 @@ export function createAnalysisRunner(deps) {
       const raw = state.result.points.map((point) => point.nodeVoltages[node]);
       return { probe, raw, baseUnit: "V" };
     }
-    const raw = state.result.points.map((point) => point.componentCurrents[probe.componentId]);
+    const raw = state.result.points.map((point) => point.componentCurrents[probeCurrentKey(probe)]);
     if (raw.some((value) => value === undefined)) return null;
     return { probe, raw, baseUnit: "A" };
   }
@@ -309,7 +309,7 @@ export function createAnalysisRunner(deps) {
     if (!probe) return probe;
     if (probe.kind === "current") {
       const component = state.circuit.components.find((item) => item.id === probe.componentId);
-      if (component) probe.label = currentProbeLabel(component, circuitGeometryVersion(state.circuit));
+      if (component) probe.label = currentProbeLabel(component, circuitGeometryVersion(state.circuit), probe.winding);
     } else if (probe.kind === "voltage") {
       if (probe.junctionId !== undefined) probe.label = `V(${probe.junctionId})`;
       else {

@@ -1,4 +1,4 @@
-import { endpointKey, pinKey } from "./circuit-engine.js";
+import { endpointKey, pinKey, secondaryCurrentKey } from "./circuit-engine.js";
 
 /**
  * Wire currents for the "전류 흐름" view. Pure: no DOM, no solver call.
@@ -23,9 +23,11 @@ import { endpointKey, pinKey } from "./circuit-engine.js";
 const GROUND_KEY = "GND";
 
 /** Current entering the component at each pin, for a branch current `current` (pin 1 -> pin 2 through the part). */
-export function pinCurrentsInto(component, current) {
+export function pinCurrentsInto(component, current, secondary = 0) {
   const type = component?.type;
   if (type === "GND") return [0];
+  // Coupled inductors / ideal transformer: winding 1 current enters 1a and leaves 1b, winding 2 (the `#2` result) enters 2a and leaves 2b.
+  if (type === "COUPLED_L" || type === "XFMR_IDEAL") return [current, -current, secondary, -secondary];
   if (type === "OPAMP" || type === "OPAMP_IDEAL") return [0, 0, current];
   if (type === "VCVS" || type === "VCCS") return [current, -current, 0, 0];
   return [current, -current];
@@ -113,7 +115,8 @@ export function wireCurrents({ circuit, componentCurrents, nets = analyzeWireNet
   let largest = 0;
   for (const component of circuit?.components ?? []) {
     const raw = componentCurrents?.[component.id];
-    const into = Number.isFinite(raw) || component.type === "GND" ? pinCurrentsInto(component, Number.isFinite(raw) ? raw : 0) : null;
+    const secondaryRaw = componentCurrents?.[secondaryCurrentKey(component.id)];
+    const into = Number.isFinite(raw) || component.type === "GND" ? pinCurrentsInto(component, Number.isFinite(raw) ? raw : 0, Number.isFinite(secondaryRaw) ? secondaryRaw : 0) : null;
     const count = into ? into.length : 4;
     for (let pin = 0; pin < count; pin += 1) {
       const vertex = index.get(component.type === "GND" ? GROUND_KEY : pinKey(component.id, pin));

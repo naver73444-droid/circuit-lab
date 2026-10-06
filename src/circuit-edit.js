@@ -101,7 +101,7 @@ export function deleteJunctionFromCircuit(circuit, junctionId, probes = []) {
 export function componentIdPrefix(type) {
   if (type === "GND") return "G";
   if (["OPAMP", "OPAMP_IDEAL"].includes(type)) return "U";
-  return { VCVS: "E", VCCS: "G", CURRENT_SENSOR: "S", CCCS: "F", CCVS: "H" }[type] ?? type;
+  return { VCVS: "E", VCCS: "G", CURRENT_SENSOR: "S", CCCS: "F", CCVS: "H", COUPLED_L: "K", XFMR_IDEAL: "T" }[type] ?? type;
 }
 
 /** The reference prefix a new part of this type gets ("R", "C", "U" …); null for parts whose reference carries no number (GND). */

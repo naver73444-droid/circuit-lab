@@ -1,7 +1,7 @@
 import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geometry.js";
 import { endpointExists } from "./circuit-edit.js";
 import { classifyCircuitConnections, connectionFrequency } from "./circuit-status.js";
-import { currentProbeLabel } from "./current-direction.js";
+import { currentProbeLabel, isMagneticPart } from "./current-direction.js";
 import { nextAvailableProbeColor, removeProbeByKey } from "./ui-model.js";
 import { allocatorFor } from "./id-allocator.js";
 
@@ -190,13 +190,15 @@ export function createEditorSession(deps) {
     committed();
   }
 
-  function addCurrentProbe(componentId) {
-    const key = `I:${componentId}`;
-    if (state.probes.some((probe) => probe.key === key)) return;
+  function addCurrentProbe(componentId, winding = 1) {
     const component = state.circuit.components.find((item) => item.id === componentId);
     if (!component || component.type === "GND") return;
+    // Only the two magnetic parts carry a second winding current.
+    const second = winding === 2 && isMagneticPart(component);
+    const key = second ? `I:${componentId}:2` : `I:${componentId}`;
+    if (state.probes.some((probe) => probe.key === key)) return;
     recordProbeEdit();
-    state.probes.push({ key, kind: "current", componentId, label: currentProbeLabel(component, circuitGeometryVersion(state.circuit)), color: nextAvailableProbeColor(PROBE_COLORS, state.probes) });
+    state.probes.push({ key, kind: "current", componentId, ...(second ? { winding: 2 } : {}), label: currentProbeLabel(component, circuitGeometryVersion(state.circuit), second ? 2 : 1), color: nextAvailableProbeColor(PROBE_COLORS, state.probes) });
     refreshProbeViews();
     committed();
   }

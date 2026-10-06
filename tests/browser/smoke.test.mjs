@@ -3424,4 +3424,208 @@ describe("browser smoke", { timeout: 600000 }, () => {
       assert.equal(metrics.scroll, true, "no horizontal overflow");
     });
   }
+  // ---- magnetic parts: coupled inductor (K) and ideal transformer (T) ------------------------------------------------------------
+  const openMorePalette = () => ev(`document.querySelector(".palette-more").open = true`);
+  const placeFromPalette = async (type, from = "bottom-right") => {
+    await openMorePalette();
+    await click(`.palette-item[data-type="${type}"]`);
+    const spot = await bgPoint({ from });
+    await clickAt(spot.x, spot.y); await settle();
+  };
+  /** Type into an inspector field and commit it with Enter (several fields in a row would otherwise race the re-render). */
+  const fillField = async (selector, text) => { await typeInto(selector, text); await press("Enter", "Enter", 13); };
+  const pickValues = (probes) => probes.map((probe) => probe.label);
+
+  test("magnetic parts: both are in the palette under 더보기, place with 4 pins and dots, edit L1/L2/k|M/dots/n in the inspector, sign convention is written out", async () => {
+    await navigate("/");
+    await placeFromPalette("COUPLED_L");
+    await placeFromPalette("XFMR_IDEAL");
+    await click('[data-tool="select"]');
+    const parts = (await state()).circuit.components;
+    assert.deepEqual(parts.map((item) => [item.id, item.type, item.props.ref]), [["K1", "COUPLED_L", "K1"], ["T1", "XFMR_IDEAL", "T1"]]);
+    for (const id of ["K1", "T1"]) {
+      assert.equal(await ev(`document.querySelectorAll('.component[data-id="${id}"] .pin').length`), 4, `${id} has four pins`);
+      assert.equal(await ev(`document.querySelectorAll('.component[data-id="${id}"] .ideal-mark').length`), 2, `${id} draws two dots`);
+    }
+    assert.equal(await ev(`document.querySelectorAll('.component[data-id="T1"] .symbol-line').length`), 2, "the transformer has the core lines on top of the two coils");
+    assert.equal(await ev(`document.querySelectorAll('.component[data-id="K1"] .symbol-line').length`), 1, "the coupled inductor has no core");
+
+    await selectPart("K1");
+    await click("#inspector-tab");
+    const inspector = () => ev(`document.getElementById("inspector-content").textContent`);
+    assert.match(await inspector(), /1차 인덕턴스 L1/);
+    await fillField('#inspector-content [data-prop="L1"]', "5");
+    await fillField('#inspector-content [data-prop="L2"]', "6");
+    await select('#inspector-content [data-prop="coupling"]', "M");
+    await fillField('#inspector-content [data-prop="M"]', "3");
+    let props = (await component("K1")).props;
+    assert.deepEqual([props.L1, props.L2, props.coupling, props.M], ["5", "6", "M", "3"]);
+    assert.match(await inspector(), /유도값 k = M\/√\(L1·L2\) = 0\.54772/, "the other of k and M is shown derived");
+    assert.equal(await ev(`document.querySelector('.component[data-id="K1"] .value-label').textContent`), "5 · 6 · M 3");
+    const dotY = () => ev(`[...document.querySelectorAll('.component[data-id="K1"] .ideal-mark')].map((dot) => Number(dot.getAttribute("cy")))`);
+    assert.deepEqual(await dotY(), [-12, -12]);
+    await select('#inspector-content [data-prop="dots"]', "opposite");
+    assert.deepEqual(await dotY(), [-12, 12], "opposite dots: the second dot moves to pin 2b");
+    await select('#inspector-content [data-prop="coupling"]', "k");
+    await fillField('#inspector-content [data-prop="k"]', "0.8");
+    assert.match(await inspector(), /유도값 M = k·√\(L1·L2\) = 4\.382/, "k input shows the derived M");
+    // k above 1 is a run-time error, not silently clamped
+    await fillField('#inspector-content [data-prop="k"]', "1.5");
+    assert.equal((await component("K1")).props.k, "1.5");
+
+    await selectPart("T1");
+    assert.match(await inspector(), /권수비 n = N2\/N1/);
+    assert.match(await inspector(), /V1, V2 점 극성 같으면 \+n; I1, I2 모두 점으로 들어가면 −n/);
+    await fillField('#inspector-content [data-prop="n"]', "4");
+    assert.equal((await component("T1")).props.n, "4");
+    assert.equal(await ev(`document.querySelector('.component[data-id="T1"] .value-label').textContent`), "1 : 4");
+    // a non-positive n is refused before it reaches the engine
+    await fillField('#inspector-content [data-prop="n"]', "-2");
+    assert.equal(await ev(`document.querySelector('#inspector-content [data-prop="n"]').classList.contains("input-invalid")`), true);
+    await fillField('#inspector-content [data-prop="n"]', "4");
+  });
+
+  test("magnetic parts: the ideal-transformer example in AC gives the textbook I1 and Vo; the I probe pressed on each half of the part picks the winding", async () => {
+    await navigate("/?example=ideal-transformer");
+    await autoUpdateOff();
+    await runAnalysis("ac");
+    let snapshot = await state();
+    assert.deepEqual(pickValues(snapshot.probes), ["I(T1.1)", "V(R2.1)"]);
+    const i1 = snapshot.phasorResult.points[0].componentCurrents.T1;
+    near(Math.hypot(i1.re, i1.im), 11.09, 1e-3, "|I1|");
+    near((Math.atan2(i1.im, i1.re) * 180) / Math.PI, 33.69, 3e-3, "∠I1");
+    const vo = nodeValue(snapshot.phasorResult, 0, "R2", 0);
+    near(Math.hypot(vo.re, vo.im), 110.9, 1e-3, "|Vo|");
+    // the secondary current (winding 2) is its own result series: I2 = −I1/n
+    const i2 = snapshot.phasorResult.points[0].componentCurrents["T1#2"];
+    near(Math.hypot(i2.re, i2.im), 5.545, 1e-3, "|I2|");
+    // I probe pressed on the right half of the part adds winding 2; pressed on the left half again it is the existing winding 1 probe
+    const halfPoint = (localX) => ev(`(() => {
+      const rect = (pin) => { const r = document.querySelector('.component[data-id="T1"] .pin[data-pin="' + pin + '"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+      const a = rect(0), b = rect(2), c = rect(1);
+      const u = (${localX} + 40) / 80, v = 0.5;
+      return { x: a.x + (b.x - a.x) * u + (c.x - a.x) * v, y: a.y + (b.y - a.y) * u + (c.y - a.y) * v };
+    })()`);
+    await click('[data-tool="current-probe"]');
+    const right = await halfPoint(22);
+    await clickAt(right.x, right.y); await settle();
+    snapshot = await state();
+    assert.deepEqual(pickValues(snapshot.probes), ["I(T1.1)", "V(R2.1)", "I(T1.2)"], "a right-half press adds the winding 2 current");
+    assert.equal(snapshot.probes[2].winding, 2);
+    const left = await halfPoint(-22);
+    await clickAt(left.x, left.y); await settle();
+    assert.equal((await state()).probes.length, 3, "the left half is winding 1, already probed");
+    assert.equal(await ev(`document.querySelectorAll('.component[data-id="T1"] .current-direction').length`), 2, "one direction arrow per probed winding");
+    // the probe chips and the AC readout see the second winding
+    assert.ok((await ev(`document.getElementById("probe-list").textContent`)).includes("I(T1.2)"));
+    await runAnalysis("ac");
+    snapshot = await state();
+    assert.ok(snapshot.result.points.every((point) => Number.isFinite(point.componentCurrents["T1#2"].re)));
+  });
+
+  test("magnetic parts: coupled-coil example gives the textbook I1 and I2 in AC; DC and transient run on the same circuit", async () => {
+    await navigate("/?example=coupled-coils");
+    await autoUpdateOff();
+    await runAnalysis("ac");
+    let snapshot = await state();
+    assert.deepEqual(pickValues(snapshot.probes), ["I(K1.1)", "I(K1.2)", "I(R1, pin 1→2)"]);
+    const currents = snapshot.phasorResult.points[0].componentCurrents;
+    const polar = (z) => [Math.hypot(z.re, z.im), (Math.atan2(z.im, z.re) * 180) / Math.PI];
+    near(polar(currents.K1)[0], 13.01, 1e-3, "|I1|");
+    near(polar(currents.K1)[1], -49.39, 2e-3, "∠I1");
+    near(polar(currents.R1)[0], 2.91, 1e-3, "|I2|");
+    near(polar(currents.R1)[1], 14.04, 5e-3, "∠I2");
+    await runAnalysis("dc");
+    snapshot = await state();
+    assert.ok(Math.abs(snapshot.result.points[0].componentCurrents.K1) < 1e-9, "the 12 V AC source has no DC part, so the coil shorts carry 0 A");
+    await runAnalysis("transient");
+    const transient = (await state()).result;
+    assert.ok(transient.points.length > 100 && transient.points.every((point) => Number.isFinite(point.componentCurrents["K1#2"])), "winding 2 current is a finite series");
+  });
+
+  // Builds source -> R1 -> magnetic part -> R2 with real palette clicks and pin drags: V1 at the left, R1, the part in the middle, R2 at the right, one GND below.
+  async function buildMagneticCircuit(type, secondary) {
+    await navigate("/");
+    await autoUpdateOff();
+    const canvas = await ev(`(() => { const r = document.getElementById("circuit-canvas").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    const put = async (partType, dx, dy) => {
+      if (["COUPLED_L", "XFMR_IDEAL"].includes(partType)) await openMorePalette();
+      await sleep(300); // a click right after a drag release is still inside the click-suppression window
+      await click(`.palette-item[data-type="${partType}"]`);
+      await clickAt(canvas.x + dx, canvas.y + dy); await settle();
+      await click('[data-tool="select"]');
+    };
+    await put("V", -330, 0);
+    await put("R", -170, -90);
+    await put(type, 0, 0);
+    await put("R", 200, 0);
+    await put("GND", 0, 120);
+    const ids = (await state()).circuit.components.map((item) => item.id);
+    assert.deepEqual(ids, ["V1", "R1", `${type === "XFMR_IDEAL" ? "T" : "K"}1`, "R2", "G1"]);
+    const part = ids[2];
+    const wires = [["V1", 0, "R1", 0], ["R1", 1, part, 0], [part, 1, "G1", 0], ["V1", 1, "G1", 0], ["R2", 1, "G1", 0], ...secondary(part)];
+    for (const [a, pinA, b, pinB] of wires) await dragBetween(await pinTip(a, pinA), await pinTip(b, pinB));
+    assert.equal((await state()).circuit.wires.length, wires.length, "every drag made one wire");
+    return part;
+  }
+  const acPhasors = async () => { await runAnalysis("ac"); return (await state()).phasorResult; };
+  const polarOf = (z) => [Math.hypot(z.re, z.im), (Math.atan2(z.im, z.re) * 180) / Math.PI];
+
+  test("magnetic parts: an ideal transformer built from the palette with pin drags solves in AC (Vo = −n·V1 with the dots as drawn) and the dot setting flips the sign", async () => {
+    // pins: 1a=0, 1b=1, 2a=2, 2b=3. 2a is grounded and the load hangs on 2b, like textbook example 13.8.
+    await buildMagneticCircuit("XFMR_IDEAL", (part) => [[part, 2, "G1", 0], [part, 3, "R2", 0]]);
+    await selectPart("T1");
+    await click("#inspector-tab");
+    assert.match(await ev(`document.getElementById("inspector-content").textContent`), /점 극성 같으면 \+n/);
+    let result = await acPhasors();
+    // R1 = R2 = 1 kΩ (defaults), n = 2: I1 = 1 / (1k + 1k/4) = 0.8 mA, V1 = 0.2 V, Vo = V(2b) = −n·V1 = −0.4 V
+    near(polarOf(result.points[0].componentCurrents.T1)[0], 0.8e-3, 1e-6, "|I1|");
+    let vo = nodeValue(result, 0, "R2", 0);
+    near(vo.re, -0.4, 1e-6, "Re Vo (dots same, 2a grounded)");
+    assert.ok(Math.abs(vo.im) < 1e-9);
+    await select('#inspector-content [data-prop="dots"]', "opposite");
+    result = await acPhasors();
+    vo = nodeValue(result, 0, "R2", 0);
+    near(vo.re, 0.4, 1e-6, "Re Vo (dots opposite)");
+    near(polarOf(result.points[0].componentCurrents.T1)[0], 0.8e-3, 1e-6, "|I1| does not depend on the dot placement");
+    // add the winding 2 probe by pressing the part's right half and read it back through the same result
+    await click('[data-tool="current-probe"]');
+    const spot = await ev(`(() => { const rect = (pin) => { const r = document.querySelector('.component[data-id="T1"] .pin[data-pin="' + pin + '"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }; const a = rect(0), b = rect(2), c = rect(1); return { x: a.x + (b.x - a.x) * 0.775 + (c.x - a.x) * 0.5, y: a.y + (b.y - a.y) * 0.775 + (c.y - a.y) * 0.5 }; })()`);
+    await clickAt(spot.x, spot.y); await settle();
+    assert.deepEqual((await state()).probes.map((probe) => probe.label), ["I(T1.2)"]);
+    result = await acPhasors();
+    near(polarOf(result.points[0].componentCurrents["T1#2"])[0], 0.4e-3, 1e-6, "|I2| = |I1|/n");
+  });
+
+  test("magnetic parts: a coupled inductor built from the palette solves in AC and matches the two-mesh closed form (k input, then M input)", async () => {
+    // 1a=0, 1b=1, 2a=2, 2b=3: R2 across the secondary winding, 2b grounded.
+    await buildMagneticCircuit("COUPLED_L", (part) => [[part, 2, "R2", 0], [part, 3, "G1", 0]]);
+    // R2's other end is already tied to G1 by the common wire list; the load is R2 between 2a and ground (2b is grounded too).
+    const expected = (m) => {
+      const omega = 2 * Math.PI * 159.155, jw = (x) => ({ re: 0, im: omega * x });
+      const mul = (a, b) => ({ re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re });
+      const div = (a, b) => { const d = b.re * b.re + b.im * b.im; return { re: (a.re * b.re + a.im * b.im) / d, im: (a.im * b.re - a.re * b.im) / d }; };
+      const add = (a, b) => ({ re: a.re + b.re, im: a.im + b.im });
+      // winding 2 shorted through R2 to ground at 2a with 2b grounded: v2 = −R2·i2 (R2 = 1k from 2a to ground)
+      const z1 = add({ re: 1000, im: 0 }, jw(0.01)), z2 = add({ re: 1000, im: 0 }, jw(0.01)), zm = jw(m);
+      const i1 = div({ re: 1, im: 0 }, add(z1, div(mul(zm, zm), { re: -z2.re, im: -z2.im })));
+      return i1;
+    };
+    await selectPart("K1");
+    await click("#inspector-tab");
+    let result = await acPhasors();
+    const defaults = polarOf(result.points[0].componentCurrents.K1);
+    const closed = polarOf(expected(0.005));
+    near(defaults[0], closed[0], 1e-6, "|I1| for k = 0.5 (M = 5 mH)");
+    await select('#inspector-content [data-prop="coupling"]', "M");
+    await fillField('#inspector-content [data-prop="M"]', "9m");
+    result = await acPhasors();
+    near(polarOf(result.points[0].componentCurrents.K1)[0], polarOf(expected(0.009))[0], 1e-6, "|I1| for M = 9 mH");
+    // M above sqrt(L1 L2) = 10 mH is rejected by the analysis with the reason, never clamped
+    await fillField('#inspector-content [data-prop="M"]', "11m");
+    await click("#run-button");
+    await until(`${L}.getState().runState.status === "error"`, "the over-coupled run to fail");
+    assert.equal((await state()).runState.error.code, "INVALID_VALUE");
+  });
+
 });

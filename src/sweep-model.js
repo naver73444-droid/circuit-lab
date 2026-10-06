@@ -6,6 +6,7 @@
  * 해석 실행(simulate)은 이 모듈이 하지 않는다 — 호출 측이 buildSweepCircuits 결과로 실행한다.
  */
 import { parseValue } from "./circuit-engine.js";
+import { probeCurrentKey } from "./current-direction.js";
 import { acMagnitudeLevel, acPhaseDegrees } from "./plot-format.js";
 import { engineering } from "./scope-model.js";
 
@@ -195,7 +196,7 @@ function rawSeries(result, probe) {
     return { raw, baseUnit: "V" };
   }
   if (probe.kind === "current") {
-    const raw = result.points.map((point) => own(point?.componentCurrents, probe.componentId));
+    const raw = result.points.map((point) => own(point?.componentCurrents, probeCurrentKey(probe)));
     if (raw.some((value) => value === undefined)) return { error: "프로브 부품 전류가 이 결과에 없습니다." };
     return { raw, baseUnit: "A" };
   }

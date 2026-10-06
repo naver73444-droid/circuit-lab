@@ -3,6 +3,7 @@ import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { relativePhase } from "./phasor-practice.js";
+import { probeCurrentKey } from "./current-direction.js";
 
 /** Reads solved phasors. Does not run a solver, change probes, or write to state. */
 export function createPhasorView(elements, state, parseNumeric, hasPendingInputs = () => false) {
@@ -23,7 +24,7 @@ export function createPhasorView(elements, state, parseNumeric, hasPendingInputs
         if (node === undefined) return null;
         return { probe, value: point.nodeVoltages[node], baseUnit: "V" };
       }
-      const value = point.componentCurrents[probe.componentId];
+      const value = point.componentCurrents[probeCurrentKey(probe)];
       return value === undefined ? null : { probe, value, baseUnit: "A" };
     }).filter(Boolean);
   }

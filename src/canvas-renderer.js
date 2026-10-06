@@ -46,6 +46,25 @@ export function formatCanvasValueLabel(raw) {
   return shown.length < text.length ? shown : text;
 }
 
+/** The value text of a coupled inductor ("5 · 6 · M 3") or ideal transformer ("1 : 2"); the inspector keeps the raw props. */
+export function magneticValueLabel(component) {
+  const p = component.props ?? {};
+  if (component.type === "XFMR_IDEAL") return `1 : ${formatCanvasValueLabel(p.n ?? "2")}`;
+  const coupling = p.coupling === "M" ? `M ${formatCanvasValueLabel(p.M ?? "")}` : `k ${formatCanvasValueLabel(p.k ?? "")}`;
+  return `${formatCanvasValueLabel(p.L1 ?? "")} · ${formatCanvasValueLabel(p.L2 ?? "")} · ${coupling}`;
+}
+
+/**
+ * Two vertical coils (winding 1 left, winding 2 right) with leads to the pins at (±40, ±20); the ideal transformer adds core lines.
+ * Dots: pin 1a and pin 2a (top) when dots="same", pin 1a and pin 2b (bottom right) when dots="opposite".
+ */
+export function magneticSymbolMarkup(component) {
+  const opposite = component.props?.dots === "opposite";
+  const bumps = (sweep) => `a5 5 0 0 ${sweep} 0 10`.repeat(4);
+  const core = component.type === "XFMR_IDEAL" ? `<path class="symbol-line" d="M-3-20V20M3-20V20"/>` : `<text class="controlled-pin-label" x="0" y="4" style="text-anchor:middle">M</text>`;
+  return `<path class="lead" d="M-40-20H-14M-40 20H-14M14-20H40M14 20H40"/><path class="symbol-line" d="M-14-20${bumps(0)}M14-20${bumps(1)}"/>${core}<circle class="ideal-mark" cx="-31" cy="-12" r="2.8"/><circle class="ideal-mark" cx="31" cy="${opposite ? 12 : -12}" r="2.8"/>`;
+}
+
 /**
  * SVG drawing of the circuit canvas. Reads the editor state and never changes it. Pointer/keyboard handling is delegated
  * on the layer roots by editor-input (bound once), so a render only writes markup and never re-binds listeners.
@@ -137,9 +156,12 @@ export function createCanvasRenderer(deps) {
   function componentMarkup(component, connection) {
     const ref = escapeHtml(component.props?.ref ?? component.id);
     const sourceDescriptor = ["V", "I", "VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component, state.settings.analysis) : null;
-    const valueLabel = formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
+    const magnetic = component.type === "COUPLED_L" || component.type === "XFMR_IDEAL";
+    const valueLabel = magnetic ? magneticValueLabel(component) : formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
     const value = escapeHtml(sourceDescriptor ? `${sourceDescriptor.label} ${valueLabel} ${sourceDescriptor.unit}` : valueLabel);
-    const editProp = sourceDescriptor?.prop ?? (component.props?.value !== undefined ? "value" : component.props?.gain !== undefined ? "gain" : "");
+    const editProp = magnetic
+      ? (component.type === "XFMR_IDEAL" ? "n" : component.props?.coupling === "M" ? "M" : "k")
+      : sourceDescriptor?.prop ?? (component.props?.value !== undefined ? "value" : component.props?.gain !== undefined ? "gain" : "");
     const geometryVersion = circuitGeometryVersion(state.circuit);
     const mode = component.props?.mode ?? "DC";
     let symbol = "";
@@ -163,6 +185,7 @@ export function createCanvasRenderer(deps) {
     if (component.type === "VCVS" || component.type === "VCCS") symbol = `<path class="lead" d="M-40 0H-24M24 0H40M0-40V-24M0 24V40"/><path class="body" d="M-24 0L0-24 24 0 0 24Z"/>${component.type === "VCVS" ? `<path class="symbol-line" d="M-14 0h8M-10-4v8M6 0h8"/>` : `<path class="symbol-line" d="M-11 0H11M5-6l6 6-6 6"/>`}<text class="controlled-pin-label" x="-35" y="-7">p</text><text class="controlled-pin-label" x="28" y="-7">n</text><text class="controlled-pin-label" x="6" y="-28">cp</text><text class="controlled-pin-label" x="6" y="35">cn</text>`;
     if (component.type === "CURRENT_SENSOR") symbol = `<path class="lead" d="M-40 0H-19M19 0H40"/><circle class="body" cx="0" cy="0" r="19"/><path class="symbol-line" d="M-11 0H11M5-6l6 6-6 6"/><text class="controlled-pin-label" x="-35" y="-7">p</text><text class="controlled-pin-label" x="28" y="-7">n</text>`;
     if (component.type === "CCCS" || component.type === "CCVS") symbol = `<path class="lead" d="M-40 0H-24M24 0H40"/><path class="body" d="M-24 0L0-24 24 0 0 24Z"/>${component.type === "CCCS" ? `<path class="symbol-line" d="M-11 0H11M5-6l6 6-6 6"/>` : `<path class="symbol-line" d="M-14 0h8M-10-4v8M6 0h8"/>`}<text class="controlled-pin-label" x="-35" y="-7">p</text><text class="controlled-pin-label" x="28" y="-7">n</text>`;
+    if (magnetic) symbol = magneticSymbolMarkup(component);
     const pins = Array.from({ length: pinCount(component.type) }, (_, pin) => {
       const pos = localPin(component.type, pin);
       const pending = state.pendingPin?.componentId === component.id && state.pendingPin?.pin === pin ? " pending" : "";
@@ -175,14 +198,18 @@ export function createCanvasRenderer(deps) {
       return `<circle class="pin-hit" data-pin="${pin}" cx="${pos.x}" cy="${pos.y}" r="4"/><circle class="pin${pending}${target}${probed}${portP}${portN}" data-pin="${pin}" cx="${pos.x}" cy="${pos.y}" r="4"${color}/><text class="pin-number" x="${pos.x + 6}" y="${pos.y - 6}">${pin + 1}</text>`;
     }).join("");
     const selected = isSelected(state, "component", component.id) ? " selected" : "";
-    const probe = state.probes.find((item) => item.kind === "current" && item.componentId === component.id);
+    // A magnetic part can carry one current probe per winding; every other part has at most one.
+    const currentProbes = state.probes.filter((item) => item.kind === "current" && item.componentId === component.id);
+    const probe = currentProbes[0];
     const probed = probe ? " probed" : "";
     const color = probe ? ` style="--probe-color:${traceColor(probe.color)}"` : "";
-    const direction = probe ? currentDirectionDescriptor(component, geometryVersion) : null;
-    const arrow = currentArrowGeometry(direction);
-    const directionMarkup = arrow
-      ? `<g class="current-direction" aria-hidden="true"><title>${escapeHtml(direction.label)} · 양수 기준</title><line x1="${arrow.start.x}" y1="${arrow.start.y}" x2="${arrow.end.x}" y2="${arrow.end.y}"/><path d="M${arrow.head.map(point => `${point.x} ${point.y}`).join("L")}Z"/></g>`
-      : "";
+    const directionMarkup = currentProbes.map((item) => {
+      const direction = currentDirectionDescriptor(component, geometryVersion, item.winding);
+      const arrow = currentArrowGeometry(direction);
+      return arrow
+        ? `<g class="current-direction" aria-hidden="true"><title>${escapeHtml(direction.label)} · 양수 기준</title><line x1="${arrow.start.x}" y1="${arrow.start.y}" x2="${arrow.end.x}" y2="${arrow.end.y}"/><path d="M${arrow.head.map(point => `${point.x} ${point.y}`).join("L")}Z"/></g>`
+        : "";
+    }).join("");
     const connectionStatus = connection?.status ?? "solver-check";
     const badgeRotation = -Number(component.rotation ?? 0);
     const connectionMarkup = connectionStatus !== "referenced" ? `<rect class="connection-halo status-${escapeHtml(connectionStatus)}" x="-47" y="-47" width="94" height="94" rx="3"/><g class="connection-badge status-${escapeHtml(connectionStatus)}" data-show-connection="${escapeHtml(component.id)}" role="button" tabindex="0" aria-label="${ref} 연결 상태 보기" transform="translate(-35 -34) rotate(${badgeRotation})"><title>${escapeHtml(connection?.label ?? "연결 상태 보기")} · 클릭하여 설명</title><circle r="11"/><text y="4">${escapeHtml(connection?.badge ?? "?")}</text></g>` : "";

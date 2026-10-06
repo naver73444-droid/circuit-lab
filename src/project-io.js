@@ -89,6 +89,8 @@ export function createProjectIO(deps) {
       rl: [{ kind: "current", componentId: "L1" }], rlc: [{ kind: "voltage", componentId: "C1", pin: 0 }],
       "parallel-sine": [{ kind: "voltage", componentId: "V1", pin: 0 }, { kind: "current", componentId: "L1" }],
       diode: [{ kind: "voltage", componentId: "R1", pin: 0 }], opamp: [{ kind: "voltage", componentId: "U1", pin: 2 }],
+      "coupled-coils": [{ kind: "current", componentId: "K1" }, { kind: "current", componentId: "K1", winding: 2 }, { kind: "current", componentId: "R1" }],
+      "ideal-transformer": [{ kind: "current", componentId: "T1" }, { kind: "voltage", componentId: "R2", pin: 0 }],
     };
     mutate(() => {
       resetProjectSession();
@@ -101,9 +103,9 @@ export function createProjectIO(deps) {
       state.subtitle = example.description;
       state.probes = (defaults[id] ?? []).map((probe, index) => {
         const component = state.circuit.components.find((item) => item.id === probe.componentId);
-        return probe.kind === "voltage"
-          ? { ...probe, key: `V:${probe.componentId}:${probe.pin}`, label: `V(${component.props.ref}.${probe.pin + 1})`, color: PROBE_COLORS[index] }
-          : { ...probe, key: `I:${probe.componentId}`, label: currentProbeLabel(component, circuitGeometryVersion(state.circuit)), color: PROBE_COLORS[index] };
+        if (probe.kind === "voltage") return { ...probe, key: `V:${probe.componentId}:${probe.pin}`, label: `V(${component.props.ref}.${probe.pin + 1})`, color: PROBE_COLORS[index] };
+        const key = `I:${probe.componentId}${probe.winding === 2 ? ":2" : ""}`;
+        return { ...probe, key, label: currentProbeLabel(component, circuitGeometryVersion(state.circuit), probe.winding), color: PROBE_COLORS[index] };
       });
       state.learningId = ["rc-lowpass", "rl", "rlc", "parallel-sine"].includes(id) ? id : null;
       elements["result-summary"].textContent = state.learningId ? "학습 예제 준비 · 자동 계산을 기다립니다." : "예제를 불러왔습니다. 해석 실행으로 계산하세요.";

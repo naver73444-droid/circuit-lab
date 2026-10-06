@@ -9,6 +9,7 @@ import { createSelectionCommands } from "./selection-commands.js";
 import { createCanvasNotices } from "./canvas-notices.js";
 import { stepSeriesText } from "./value-series.js";
 import { probeKeysForTarget } from "./ui-model.js";
+import { isMagneticPart, magneticWindingAt } from "./current-direction.js";
 import { advanceCursorPointerSession, isTapGesture } from "./cursor-label-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
@@ -21,7 +22,13 @@ const PALETTE = [
   ["V", "V±", "전압원", true], ["I", "I↑", "전류원", true], ["D", "▷|", "다이오드", true], ["OPAMP", "▷", "간략 OP AMP", true], ["OPAMP_IDEAL", "▷∞", "이상 OP AMP", true],
   ["VCVS", "◇V", "전압 제어 전압원", false], ["VCCS", "◇I", "전압 제어 전류원", false],
   ["CURRENT_SENSOR", "S→", "0 V 전류 센서", false], ["CCCS", "◇β", "전류 제어 전류원", false], ["CCVS", "◇R", "전류 제어 전압원", false],
+  ["COUPLED_L", "K", "결합 인덕터", false], ["XFMR_IDEAL", "1:n", "이상 변압기", false],
 ];
+
+/** A current probe on a coupled inductor / ideal transformer measures the winding on the pressed side (left half: 1, right half: 2). */
+function currentProbeWinding(component, point) {
+  return component && point && isMagneticPart(component) ? magneticWindingAt(component, point) : 1;
+}
 
 /** Tool, wiring and pointer slice of the shared state. */
 export function createInputState() {
@@ -261,7 +268,7 @@ export function createEditorInput(deps) {
       }
       if (performance.now() < state.ignoreClickUntil) return;
       const id = group.dataset.id;
-      if (state.tool === "current-probe") addCurrentProbe(id);
+      if (state.tool === "current-probe") addCurrentProbe(id, currentProbeWinding(state.circuit.components.find((item) => item.id === id), svgPoint(event)));
       else if (state.tool === "select") {
         if (event.shiftKey) return; // Shift+press already toggled this part on pointerdown
         setSingleSelection(state, { kind: "component", id });
@@ -780,7 +787,7 @@ export function createEditorInput(deps) {
           return;
         }
         if(target.kind === "component") {
-          if(state.tool === "current-probe")addCurrentProbe(target.id);
+          if(state.tool === "current-probe")addCurrentProbe(target.id, currentProbeWinding(state.circuit.components.find(c=>c.id===target.id), point));
           else {setSingleSelection(state,{kind:"component",id:target.id});renderSelection();}
           return;
         }

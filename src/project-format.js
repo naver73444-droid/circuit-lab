@@ -41,7 +41,9 @@ export function validateProjectSettings(settings, importedKeys = new Set(Object.
 
 export function serializeProject(project) {
   const components = project.circuit?.components ?? [];
-  const version = components.some((component) => ["CURRENT_SENSOR", "CCCS", "CCVS"].includes(component.type))
+  const version = components.some((component) => ["COUPLED_L", "XFMR_IDEAL"].includes(component.type))
+    ? 4
+    : components.some((component) => ["CURRENT_SENSOR", "CCCS", "CCVS"].includes(component.type))
     ? 3
     : components.some((component) => component.type === "VCVS" || component.type === "VCCS") ? 2 : 1;
   const circuit = JSON.parse(serializeCircuit({ ...project.circuit, version }));
@@ -65,7 +67,7 @@ export function deserializeProject(text, fallbackSettings = {}) {
     throw new CircuitError("INVALID_FILE", "JSON 파일을 읽을 수 없습니다.");
   }
   const wrapped = payload?.format === "circuit-lab";
-  if (wrapped && ![1, 2, 3].includes(payload.version)) throw new CircuitError("INVALID_FILE", "Circuit Lab 버전 1, 2 또는 3 프로젝트 파일이 아닙니다.");
+  if (wrapped && ![1, 2, 3, 4].includes(payload.version)) throw new CircuitError("INVALID_FILE", "Circuit Lab 버전 1, 2, 3 또는 4 프로젝트 파일이 아닙니다.");
   if (wrapped && payload.circuit?.version !== payload.version) throw new CircuitError("INVALID_FILE", "프로젝트와 회로 version이 일치하지 않습니다.");
   if (wrapped && payload.settings !== undefined && !plainObject(payload.settings)) {
     throw new CircuitError("INVALID_FILE", "분석 설정이 올바른 객체가 아닙니다.");
@@ -104,7 +106,8 @@ export function deserializeProject(text, fallbackSettings = {}) {
         (typeof probe.componentId === "string" && componentIds.has(probe.componentId) && Number.isInteger(probe.pin) && probe.pin >= 0 && probe.pin <= maximumPin) ||
         (typeof probe.junctionId === "string" && junctionIds.has(probe.junctionId))
       );
-      const validCurrent = probe?.kind === "current" && typeof probe.componentId === "string" && componentIds.has(probe.componentId);
+      const validCurrent = probe?.kind === "current" && typeof probe.componentId === "string" && componentIds.has(probe.componentId)
+        && (probe.winding === undefined || (probe.winding === 2 && ["COUPLED_L", "XFMR_IDEAL"].includes(component?.type)));
       const validWire = probe?.wireId === undefined || probe.wireId === null || (typeof probe.wireId === "string" && wireIds.has(probe.wireId));
       if (!validObject || (!validVoltage && !validCurrent) || !validWire) {
         throw new CircuitError("INVALID_FILE", "프로브의 참조, 색 또는 고유 ID가 올바르지 않습니다.");

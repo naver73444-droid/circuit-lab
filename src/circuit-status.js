@@ -3,7 +3,7 @@ import { endpointKey, junctionKey, parseValue, pinCount, pinKey, validateCircuit
 
 
 function conductiveForAnalysis(component, analysis, frequency) {
-  if (["R", "V", "L", "D", "VCVS", "CURRENT_SENSOR", "CCVS"].includes(component.type)) return true;
+  if (["R", "V", "L", "D", "VCVS", "CURRENT_SENSOR", "CCVS", "COUPLED_L", "XFMR_IDEAL"].includes(component.type)) return true;
   if (component.type === "C") return analysis === "transient" || (analysis === "ac" && frequency > 0);
   return false;
 }
@@ -61,6 +61,8 @@ export function classifyCircuitConnections(circuit, analysis = "dc", { frequency
     if (!conductiveForAnalysis(component, analysis, frequency)) continue;
     const roots = Array.from({ length: pinCount(component.type) }, (_, pin) => electrical.find(pinKey(component.id, pin)));
     if (["VCVS", "CURRENT_SENSOR", "CCVS"].includes(component.type)) { addEdge(roots[0], roots[1]); continue; }
+    // 결합 인덕터·이상 변압기: 1차(1a-1b)와 2차(2a-2b)는 서로 절연 — 각각 GND 기준이 필요하다.
+    if (component.type === "COUPLED_L" || component.type === "XFMR_IDEAL") { addEdge(roots[0], roots[1]); addEdge(roots[2], roots[3]); continue; }
     for (let pin = 1; pin < roots.length; pin += 1) addEdge(roots[0], roots[pin]);
   }
   const reachable = new Set();

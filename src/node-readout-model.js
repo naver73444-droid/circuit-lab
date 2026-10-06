@@ -8,7 +8,7 @@
  * 수동 부호 규칙이므로 p = v·i > 0 이면 소비(흡수), < 0 이면 공급.
  * AC는 페이저이며 크기는 peak(최댓값) 기준이다(앱의 AC 설정과 동일).
  */
-import { buildTopology, pinCount } from "./circuit-engine.js";
+import { buildTopology, pinCount, secondaryCurrentKey } from "./circuit-engine.js";
 import { currentDirectionDescriptor } from "./current-direction.js";
 import { acMagnitudeLevel, acPhaseDegrees } from "./plot-format.js";
 import { engineering, nearestSampleIndex } from "./scope-model.js";
@@ -16,6 +16,7 @@ import { engineering, nearestSampleIndex } from "./scope-model.js";
 const TYPE_NAMES = {
   R: "저항", C: "커패시터", L: "인덕터", V: "전압원", I: "전류원", D: "다이오드", GND: "접지",
   OPAMP: "OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "VCVS", VCCS: "VCCS", CURRENT_SENSOR: "전류 센서", CCCS: "CCCS", CCVS: "CCVS",
+  COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기",
 };
 
 const isComplex = (value) => value !== null && typeof value === "object" && Number.isFinite(value.re) && Number.isFinite(value.im);
@@ -166,6 +167,40 @@ function powerEntry(component, voltage, current, mode) {
   return { value, unit: "W", text: `${engineering(Math.abs(value), "W")}`, label, kind, signed: value };
 }
 
+/**
+ * 결합 인덕터·이상 변압기 호버: 권선 1(핀 1·2)과 권선 2(핀 3·4)의 전류(점 핀으로 들어가는 방향이 양수)와 전압.
+ * `current`/`voltage`는 1차, `current2`/`voltage2`는 2차. DC·시간응답에서는 두 권선의 순 전력 v1·i1 + v2·i2도 준다.
+ */
+function magneticReadout({ base, component, point, pins, ref, title, sample }) {
+  const raw1 = own(point?.componentCurrents, component.id);
+  const raw2 = own(point?.componentCurrents, secondaryCurrentKey(component.id));
+  const across = (first) => {
+    const a = pins[first].nodeId === null ? null : nodeValue(point, pins[first].nodeId);
+    const b = pins[first + 1].nodeId === null ? null : nodeValue(point, pins[first + 1].nodeId);
+    return a === null || b === null ? null : isComplex(a) ? csub(a, b) : a - b;
+  };
+  const v1 = across(0);
+  const v2 = across(2);
+  const winding = (raw, direction) => (raw === undefined ? null : { ...quantity(raw, "A"), direction });
+  const current = winding(raw1, "1a→1b");
+  const current2 = winding(raw2, "2a→2b");
+  const voltage = v1 === null ? null : { ...quantity(v1, "V"), label: `V(${ref}.1) − V(${ref}.2)` };
+  const voltage2 = v2 === null ? null : { ...quantity(v2, "V"), label: `V(${ref}.3) − V(${ref}.4)` };
+  let power = null;
+  if (sample.mode !== "ac" && [v1, v2, raw1, raw2].every(Number.isFinite)) {
+    const value = v1 * raw1 + v2 * raw2;
+    power = { value, unit: "W", text: engineering(value, "W"), label: component.type === "XFMR_IDEAL" ? "순 전력(이상 변압기는 항상 0)" : "저장 에너지 변화율 dW/dt", kind: "none", signed: value };
+  }
+  const lines = [];
+  if (current) lines.push(`1차 전류 ${current.text} (${current.direction})`);
+  if (voltage) lines.push(`1차 전압 ${voltage.text}`);
+  if (current2) lines.push(`2차 전류 ${current2.text} (${current2.direction})`);
+  if (voltage2) lines.push(`2차 전압 ${voltage2.text}`);
+  if (power) lines.push(`${power.label} ${power.text}`);
+  lines.push(sample.xText);
+  return { ...base, current, voltage, current2, voltage2, power, lines, text: `${title} — ${lines.join(" · ")}` };
+}
+
 /** 부품 호버: 전류, 양단 전압, (저항·2단자 소자) 전력, 핀별 전압. */
 export function componentReadout({ circuit, result, componentId, index, x } = {}) {
   const sample = resolveSample(result, { index, x });
@@ -186,6 +221,8 @@ export function componentReadout({ circuit, result, componentId, index, x } = {}
   if (component.type === "GND") {
     return { ...base, current: null, voltage: quantity(sample.mode === "ac" ? { re: 0, im: 0 } : 0, "V"), power: null, lines: ["기준 전위 0 V", sample.xText], text: `${title} — 기준 전위 0 V` };
   }
+
+  if (component.type === "COUPLED_L" || component.type === "XFMR_IDEAL") return magneticReadout({ base, component, point, pins, ref, title, sample });
 
   const descriptor = currentDirectionDescriptor(component);
   const rawCurrent = own(point?.componentCurrents, component.id);

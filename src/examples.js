@@ -215,6 +215,58 @@ export const examples = [
       ],
     },
   },
+  {
+    id: "coupled-coils",
+    name: "결합 코일 (예제 13.1)",
+    description: "교재 예제 13.1: 12∠0° 소스, C=−j4 Ω, 결합 코일 L1=j5 Ω·L2=j6 Ω·M=j3 Ω(점 같은 쪽), 부하 12 Ω. ω=1 rad/s에 해당하는 f=1/2π Hz로 AC 해석하면 I(K1.1)=13.01∠−49.39° A, 부하 R1 전류(교재 I2)=2.91∠14.04° A입니다. I(K1.2)는 점 핀으로 들어가는 방향이라 교재 I2와 부호가 반대입니다. 편집기 페이저는 peak/cos 기준이고 소스 12를 크기로 그대로 넣었으므로 수치는 교재와 같게 읽힙니다.",
+    settings: { analysis: "ac", startFrequency: "0.01", endFrequency: "10", pointsPerDecade: "20", phasorFrequency: "0.1591549431" },
+    circuit: circuit(
+      [
+        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", acMagnitude: "12", acPhase: "0", ref: "V1" }, 90),
+        component("C1", "C", 240, 200, { value: "250m", ic: "0", ref: "C1" }),
+        component("K1", "COUPLED_L", 400, 240, { L1: "5", L2: "6", coupling: "M", M: "3", dots: "same", ref: "K1" }),
+        component("R1", "R", 540, 240, { value: "12", ref: "R1" }, 90),
+        component("G1", "GND", 360, 380, { ref: "GND" }),
+      ],
+      [
+        wire("W1", "V1", 0, "C1", 0),
+        wire("W2", "C1", 1, "K1", 0),
+        wire("W3", "K1", 1, "G1", 0),
+        wire("W4", "V1", 1, "G1", 0),
+        wire("W5", "K1", 2, "R1", 0),
+        wire("W6", "R1", 1, "K1", 3),
+        { id: "W7", a: { componentId: "K1", pin: 3 }, b: { componentId: "G1", pin: 0 }, waypoints: [{ x: 440, y: 340 }] },
+      ],
+    ),
+  },
+  {
+    id: "ideal-transformer",
+    name: "이상 변압기 (예제 13.8)",
+    description: "교재 예제 13.8: 120∠0° V 소스, 4 Ω과 −j6 Ω 직렬, 이상 변압기 1:2, 부하 20 Ω. ω=1 rad/s에 해당하는 f=1/2π Hz로 AC 해석하면 I(T1.1)=11.09∠33.69° A, Vo=V(R2.1)=110.9∠213.69° V입니다. 교재의 점 배치를 따라 2차의 점 핀(2a)을 접지하고 부하를 2b에 걸었습니다. 120 V는 교재에서 rms인데 편집기 페이저는 peak/cos 기준이라 120을 크기로 그대로 넣었습니다. 선형 회로라 읽는 값은 교재의 rms 수치와 같습니다.",
+    settings: { analysis: "ac", startFrequency: "0.01", endFrequency: "10", pointsPerDecade: "20", phasorFrequency: "0.1591549431" },
+    circuit: circuit(
+      [
+        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", acMagnitude: "120", acPhase: "0", ref: "V1" }, 90),
+        component("R1", "R", 240, 200, { value: "4", ref: "R1" }),
+        component("C1", "C", 360, 200, { value: "0.16666666666667", ic: "0", ref: "C1" }),
+        component("T1", "XFMR_IDEAL", 520, 240, { n: "2", dots: "same", ref: "T1" }),
+        component("R2", "R", 660, 300, { value: "20", ref: "R2" }),
+        component("G1", "GND", 480, 380, { ref: "GND" }),
+        component("G2", "GND", 620, 260, { ref: "GND" }),
+        component("G3", "GND", 700, 380, { ref: "GND" }),
+      ],
+      [
+        wire("W1", "V1", 0, "R1", 0),
+        wire("W2", "R1", 1, "C1", 0),
+        wire("W3", "C1", 1, "T1", 0),
+        wire("W4", "T1", 1, "G1", 0),
+        wire("W5", "V1", 1, "G1", 0),
+        wire("W6", "T1", 2, "G2", 0),
+        { id: "W7", a: { componentId: "T1", pin: 3 }, b: { componentId: "R2", pin: 0 }, waypoints: [{ x: 560, y: 300 }] },
+        wire("W8", "R2", 1, "G3", 0),
+      ],
+    ),
+  },
 ];
 
 export function cloneExample(id) {

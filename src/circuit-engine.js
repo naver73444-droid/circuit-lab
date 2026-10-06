@@ -25,6 +25,8 @@ const TYPE_PINS = {
   CURRENT_SENSOR: 2,
   CCCS: 2,
   CCVS: 2,
+  COUPLED_L: 4,
+  XFMR_IDEAL: 4,
 };
 
 const DEFAULTS = {
@@ -76,6 +78,9 @@ const DEFAULTS = {
   CURRENT_SENSOR: { ref: "S" },
   CCCS: { ref: "F", beta: "1" },
   CCVS: { ref: "H", rm: "1k" },
+  // 자기결합: 핀 1a·1b(1차), 2a·2b(2차), 점은 1a와 2a. dots="opposite"이면 2차의 점이 2b로 옮겨진다.
+  COUPLED_L: { ref: "K", L1: "10m", L2: "10m", coupling: "k", k: "0.5", M: "5m", dots: "same", ic1: "0", ic2: "0" },
+  XFMR_IDEAL: { ref: "T", n: "2", dots: "same" },
 };
 
 export function componentDefaults(type, index = 1) {
@@ -181,6 +186,53 @@ function controlledCoefficient(component) {
   return parseValue(normalized, label);
 }
 
+/** The solver stores the second winding current of a 4-pin magnetic part next to the first one, under this key. */
+export const secondaryCurrentKey = (componentId) => `${componentId}#2`;
+
+const COUPLING_TOLERANCE = 1e-9;
+
+function dotsSign(component) {
+  const dots = component.props?.dots ?? "same";
+  if (dots !== "same" && dots !== "opposite") throw new CircuitError("INVALID_VALUE", `${component.props?.ref ?? component.id}의 점 위치 '${dots}'을(를) 지원하지 않습니다.`, "same 또는 opposite");
+  return dots === "opposite" ? -1 : 1;
+}
+
+/**
+ * Parameters of a COUPLED_L part (Alexander-Sadiku 13.2~13.3). Dots sit on pins 1a and 2a; with dots="opposite" the
+ * mutual inductance enters with the opposite sign (`mutual` = sign*M). `coupling` chooses which of k and M is the input.
+ */
+export function coupledInductorParameters(component) {
+  const p = component.props ?? {};
+  const label = p.ref ?? component.id;
+  const L1 = positiveValue(p.L1 ?? "10m", `${label} L1`);
+  const L2 = positiveValue(p.L2 ?? "10m", `${label} L2`);
+  const root = Math.sqrt(L1 * L2);
+  let k;
+  let M;
+  if (p.coupling === "M") {
+    M = parseValue(p.M ?? "5m", `${label} 상호 인덕턴스 M`);
+    if (M < 0 || M > root * (1 + COUPLING_TOLERANCE)) throw new CircuitError("INVALID_VALUE", `${label}의 M은 0 이상 √(L1·L2) 이하여야 합니다 (결합계수 k=M/√(L1L2)가 0~1).`, `현재 √(L1·L2) = ${Number(root.toPrecision(6))} H`);
+    M = Math.min(M, root);
+    k = M / root;
+  } else {
+    k = parseValue(p.k ?? "0.5", `${label} 결합계수 k`);
+    if (!(k >= 0 && k <= 1)) throw new CircuitError("INVALID_VALUE", `${label}의 결합계수 k는 0 이상 1 이하여야 합니다.`, "k=1은 완전 결합이라 코일 방정식이 특이해질 수 있습니다. 필요하면 0.999처럼 1보다 작게 두세요.");
+    M = k * root;
+  }
+  const sign = dotsSign(component);
+  const ic1 = parseValue(p.ic1 ?? 0, `${label} 1차 초기 전류`);
+  const ic2 = parseValue(p.ic2 ?? 0, `${label} 2차 초기 전류`);
+  return { L1, L2, k, M, sign, mutual: sign * M, ic1, ic2 };
+}
+
+/** Parameters of an XFMR_IDEAL part: v2 = ratio*v1 and i1 = -ratio*i2 with ratio = ±n (both currents into the pins, dots on 1a and 2a). */
+export function idealTransformerParameters(component) {
+  const p = component.props ?? {};
+  const n = positiveValue(p.n ?? "2", `${p.ref ?? component.id} 권수비 n`);
+  const sign = dotsSign(component);
+  return { n, sign, ratio: sign * n };
+}
+
 function validateBranchControl(component, componentsById) {
   const control = component.control;
   const label = component.props?.ref ?? component.id;
@@ -229,6 +281,8 @@ function validateComponent(component) {
   }
   if (component.type === "OPAMP") positiveValue(p.gain ?? "100k", `${p.ref ?? component.id} 개방루프 이득`);
   if (["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type)) controlledCoefficient(component);
+  if (component.type === "COUPLED_L") coupledInductorParameters(component);
+  if (component.type === "XFMR_IDEAL") idealTransformerParameters(component);
   if (component.type === "V" || component.type === "I") validateSource(component);
 }
 
@@ -367,6 +421,8 @@ export function buildTopology(circuit) {
     for (let pin = 0; pin < pinCount(component.type); pin += 1) componentRoots.push(uf.find(pinKey(component.id, pin)));
     if (["VCVS", "CURRENT_SENSOR", "CCVS"].includes(component.type)) { addEdge(componentRoots[0], componentRoots[1]); continue; }
     if (["VCCS", "CCCS"].includes(component.type)) continue;
+    // Magnetic coupling carries no galvanic path: each winding is its own pair of terminals.
+    if (component.type === "COUPLED_L" || component.type === "XFMR_IDEAL") { addEdge(componentRoots[0], componentRoots[1]); addEdge(componentRoots[2], componentRoots[3]); continue; }
     for (let i = 1; i < componentRoots.length; i += 1) addEdge(componentRoots[0], componentRoots[i]);
   }
   const canonicalGround = uf.find(groundRoot);
@@ -390,7 +446,8 @@ export function buildTopology(circuit) {
     }
   }
   if (floating.length) {
-    throw new CircuitError("FLOATING_NODE", `접지 기준에 연결되지 않은 노드가 있습니다: ${[...new Set(floating)].slice(0, 8).join(", ")}`, "떠 있는 부분 회로를 GND 기준망에 연결하세요.");
+    const magnetic = components.some((component) => component.type === "COUPLED_L" || component.type === "XFMR_IDEAL");
+    throw new CircuitError("FLOATING_NODE", `접지 기준에 연결되지 않은 노드가 있습니다: ${[...new Set(floating)].slice(0, 8).join(", ")}`, magnetic ? "떠 있는 부분 회로를 GND 기준망에 연결하세요. 결합 인덕터·변압기의 1차와 2차는 서로 절연되어 있으므로 2차 회로에도 GND를 하나 연결해야 합니다." : "떠 있는 부분 회로를 GND 기준망에 연결하세요.");
   }
 
   const rootToNode = new Map([[canonicalGround, 0]]);
@@ -480,7 +537,7 @@ function constraintLabel(constraint) {
 function voltageConstraintInput(component, analysis) {
   const p = component.props ?? {};
   if (component.type === "C") return `IC=${p.ic ?? "0"}`;
-  if (component.type === "L") return "DC short=0 V";
+  if (component.type === "L" || component.type === "COUPLED_L") return "DC short=0 V";
   if (component.type === "CURRENT_SENSOR") return "0 V current sensor";
   if (component.type === "VCVS") return `g=${component.props?.g ?? "1"}, Vout=g·(Vcp−Vcn)`;
   if (analysis === "dc") return `DC=${p.dc ?? "0"}`;
@@ -515,6 +572,13 @@ export function analyzeIdealVoltageConstraints(circuit, { analysis = "dc", start
     ? [...circuit.components].sort((a, b) => Number(a.type !== "V") - Number(b.type !== "V"))
     : circuit.components;
   for (const component of ordered) {
+    if (analysis === "dc" && component.type === "COUPLED_L") {
+      if (ignoreConstraintIds.has(component.id)) continue;
+      for (const [first, second, pinLabel] of [[0, 1, "1→2"], [2, 3, "3→4"]]) {
+        constraints.push({ componentId: component.id, ref: component.props?.ref ?? component.id, type: component.type, pinLabel, a: topology.nodeFor(component.id, first), z: topology.nodeFor(component.id, second), value: 0, input: voltageConstraintInput(component, analysis), role: "DC 결합 코일 단락" });
+      }
+      continue;
+    }
     let value;
     let role;
     if ((analysis === "dc" || analysis === "initial") && component.type === "CURRENT_SENSOR") {
@@ -844,6 +908,9 @@ function makeBranchMap(circuit, mode, nodeCount, skippedConstraints = new Set())
     const inductorBranch = component.type === "L" && mode !== "ac" && mode !== "initial";
     const initialCapacitorBranch = component.type === "C" && mode === "initial";
     if ((voltageBranch || inductorBranch || initialCapacitorBranch) && !skippedConstraints.has(component.id)) map.set(component.id, index++);
+    // XFMR_IDEAL: one unknown (the primary current i1); COUPLED_L: i1 and i2 (none while the transient start state is solved).
+    if (component.type === "XFMR_IDEAL") map.set(component.id, index++);
+    if (component.type === "COUPLED_L" && mode !== "initial") { map.set(component.id, index++); map.set(secondaryCurrentKey(component.id), index++); }
   }
   return { map, size: index };
 }
@@ -923,6 +990,50 @@ function stampRealControlledSource(A, topology, component, branchMap) {
   if (nIndex >= 0) A[branch][nIndex] -= 1;
   if (cpIndex >= 0) A[branch][cpIndex] -= coefficient;
   if (cnIndex >= 0) A[branch][cnIndex] += coefficient;
+}
+
+function addBranchEntry(A, row, column, value) {
+  if (row >= 0 && column >= 0) A[row][column] += value;
+}
+
+/**
+ * Coupled inductors, v1 = L1 di1/dt + M di2/dt, v2 = M di1/dt + L2 di2/dt (M signed by the dot placement), i1/i2 into pins 1a/2a.
+ * DC: both windings are 0 V shorts. Transient (backward Euler): row b1 is v1 - (L1/dt) i1 - (M/dt) i2 = -(L1 i1' + M i2')/dt, row b2 likewise.
+ * Transient start state: both windings are current sources (ic1, ic2).
+ */
+function stampRealCoupledInductor(A, b, topology, component, branchMap, mode, context) {
+  const parameters = coupledInductorParameters(component);
+  const n1a = topology.nodeFor(component.id, 0), n1b = topology.nodeFor(component.id, 1), n2a = topology.nodeFor(component.id, 2), n2b = topology.nodeFor(component.id, 3);
+  const key2 = secondaryCurrentKey(component.id);
+  const previous1 = context.inductorCurrents?.get(component.id) ?? 0;
+  const previous2 = context.inductorCurrents?.get(key2) ?? 0;
+  if (mode === "initial") {
+    stampCurrent(b, n1a, n1b, previous1);
+    stampCurrent(b, n2a, n2b, previous2);
+    return;
+  }
+  const b1 = branchMap.get(component.id), b2 = branchMap.get(key2);
+  stampVoltage(A, b, n1a, n1b, b1, 0);
+  stampVoltage(A, b, n2a, n2b, b2, 0);
+  if (mode !== "transient") return;
+  const { L1, L2, mutual } = parameters;
+  const inverse = 1 / context.dt;
+  A[b1][b1] -= L1 * inverse; A[b1][b2] -= mutual * inverse;
+  A[b2][b1] -= mutual * inverse; A[b2][b2] -= L2 * inverse;
+  b[b1] -= (L1 * previous1 + mutual * previous2) * inverse;
+  b[b2] -= (mutual * previous1 + L2 * previous2) * inverse;
+}
+
+/** Ideal transformer: unknown x = i1 (into 1a). KCL: 1a +x, 1b -x, 2a -x/ratio, 2b +x/ratio; constraint v2 - ratio*v1 = 0. Same in DC, transient and the start state. */
+function stampRealIdealTransformer(A, topology, component, branchMap) {
+  const { ratio } = idealTransformerParameters(component);
+  const n1a = nodeIndex(topology.nodeFor(component.id, 0)), n1b = nodeIndex(topology.nodeFor(component.id, 1));
+  const n2a = nodeIndex(topology.nodeFor(component.id, 2)), n2b = nodeIndex(topology.nodeFor(component.id, 3));
+  const branch = branchMap.get(component.id);
+  addBranchEntry(A, n1a, branch, 1); addBranchEntry(A, n1b, branch, -1);
+  addBranchEntry(A, n2a, branch, -1 / ratio); addBranchEntry(A, n2b, branch, 1 / ratio);
+  addBranchEntry(A, branch, n2a, 1); addBranchEntry(A, branch, n2b, -1);
+  addBranchEntry(A, branch, n1a, -ratio); addBranchEntry(A, branch, n1b, ratio);
 }
 
 const DIODE_MAX_FORWARD_VOLTAGE = 0.8;
@@ -1035,6 +1146,8 @@ function solveRealPoint(circuit, topology, mode, context) {
         if (plusIndex >= 0) A[branch][plusIndex] += 1;
         if (minusIndex >= 0) A[branch][minusIndex] -= 1;
       }
+      if (component.type === "COUPLED_L") stampRealCoupledInductor(A, b, topology, component, branchMap, mode, context);
+      if (component.type === "XFMR_IDEAL") stampRealIdealTransformer(A, topology, component, branchMap);
       if (["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type)) stampRealControlledSource(A, topology, component, branchMap);
     }
     const candidate = !hasDiode && mode === "transient" && context.luCache
@@ -1109,6 +1222,16 @@ function realPoint(circuit, topology, solved, mode, context) {
       }
       componentCurrents[component.id] = model.current;
     }
+    if (component.type === "COUPLED_L") {
+      const key2 = secondaryCurrentKey(component.id);
+      componentCurrents[component.id] = mode === "initial" ? context.inductorCurrents.get(component.id) ?? 0 : solved.solution[solved.branchMap.get(component.id)] ?? 0;
+      componentCurrents[key2] = mode === "initial" ? context.inductorCurrents.get(key2) ?? 0 : solved.solution[solved.branchMap.get(key2)] ?? 0;
+    }
+    if (component.type === "XFMR_IDEAL") {
+      const primary = solved.solution[solved.branchMap.get(component.id)] ?? 0;
+      componentCurrents[component.id] = primary;
+      componentCurrents[secondaryCurrentKey(component.id)] = -primary / idealTransformerParameters(component).ratio;
+    }
     if (component.type === "GND") componentCurrents[component.id] = 0;
   }
   return { nodeVoltages, componentCurrents };
@@ -1159,7 +1282,7 @@ function initialSourceDerivative(component, time) {
  * only a common-mode derivative; capacitor voltage differences remain physical.
  */
 function resolveInitialCapacitorCurrents(circuit, topology, point, time) {
-  if (circuit.components.some((component) => ["OPAMP", "OPAMP_IDEAL", "VCVS", "CURRENT_SENSOR", "CCCS", "CCVS"].includes(component.type))) {
+  if (circuit.components.some((component) => ["OPAMP", "OPAMP_IDEAL", "VCVS", "CURRENT_SENSOR", "CCCS", "CCVS", "COUPLED_L", "XFMR_IDEAL"].includes(component.type))) {
     throw new CircuitError("INITIAL_DERIVATIVE_UNSUPPORTED", "중복 커패시터 초기제약과 이상 제약·전류제어 종속원이 함께 있는 회로의 초기 전류는 아직 지원하지 않습니다.", "임의로 0 A를 표시하지 않고 중단했습니다. 독립 전압원 또는 중복 없는 검증 회로로 나누어 확인하세요.");
   }
   const capacitors = circuit.components.filter((component) => component.type === "C");
@@ -1228,6 +1351,11 @@ export function simulateTransient(circuit, settings = {}) {
   for (const component of circuit.components) {
     if (component.type === "C") capacitorVoltages.set(component.id, parseValue(component.props?.ic ?? 0));
     if (component.type === "L") inductorCurrents.set(component.id, parseValue(component.props?.ic ?? 0));
+    if (component.type === "COUPLED_L") {
+      const { ic1, ic2 } = coupledInductorParameters(component);
+      inductorCurrents.set(component.id, ic1);
+      inductorCurrents.set(secondaryCurrentKey(component.id), ic2);
+    }
   }
   const initialDiagnostic = analyzeIdealVoltageConstraints(circuit, { analysis: "initial", start });
   if (initialDiagnostic.conflicts.length) {
@@ -1268,6 +1396,10 @@ export function simulateTransient(circuit, settings = {}) {
     if (transientBranches.map.has(componentId)) guess[transientBranches.map.get(componentId)] = initialSolved.solution[initialIndex];
   }
   for (const component of circuit.components.filter((item) => item.type === "L")) guess[transientBranches.map.get(component.id)] = inductorCurrents.get(component.id);
+  for (const component of circuit.components.filter((item) => item.type === "COUPLED_L")) {
+    guess[transientBranches.map.get(component.id)] = inductorCurrents.get(component.id);
+    guess[transientBranches.map.get(secondaryCurrentKey(component.id))] = inductorCurrents.get(secondaryCurrentKey(component.id));
+  }
   let initialPoint = realPoint(circuit, topology, initialSolved, "initial", { dt, time: start, capacitorVoltages, inductorCurrents });
   if (skippedConstraints.size) initialPoint = resolveInitialCapacitorCurrents(circuit, topology, initialPoint, start);
   const points = [initialPoint];
@@ -1285,6 +1417,10 @@ export function simulateTransient(circuit, settings = {}) {
         capacitorVoltages.set(component.id, point.nodeVoltages[a] - point.nodeVoltages[z]);
       }
       if (component.type === "L") inductorCurrents.set(component.id, point.componentCurrents[component.id]);
+      if (component.type === "COUPLED_L") {
+        inductorCurrents.set(component.id, point.componentCurrents[component.id]);
+        inductorCurrents.set(secondaryCurrentKey(component.id), point.componentCurrents[secondaryCurrentKey(component.id)]);
+      }
     }
     points.push(point);
     guess = solved.solution;
@@ -1390,6 +1526,27 @@ function stampComplexControlledSource(A, topology, component, branchMap) {
   add(pIndex, branch, 1); add(nIndex, branch, -1);
   add(branch, pIndex, 1); add(branch, nIndex, -1);
   add(branch, cpIndex, -coefficient); add(branch, cnIndex, coefficient);
+}
+
+/** AC counterparts of the two magnetic parts: row b1: v1 - jwL1 i1 - jwM i2 = 0, row b2: v2 - jwM i1 - jwL2 i2 = 0; the ideal transformer is frequency independent. */
+function stampComplexCoupledInductor(A, b, topology, component, branchMap, omega) {
+  const { L1, L2, mutual } = coupledInductorParameters(component);
+  const n1a = topology.nodeFor(component.id, 0), n1b = topology.nodeFor(component.id, 1), n2a = topology.nodeFor(component.id, 2), n2b = topology.nodeFor(component.id, 3);
+  const b1 = branchMap.get(component.id), b2 = branchMap.get(secondaryCurrentKey(component.id));
+  stampComplexVoltage(A, b, n1a, n1b, b1, complex());
+  stampComplexVoltage(A, b, n2a, n2b, b2, complex());
+  addComplexEntry(A, b1, b1, 0, -omega * L1); addComplexEntry(A, b1, b2, 0, -omega * mutual);
+  addComplexEntry(A, b2, b1, 0, -omega * mutual); addComplexEntry(A, b2, b2, 0, -omega * L2);
+}
+
+function stampComplexIdealTransformer(A, topology, component, branchMap) {
+  const { ratio } = idealTransformerParameters(component);
+  const n1a = nodeIndex(topology.nodeFor(component.id, 0)), n1b = nodeIndex(topology.nodeFor(component.id, 1));
+  const n2a = nodeIndex(topology.nodeFor(component.id, 2)), n2b = nodeIndex(topology.nodeFor(component.id, 3));
+  const branch = branchMap.get(component.id);
+  const add = (row, column, value) => { if (row >= 0 && column >= 0) addComplexEntry(A, row, column, value); };
+  add(n1a, branch, 1); add(n1b, branch, -1); add(n2a, branch, -1 / ratio); add(n2b, branch, 1 / ratio);
+  add(branch, n2a, 1); add(branch, n2b, -1); add(branch, n1a, -ratio); add(branch, n1b, ratio);
 }
 
 // Complex LU with partial pivoting on split re/im Float64Arrays: no per-operation
@@ -1529,6 +1686,8 @@ function solveACPoint(circuit, topology, frequency, dcBias) {
       if (plusIndex >= 0) addComplexEntry(A, branch, plusIndex, 1);
       if (minusIndex >= 0) addComplexEntry(A, branch, minusIndex, -1);
     }
+    if (component.type === "COUPLED_L") stampComplexCoupledInductor(A, b, topology, component, branchMap, omega);
+    if (component.type === "XFMR_IDEAL") stampComplexIdealTransformer(A, topology, component, branchMap);
     if (["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type)) stampComplexControlledSource(A, topology, component, branchMap);
   }
   return { solution: solveComplex(A, b), branchMap };
@@ -1561,6 +1720,16 @@ function complexPoint(circuit, topology, solved, frequency, dcBias) {
       const biasVoltage = (dcBias?.nodeVoltages[a] ?? 0) - (dcBias?.nodeVoltages[z] ?? 0);
       const conductance = diodeSmallSignalConductance(component, biasVoltage);
       componentCurrents[component.id] = cmul(voltage, complex(conductance, 0));
+    }
+    if (component.type === "COUPLED_L") {
+      componentCurrents[component.id] = solved.solution[solved.branchMap.get(component.id)] ?? complex();
+      componentCurrents[secondaryCurrentKey(component.id)] = solved.solution[solved.branchMap.get(secondaryCurrentKey(component.id))] ?? complex();
+    }
+    if (component.type === "XFMR_IDEAL") {
+      const primary = solved.solution[solved.branchMap.get(component.id)] ?? complex();
+      const ratio = idealTransformerParameters(component).ratio;
+      componentCurrents[component.id] = primary;
+      componentCurrents[secondaryCurrentKey(component.id)] = complex(-primary.re / ratio, -primary.im / ratio);
     }
     if (component.type === "GND") componentCurrents[component.id] = complex();
   }
@@ -1624,8 +1793,9 @@ export function simulate(circuit, settings = {}) {
 
 export function serializeCircuit(circuit) {
   validateCircuitStructure(circuit);
+  const hasMagnetic = circuit.components?.some((component) => ["COUPLED_L", "XFMR_IDEAL"].includes(component.type));
   const hasBranchControlled = circuit.components?.some((component) => ["CURRENT_SENSOR", "CCCS", "CCVS"].includes(component.type));
-  const version = hasBranchControlled ? 3 : circuit.components?.some((component) => component.type === "VCVS" || component.type === "VCCS") ? 2 : 1;
+  const version = hasMagnetic ? 4 : hasBranchControlled ? 3 : circuit.components?.some((component) => component.type === "VCVS" || component.type === "VCCS") ? 2 : 1;
   return JSON.stringify({
     version,
     ...(circuit.geometryVersion !== undefined ? { geometryVersion: circuit.geometryVersion } : {}),
@@ -1642,12 +1812,13 @@ export function deserializeCircuit(text) {
   } catch {
     throw new CircuitError("INVALID_FILE", "JSON 파일을 읽을 수 없습니다.");
   }
-  if (![1, 2, 3].includes(parsed?.version) || !Array.isArray(parsed.components) || !Array.isArray(parsed.wires)) {
-    throw new CircuitError("INVALID_FILE", "Circuit Lab 버전 1, 2 또는 3 회로 파일이 아닙니다.");
+  if (![1, 2, 3, 4].includes(parsed?.version) || !Array.isArray(parsed.components) || !Array.isArray(parsed.wires)) {
+    throw new CircuitError("INVALID_FILE", "Circuit Lab 버전 1, 2, 3 또는 4 회로 파일이 아닙니다.");
   }
+  const hasMagnetic = parsed.components.some((component) => ["COUPLED_L", "XFMR_IDEAL"].includes(component?.type));
   const hasBranchControlled = parsed.components.some((component) => ["CURRENT_SENSOR", "CCCS", "CCVS"].includes(component?.type));
   const hasVoltageControlled = parsed.components.some((component) => component?.type === "VCVS" || component?.type === "VCCS");
-  const requiredVersion = hasBranchControlled ? 3 : hasVoltageControlled ? 2 : 1;
+  const requiredVersion = hasMagnetic ? 4 : hasBranchControlled ? 3 : hasVoltageControlled ? 2 : 1;
   if (parsed.version !== requiredVersion) throw new CircuitError("INVALID_FILE", `이 회로 타입 집합은 version ${requiredVersion}로 저장해야 합니다.`);
   validateCircuitStructure(parsed);
   return {
