@@ -41,6 +41,10 @@ summary { cursor: pointer; padding: 6px 9px; font-size: 12px; color: var(--muted
 .primary:hover:not(:disabled) { background: var(--action-hover); border-color: var(--action-hover); color: #fff; }
 html { height: 100%; overflow: hidden; }
 body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; background: var(--bg); color: var(--text); }
+/* Hosted without <body> (published page): the app may sit inside one wrapper element, so the element that directly holds the header is the
+   screen-high grid and every element between it and <body> just passes the height down. Without this the workspaces grow past the screen and the bottom is cut off. */
+body :has(.topbar) { height: 100%; min-height: 0; }
+:has(> .topbar) { display: grid; grid-template-rows: auto minmax(0,1fr); height: 100dvh; min-height: 0; overflow: hidden; }
 
 /* Header: brand, workspace tabs, theme. */
 .topbar { display: flex; align-items: center; gap: 14px; padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--chrome); }
@@ -814,4 +818,10 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
   .circuit-course .ydelta-direction button { flex: 1; min-height: 44px; }
   .circuit-course .ydelta-svg { max-height: none; }
   .circuit-course .ydelta-field input { min-height: 44px; }
+}
+
+/* Phone: breathing room under the last content of every scrolling workspace, so it is never flush with (or under) the screen edge or a browser bar. */
+@media (max-width: 900px) {
+  .em-workspace, #signals-workspace, #circuit-course-workspace { padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+  #em-course-root { height: auto; } /* 100% of the scroller would let the course overflow it and drop the padding above */
 }

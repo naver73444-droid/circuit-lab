@@ -4192,4 +4192,56 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await select(`${panel} [data-cc-key="balanced"]`, "no");
     assert.equal(await hidden(), true, "the wattmeter select is hidden for an unbalanced load");
   });
+
+  // Phone bottom edge: scrolled to its end, the last piece of content of every workspace must lie inside the viewport (and above the
+  // sticky bottom tab bar of the circuit editor). Also when the host wraps the app in an extra element instead of using <body> directly.
+  const phoneEnd = (scrollerSelector, { sticky = false } = {}) => ev(`(async () => {
+    const sc = document.querySelector(${JSON.stringify(scrollerSelector)});
+    sc.scrollTop = sc.scrollHeight; await new Promise((done) => setTimeout(done, 150)); sc.scrollTop = sc.scrollHeight; await new Promise((done) => setTimeout(done, 150));
+    const bar = ${sticky} ? document.querySelector(".view-tabs") : null;
+    const limit = bar ? bar.getBoundingClientRect().top : innerHeight;
+    let last = 0;
+    for (const e of sc.querySelectorAll("*")) {
+      if (bar && bar.contains(e)) continue;
+      const style = getComputedStyle(e); if (style.display === "none" || style.visibility === "hidden" || style.position === "fixed" || e.closest("[hidden]") || (e.closest("svg") && e.tagName.toLowerCase() !== "svg")) continue;
+      const details = e.closest("details"); if (details && !details.open && !(e.tagName === "SUMMARY" && e.parentElement === details)) continue;
+      const rect = e.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) continue;
+      let bottom = rect.bottom;
+      for (let a = e.parentElement; a && a !== sc; a = a.parentElement) if (getComputedStyle(a).overflowY !== "visible") bottom = Math.min(bottom, a.getBoundingClientRect().bottom);
+      last = Math.max(last, bottom);
+    }
+    const box = sc.getBoundingClientRect();
+    return { last: Math.round(last), limit: Math.round(limit), scrollerBottom: Math.round(box.bottom), viewport: innerHeight, atEnd: sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1, scrolls: sc.scrollHeight > sc.clientHeight, padBottom: parseFloat(getComputedStyle(sc).paddingBottom) };
+  })()`);
+
+  test("phone (390x844): every workspace scrolls to its end with the last content inside the viewport, also inside a host wrapper element", async () => {
+    const check = (what, m, { pad = true } = {}) => {
+      assert.equal(m.atEnd, true, `${what}: scrolled to the end`);
+      assert.ok(m.last <= m.limit, `${what}: last content bottom ${m.last} must not pass ${m.limit}`);
+      assert.ok(m.scrollerBottom <= m.viewport + 1, `${what}: the scroll container (bottom ${m.scrollerBottom}) lies inside the viewport (${m.viewport})`);
+      if (pad) assert.ok(m.padBottom >= 24, `${what}: bottom breathing room ${m.padBottom}px`);
+    };
+    const phone = { width: 390, height: 844, mobile: true };
+    await navigate("/?example=rlc", phone);
+    for (const view of ["palette", "inspector", "results", "wave"]) {
+      await click(`.view-tabs [data-view="${view}"]`); await settle();
+      check(`circuit ${view}`, await phoneEnd("#workbench", { sticky: true }), { pad: false });
+    }
+    await openSignals("time", phone);
+    check("signals", await phoneEnd("#signals-workspace"));
+    await openEM(phone);
+    check("em", await phoneEnd("#em-workspace"));
+    await openCircuitCourse(phone);
+    check("circuit course", await phoneEnd("#circuit-course-workspace"));
+    // The artifact host strips <html>/<head>/<body>, so the app may sit inside one wrapper element: the layout must not depend on <body> children.
+    await ev(`(() => { const wrapper = document.createElement("div"); wrapper.id = "host-wrapper"; wrapper.append(...document.body.childNodes); document.body.append(wrapper); })()`);
+    await settle();
+    check("circuit course (wrapped)", await phoneEnd("#circuit-course-workspace"));
+    await click("#em-workspace-tab"); await settle();
+    check("em (wrapped)", await phoneEnd("#em-workspace"));
+    await click("#signals-workspace-tab"); await settle();
+    check("signals (wrapped)", await phoneEnd("#signals-workspace"));
+    await click("#circuit-workspace-tab"); await settle();
+    check("circuit (wrapped)", await phoneEnd("#workbench", { sticky: true }), { pad: false });
+  });
 });
