@@ -1,18 +1,18 @@
 # START-HERE — 다음 개발자·AI를 위한 안내
 
-Circuit Lab은 빌드 없는 순수 ES 모듈 웹 앱(회로 편집·해석 + 전자기·신호·회로 과정 학습)입니다. 작업 사본은 `D:\AI\circuit-lab-work`이고 git 이력이 있습니다. 먼저 `git log --oneline`과 이 폴더의 `git status`로 현재 상태를 확인하십시오.
+Circuit Lab은 빌드 없는 순수 ES 모듈 웹 앱입니다. 상단 탭 네 개: 회로(편집·해석·파형 측정) / 전자기학(평면 샌드박스 · 3D · 문제 풀이 23실험) / 신호 및 시스템(6개 슬라이더 레슨) / 회로 과정(AC·3상). 학습 화면 셋의 공통 원칙은 "슬라이더·끌기 즉시 반영, 적용 버튼 없음"입니다(DESIGN.md "학습 작업공간 원칙"). 작업 사본은 `D:\AI\circuit-lab-work`이고 git 이력이 있습니다. 먼저 `git log --oneline`과 `git status`로 현재 상태를 확인하십시오.
 
 ## 어디에 무엇이 있나
 
 | 경로 | 내용 |
 |---|---|
 | `index.html`, `styles.css` | 정적 마크업·스타일(색 토큰은 `:root` / `[data-theme="light"]`) |
-| `src/app.js` | 조립자(약 340줄). 모듈을 만들고 서로 연결, `window.__CIRCUIT_LAB__` 시험 훅 |
+| `src/app.js` | 조립자(약 350줄). 모듈을 만들고 연결, 학습 탭 3개의 지연 로딩(`lazyWorkspaces`), `window.__CIRCUIT_LAB__` 시험 훅 |
 | `src/circuit-engine.js` | 해석 엔진(DOM 없음). Worker는 `analysis-worker*.js` |
 | `src/editor-*.js`, `canvas-*.js`, `analysis-runner.js`, `inspector.js`, `project-io.js` | 회로 편집기 컨트롤러 |
-| `src/em-*`, `signals-*`, `circuit-course-*` | 학습 작업공간(탭 진입 때 지연 로딩) |
+| `src/em-*`, `signals-*`, `circuit-course-*`, `workspace-tabs.js` | 학습 작업공간(탭 진입 때 지연 로딩). EM: 평면 `em-plane-*`·샌드박스 `em-playground-*`·문제 풀이 `em-course-*`. 신호: `signals-<레슨>-model/view.js` 6쌍 + `signals-course-controller.js` |
 | `server.mjs`, `scripts/` | 로컬 서버(`src/*.js` 평면 파일만 제공), 실행기, 경계 검사, 시험 요약 |
-| `tests/` | `engine/` `ui-model/` `tooling/` + `browser/`(헤드리스 Edge 스모크) |
+| `tests/` | `engine/`(728) `ui-model/`(445) `tooling/`(8) = 단위 1181개 + `browser/`(헤드리스 Edge 스모크 91개) |
 | `docs/ARCHITECTURE.md` | 모듈 지도·데이터 흐름·확장 위치 (먼저 읽을 것) |
 | `docs/COMMON-CONTRACTS.md` | 전기량·단위·파일·실행 상태 계약 |
 | `README.md`, `DESIGN.md` | 사용자 기능·조작표, 화면 설계 원칙 |
@@ -23,9 +23,9 @@ Circuit Lab은 빌드 없는 순수 ES 모듈 웹 앱(회로 편집·해석 + �
 
 ```powershell
 node server.mjs 0              # 빈 포트로 서버 시작 → 출력된 http://127.0.0.1:<포트> 열기 (또는 start-circuit-lab.cmd)
-npm test                       # engine + ui-model + tooling, 약 4초
+npm test                       # engine + ui-model + tooling (1181개), 약 4초
 npm run check                  # src 경계·import 사이클 검사
-npm run test:browser           # 헤드리스 Edge 스모크 (Edge 필요, EDGE_PATH로 지정 가능)
+npm run test:browser           # 헤드리스 Edge 스모크 91개 (Edge 필요, EDGE_PATH로 지정 가능)
 npm run test:all               # 위 둘
 ```
 
@@ -46,5 +46,6 @@ npm run test:all               # 위 둘
 ## 알아 둘 점
 
 - 회로·설정 편집은 `session.mutate()`/`mutateGrouped()`/`commitMove()`를, 프로브 편집은 `addVoltageProbe` 등을 거칩니다(이력·세대·재렌더·자동저장 연동). 결과 채택은 `runSerial`+`generation` 검사를 통과해야 합니다.
-- `scripts/check-boundaries.mjs`의 순수 모델 목록은 오래돼 최근에 추가된 순수 모듈(자동저장·공유·측정 등)을 검사하지 않습니다. 새 순수 모듈은 목록에 넣는 것이 좋습니다.
+- `scripts/check-boundaries.mjs`의 `pure` 목록은 회로·EM·신호의 핵심 순수 모델을 검사합니다(DOM·window·뷰 import 금지). 새 순수 모듈은 이 목록에 넣으십시오(`em-physics`·`em-playground-physics`·`em-playground-calculus`·`em-course-*` 정의처럼 DOM이 없는데 목록에 없는 모듈이 아직 있음).
+- 학습 화면의 입력은 즉시 반영이 원칙이라 "적용"·"예시 계산" 같은 단추를 되살리지 않습니다. 무거운 후속 계산(가우스 정밀 선속, 미적분 프로브)은 `em-interaction`의 "끄는 중" 상태가 끝난 뒤에만 돌립니다.
 - Node는 앱 실행에 20 이상, 시험에 22 이상(전역 `WebSocket`, `node --test` glob)이 필요합니다.

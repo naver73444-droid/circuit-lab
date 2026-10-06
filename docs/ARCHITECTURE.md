@@ -13,6 +13,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 
 - 순수 모델(`*-model`, `*-format`, `circuit-*`, `persistence`, `share-url`, `value-series` …)은 DOM·`window`를 쓰지 않고 `app.js`·뷰·컨트롤러를 import하지 않습니다.
 - 컨트롤러 사이의 호출은 `app.js`가 주입한 함수로 합니다(뒤에 만들어질 모듈을 가리키는 호출은 `() => analysis.x()`로 감쌈). import로 얽힌 예외는 `project-io` → `editor-session`(`PROBE_COLORS`)과 `analysis-runner`/`inspector` → `sweep-panel` 정도입니다. `app.js`를 import하는 모듈은 없습니다.
+- 학습 작업공간(`em-*`, `signals-*`, `circuit-course-*`)은 회로 편집기 모듈을 import하지 않고 서로도 import하지 않습니다. 공용으로 쓰는 바깥 모듈은 `scope-model.js`(`em-format`의 SI 접두어 표), `safe-dom.js`, `course-*.js`(수식 표시·스타일·포커스·그림 계약)뿐입니다. `em-*`는 `signals-*`를, 반대로도 쓰지 않습니다.
 - `circuit-engine.js`는 `union-find.js`만 import합니다. `scope-view.js`·`phasor-view.js`는 engine을 import하지 않습니다(검사됨).
 - `npm run check`가 import 사이클·누락 import·순수 모델의 DOM 접근·`app.js` import를 검사합니다(검사 대상 순수 모델 목록은 `scripts/check-boundaries.mjs`의 `pure`; 800줄을 넘는 모듈과 240자를 넘는 줄이 있는 모듈은 경고).
 
@@ -38,11 +39,17 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 - 표시: `flow-layer.js`("전류 흐름" 보기: 배선 위로 전류 방향 점선이 흐르는 별도 SVG 레이어 `#flow-layer`, `wire-current-model`이 계산한 배선 전류를 속도 등급별 path로 그림. 결과가 오래되는 즉시(`markStale`·`markInputDirty`·실행 무효화 → `onStaleChange`) 지우고, 이동 끌기(`state.drag`가 부품·접속점이고 움직인 상태)가 진행되는 동안에는 어떤 렌더가 와도 숨김 유지. 망 그래프·배선 경로는 회로 지오메트리(회로 객체·`generation`·항목 수)별로 캐시하고, 결과·표본·지오메트리가 같으면 다시 계산하지 않음. 배선 id는 `escapeHtml`로 속성에 넣음), `scope-view.js`(파형 SVG, 커서 A/B; 관찰은 `subscribe(fn)` → 해제 함수, 이벤트 `change`·`cursor`), `measure-view.js`(측정 요약), `phasor-view.js`·`phasor-practice.js`(복소 연산 모델 + 연습 탭), `trace-color.js`(파형 색 대비 계산 + 테마별 색), `safe-dom.js`(escape).
 
 ### 학습 작업공간 (지연 로딩, 회로 편집기와 독립)
-- 전자기학: `em-controller.js`(자유실험실·기본 모델·3D, 진입점) · `em-physics.js`/`em-state.js`/`em-view.js`(WebGL)/`em-format.js` · `em-playground-{physics,state,interaction,calculus,project}.js` · 문제 풀이 `em-course-controller.js` + `em-course-registry.js`가 모으는 `em-course-{electrostatics,coaxial,magnetostatics,boundaries,integrals,induction,waves,transmission}.js`(+ `constants`, `view`).
-- 신호 및 시스템: `signals-course-controller.js`(탭·슬라이더·재생, 뷰 6개를 한 번씩 만들어 속성만 갱신) · 순수 계산 `signals-util.js`·`signals-course-model.js`·`signals-time-model.js`·`signals-convolution-model.js`·`signals-series-model.js`·`signals-transform-model.js`·`signals-roc-model.js`·`signals-sampling-model.js`·`signals-custom-input.js`·`signals-expression.js`(제한 산술 AST, JS 평가 없음)·`signals-playback.js` · SVG 도구 `signals-plot.js`·`signals-style.js` · 뷰 `signals-{time,convolution,series,transform,roc,sampling}-view.js`.
-- 회로 과정(AC·3상, 네 번째 최상위 탭 "회로 과정"): `circuit-course-controller.js` · `circuit-course-registry.js` · `circuit-course-model.js` · `circuit-course-problem{,-symbolic}.js` · `circuit-course-view.js`.
+세 작업공간 모두 "입력 즉시 반영"이 원칙이라 적용 버튼·적용 게이트가 없고, 상태 변경 → 한 프레임(rAF)으로 합친 재그리기 한 길만 있습니다. 순수/DOM 구분은 `scripts/check-boundaries.mjs`의 `pure` 목록을 따릅니다.
+
+- **전자기학**(진입점 `em-controller.js`, 위쪽 `평면 / 3D / 문제 풀이`):
+  - 순수(`pure` 목록, DOM·window 금지): `em-format`(SI 접두어 문구) · `em-contour`(marching squares 등위선, 격자 단위) · `em-fieldlines`(RK2 장선) · `em-gauss`(가우스 구 포함 판정·거친 선속·반지름 한계) · `em-plane-geometry`(월드↔캔버스·적중·축척) · `em-plane-field`(평면이 묻는 `evaluate(point)`와 격자 표집; 샌드박스·내장 모델 공통) · `em-plane-modes`(자유 배치 / 내장 모델이 같은 질문 `plane·fixed·field·sensor`에 답하는 어댑터, 장 캐시) · `em-source-edit`(인스펙터 필드·패치·전하 슬라이더 눈금·`[ ]` 순환 대상·방향키 패치) · `em-readout`(측정값·가우스 문구) · `em-calculus`(미분·적분 프로브 문구) · `em-state`(내장 모델 5종 상태·즉시 검증·평면파 시계) · `em-playground-state`(자유 배치 전하·선택·시험전하·되돌리기 이력) · `em-interaction`(아래) · `em-course-params`(슬라이더 ↔ SI 값·선택지) · `em-course-time`(시간 스크러버·ℰ(t)·순간 파형).
+  - DOM은 없지만 목록에 아직 없는 순수 계산: `em-physics`(상수·장 공식) · `em-playground-physics`(전하 검증·한도 16개·점전하 평가기) · `em-playground-calculus`(div·curl·선속·순환) · `em-playground-interaction`(카메라·광선) · `em-playground-project`(EM JSON 검증) · 문제 풀이 정의 `em-course-{electrostatics,coaxial,magnetostatics,boundaries,integrals,induction,waves,transmission}.js`(각 `EXPERIMENTS`, 상수는 `em-course-constants`, 모음은 `em-course-registry` — 총 23개).
+  - DOM·canvas: `em-controller`(조립·한 번의 `render()`) · `em-plane-controller`(포인터·키·`draw()`) · `em-plane-render`(canvas 두 장) · `em-palette`(CSS 토큰 → canvas 색) · `em-3d-panel` + `em-view`(WebGL) · `em-inspector` · `em-scenes-panel`(기본 모델 폼) · `em-calculus-panel` + `em-calculus-view` · `em-project-panel`(EM 파일·예제). 문제 풀이: `em-course-controller`(진입점) · `em-course-ui`(셸·슬라이더 줄·답 카드) · `em-course-view`(그림·ℰ(t) 그래프) · `em-course-symbolic`.
+  - `em-controller`는 문제 풀이(약 290KB)를 처음 열 때만 동적 import하고(`prefetchEMCourse`는 `문제 풀이` 버튼에 올리거나 포커스할 때), 실패하면 `?retry=N`으로 다시 시도합니다.
+- **신호 및 시스템**: `signals-course-controller.js`(탭·슬라이더·재생·키, 진입점). 레슨마다 순수 모델 `signals-{time,convolution,series,transform,roc,sampling}-model.js`와 SVG 뷰 `signals-*-view.js`가 한 쌍이고, 공용 순수 모듈은 `signals-course-model`(레슨 목록·입력 파서·수치 기본 계산) · `signals-util`(눈금·서식·`controlDefaults`) · `signals-expression`(제한 산술 AST, JS 평가 없음) · `signals-custom-input`(컨볼루션 고급 입력) · `signals-playback`(재생 시각 → 커서). SVG 도구 `signals-plot.js`(`createSurface`·`createPane`·`createLegend`, 요소는 한 번만 만들고 속성만 갱신), 스타일 `signals-style.js`(테마 토큰만).
+- **회로 과정**(네 번째 최상위 탭): `circuit-course-controller.js` · `circuit-course-registry.js` · `circuit-course-model.js` · `circuit-course-problem{,-symbolic}.js` · `circuit-course-view.js`(색은 토큰).
 - 공용: `course-focus.js`(재렌더 후 포커스 유지) · `course-style.js`(스타일 1회 주입) · `course-math-view.js`·`course-symbolic-view.js`(수식 표시) · `course-illustration-contract.js`.
-- `workspace-tabs.js` — 작업공간 탭과 `createLazyController`.
+- `workspace-tabs.js` — `WORKSPACES` 목록, 탭 전환, `createLazyController`.
 
 ## 선택 모델
 
@@ -71,6 +78,33 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 
 프로젝트 교체(새 회로·열기·복원·링크·`hashchange`·예제)는 `resetProjectSession()`으로 예약 실행·제스처·draft·결과·포트·스윕·스코프 상태를 전부 비웁니다.
 
+## 학습 작업공간 구조
+
+### 작업공간 일반화 (`WORKSPACES`)
+`workspace-tabs.js`의 `WORKSPACES = ['circuit', 'em', 'signals', 'circuit-course']`가 유일한 목록입니다. 탭 버튼은 `data-workspace-tab`, 비회로 패널은 `#<이름>-workspace`이고(`hidden`+`inert` 토글), 새 작업공간은 이 목록과 패널·탭만 더하면 전환 코드는 그대로 돌아갑니다. `app.js`는 세 학습 탭을 `lazyWorkspaces = { em, signals, "circuit-course" }`(이름 → `createLazyController`) 한 표로 다룹니다: 시작 탭(`?workspace=`, `Object.hasOwn`으로 검증)의 모듈 선받기, 탭 이탈 시 `controller.deactivate()`, 진입 시 `activateLazyWorkspace`(`workspaceSeq` 토큰으로 늦게 온 로딩 무시), 탭 위 `onIntent` 선받기, 한가할 때 `scheduleWorkspacePrefetch`. 시험 훅은 `getEMState`·`getSignalsCourseState`·`getCircuitCourseState`(로딩 전 null)와 `ensureWorkspace(name)`·`activateWorkspace(name)`입니다. 컨트롤러 계약은 `activate()`·`deactivate()`·`inspect()`·`destroy()` 네 개입니다.
+
+### 전자기학 평면 그리기 흐름
+1. 상태 변경(포인터·키·인스펙터·슬라이더) → `onChange()` = `requestRender()`가 rAF 하나로 합칩니다(`frameId`). 숨김·창 포커스 상실은 `suspend()`(예약 프레임·재생·진행 중 끌기·`interaction` 취소), 복귀는 `resume()`.
+2. `render()` = `syncChrome()`(aria-pressed·표시/숨김·문구) → 평면 탭이면 `plane.draw()`, 3D 탭이면 `threeD.draw()` + `plane.measure()` → `showReadouts()`(문구·행 키가 같으면 DOM을 건드리지 않음) → 인스펙터/기본 모델 폼 `sync` → `calculus.update(interaction.active)`.
+3. `plane.draw()`: `measure()`(시험전하에서 `field('final').evaluate`, 가우스 정보) 후 `createPlaneRenderer.render(scene)`.
+4. **초안 vs 최종**: `lab.quality`는 전하를 끄는 동안만 `'draft'`(거친 격자 16px 셀·화살표 간격 62·가벼운 장선·내장 모델은 거친 표본 장)이고 놓거나 `Esc`·취소로 `'final'`(7px 셀·정밀 장)로 돌아갑니다. 시험전하·가우스 면 끌기는 배경을 다시 그리지 않습니다. 측정값은 항상 최종 장으로 계산합니다.
+5. **캐시**: (a) `em-plane-modes`가 장을 상태가 바뀔 때만 다시 만듭니다 — 자유 배치는 전하 JSON의 해시(시험전하 이동은 장을 건드리지 않음), 내장 모델은 `{final, draft}` 두 슬롯(초안을 요청해도 수렴한 장이 밀려나지 않음). (b) `em-plane-render`는 배경(전위 색·등전위선·장선·화살표)을 오프스크린이 아니라 아래쪽 canvas(`#em-plane-base`)에 그리고, 키 `[fieldKey, 크기, span, offset, plane, fixed, 장선·등전위선 칩, quality, 팔레트 색, dpr]`가 같으면 건너뜁니다(`stats.baseCached`). 위쪽 canvas(`#em-plane`)의 전하·가우스 면·시험전하·축척은 매 프레임 그립니다. (c) 가우스 정밀 선속은 `[fieldKey, 중심, 반지름]` 키로 결과 한 개를 기억합니다.
+6. **`em-interaction`**(순수): 평면 끌기·3D 끌기/카메라·가우스 반지름 슬라이더가 `begin(token)`/`end(token)`로 공유하는 "조작 중" 상태. `begin`은 `generation`을 올리고 등록된 취소자(`onBegin`)를 부릅니다. 정밀 가우스 선속은 30 ms 디바운스 타이머가 `isCurrent(generation)`을 시작·계산 뒤 두 번 확인하고(조작 중이면 폐기), 미적분 프로브는 90 ms 지연 뒤 같은 방식으로 돌아 조작 중에는 계산하지 않습니다.
+7. 색: `em-palette`가 CSS 토큰을 한 번 읽어 캐시하고 `data-theme` 변경·시스템 색상 변경 때 무효화해 `plane.invalidate()`/`threeD.invalidate()`/`requestRender()`를 부릅니다(문제 풀이 화면도 자기 팔레트로 ℰ(t) 그래프를 다시 칠함).
+8. 되돌리기 이력은 자유 배치의 전하·선택만 담습니다(끌기 1회·한 전하의 연속 편집 묶음·추가/삭제/초기화 = 한 단계, 시험전하·카메라·칩은 제외). 파일 열기 후 저장은 `comparison`·`vectorMode`·`legend`를 보존합니다.
+
+### 전자기 문제 풀이 흐름
+`em-course-controller`는 실험마다 `record`(params·point·result·profiles·검증·기호 선택지·표시 옵션)를 `Map`에 두어 실험을 오가도 상태가 유지됩니다. 슬라이더·입력 → `setParam`(시간 매개변수를 새 범위로 `normalizeTime` → `evaluate` → profile 표본 검증; 무효 조합은 이유를 보이고 이전 값 유지) → `renderNumeric`(답·값·메모·시간 줄) + `renderPicture`(rAF) , 기호 풀이는 선택지가 바뀔 때만 다시 그리고 자동 검증은 300 ms 디바운스입니다. 셸·슬라이더 줄은 실험마다 한 번 만들고(`em-course-ui`) 값만 제자리 갱신해 포커스를 잃지 않습니다. 시간 의존 5개(`faraday-loop`, `motional-rod`, `wave-medium`, `wave-interface-normal`, `transmission-lossless`)는 `timeSpec`이 스크러버 범위를, `advanceTime`이 재생(한 번 훑는 데 4초)을, `timeTrace`·`instantProfiles`가 ℰ(t)와 순간 파형을 실험의 `evaluate()`에서 읽어 만듭니다(파장당 표본 ≥16, 상한 4000 — 넘으면 "표본 해상도 제한"으로 그리지 않음).
+
+### 신호 레슨 뼈대 (모델 → 뷰 갱신)
+`signals-course-controller`의 `REGISTRY = { id: [lesson, createView] }`가 레슨을 묶습니다.
+- **lesson(순수 모델)**: `families`·`initialFamily`(예시 선택), `controls(family, params)`(슬라이더 명세 1~3개: `key·label·min·max·step·initial·unit·integer`), `cursor(family, params, extra)`(관측 위치 범위·`discrete`·`loop`·`rate`, 없으면 null), `scrub`(재생 가능 여부), 선택 `normalize(family, params)`(쓸 수 없는 값을 합법 값으로 바꿔 `note`와 함께 돌려줌, 예: a = 0), `read(family)`(그림 아래 한 줄), `describe(info)`(실시간 문장), `formula(family, params)`(접힌 핵심 수식).
+- **view**: `createXView({ doc, parent, emit })` → `{ root, surface, layout(width), update(info), onKey?(event, state), destroy }`. 요소는 첫 사용 때 한 번 만들고(`ensureView`) 이후 `update`는 속성만 바꿉니다(시험이 SVG 노드 수 불변을 확인). 끌기는 `emit({ params | cursor })` 패치로 돌려보냅니다.
+- **컨트롤러 상태**: 레슨마다 `{ family, params, saved[family], cursor, extra(고급 입력 초안), note, playing }`를 `Map`에 두어 탭·예시를 오가도 슬라이더 값이 남습니다.
+- **갱신 경로**: `input` 이벤트(슬라이더·스크러버·고급 입력) 또는 뷰 패치/키 → `applyPatch`(범위·정수 clamp → `normalize` → 커서 clamp, 커서 개입이면 재생 정지) → `schedule()`(rAF 하나로 합침) → `paint()`: `read` 문구, 폭이 바뀌었으면 `view.layout`, `syncControls`, `view.update(info)`, `describe` 문장(`sg-live` 줄), 핵심 수식이 열려 있으면 다시 그림. 뷰 예외는 상태 줄에 메시지로만 나타나고 다음 성공 때 지워집니다.
+- **재생**: `startPlayback`(사용자 재생, 움직임 줄이기 무시)과 `autoPlay`(활성화·레슨 전환·포커스 복귀, 움직임 줄이기면 안 함)를 구분하고, `playbackCursor`(순수)가 경과 시간을 커서로 바꿉니다. 탭 숨김·창 `blur`·작업공간 이탈에 멈추고 `focus`·복귀 때 이어지며, 끝에 닿으면(비루프) 영구 종료입니다.
+- 새 레슨: lesson·view 한 쌍을 만들고 `REGISTRY`와 `SIGNALS_LESSONS`에 추가, 모델은 `pure` 목록과 `tests/engine/signals/`(폐형식 대조)에 추가합니다.
+
 ## 지연 로딩 경계
 
 `createLazyController({host, load, create})`가 모듈 import를 한 번만 하고 컨트롤러를 하나만 만들며, 실패하면 `?retry=N`을 붙여 다시 시도하는 버튼을 보입니다. 경계는 세 곳입니다: `em-controller.js`, `signals-course-controller.js`, `circuit-course-controller.js`(모두 `app.js`의 `import()`; 탭 이름은 `workspace-tabs.js`의 `WORKSPACES`). `em-controller.js`는 안에서 다시 `em-course-controller.js`(문제 풀이 23실험)를 첫 사용 때 동적 import합니다. 탭 위 포인터·포커스에서 미리 받고(`onIntent`), 페이지가 한가해지면 1.5 s 뒤 세 모듈을 미리 받습니다(Save-Data면 생략). 전환 순서를 지키는 토큰은 `workspaceSeq`입니다. 회로 편집기 모듈은 지연 로딩하지 않으며, 숨겨진 동안의 재렌더는 `workspace.renderDeferred`로 미룹니다.
@@ -85,12 +119,14 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 
 **새 단축키**: `editor-shortcuts.js`에 동작 이름을 추가하고 `editor-input.js`의 `handled` 표에 연결합니다(이력을 쓰거나 되돌리는 동작은 `DRAG_COMMITTING`에 넣어 진행 중 드래그를 먼저 확정). 글자 입력 칸 안에서도 동작해야 하는 키는 `shortcutFor`의 `typing` 검사 앞에 둡니다(현재 Ctrl+S, Ctrl+Enter; Ctrl+S는 IME 조합 중에도 동작해 브라우저 저장 대화상자를 막음).
 
-**새 학습 실험**: EM은 해당 `em-course-*.js`의 `EXPERIMENTS`에 추가(레지스트리가 모음), 회로 과정은 `circuit-course-registry.js`, 신호는 `signals-course-model.js`의 `SIGNALS_LESSONS`.
+**새 학습 실험**: EM은 해당 `em-course-*.js`의 `EXPERIMENTS`에 추가(레지스트리가 모음), 회로 과정은 `circuit-course-registry.js`, 신호는 레슨·뷰 한 쌍을 만들어 `signals-course-model.js`의 `SIGNALS_LESSONS`와 컨트롤러 `REGISTRY`에 추가(위 "신호 레슨 뼈대").
 
 ## 시험 구조
 
-- `tests/engine/` — 순수 계산: `circuit/`(MNA·소스·OP AMP·LU·포트·페이저), `circuit-course/`, `em/`, `signals/`. 독립 기대값과 `tests/fixtures/*.json` 사용.
-- `tests/ui-model/` — DOM 없는 UI 모델과 가짜 DOM 컨트롤러(편집·이력·기하·단축키·자동저장·공유·측정·스윕·패널·워크스페이스·테마 대비 등).
-- `tests/tooling/` — 소스 내보내기 스크립트와 경계 검사기(`check-boundaries`). `tests/helpers/` — 시험 전용 보조(`parseCSV`, `phasorFromPolar`).
-- `tests/browser/` — `harness.mjs`(서버 `node server.mjs 0` 기동, 임시 프로필 헤드리스 Edge, CDP 입력·`window.__CIRCUIT_LAB__` 상태 조회, 프로필 경로로만 프로세스를 찾아 종료·확인)와 `smoke.test.mjs`(콘솔 오류·실패 요청이 있으면 해당 시나리오 실패, 67개 시나리오).
+단위 1181개(`npm test`, 약 4초) + 브라우저 스모크 91개. 개수는 `node --test` 요약과 `tests/browser/smoke.test.mjs`의 `test(` 호출을 센 값이라 시험을 더하면 이 절도 갱신합니다.
+
+- `tests/engine/`(728개) — 순수 계산: `circuit/`(192개, 파일 10: MNA·소스·OP AMP·LU·포트·페이저), `circuit-course/`(63개, 6), `em/`(375개, 29: 물리·등위선·장선·가우스·평면·문제 풀이 23실험의 수치·기호·시간 정의), `signals/`(98개, 9: 레슨 모델을 `reference.mjs`의 독립 폐형식과 대조). 독립 기대값과 `tests/fixtures/*.json` 사용.
+- `tests/ui-model/`(445개, 파일 50) — DOM 없는 UI 모델과 가짜 DOM 컨트롤러(편집·이력·기하·단축키·자동저장·공유·측정·스윕·패널·워크스페이스·지연 로딩·테마 대비 등).
+- `tests/tooling/`(8개) — 소스 내보내기 스크립트와 경계 검사기(`check-boundaries`, 긴 줄 경고 포함). `tests/helpers/` — 시험 전용 보조(`parseCSV`, `phasorFromPolar`).
+- `tests/browser/`(91개 시나리오) — `harness.mjs`(서버 `node server.mjs 0` 기동, 임시 프로필 헤드리스 Edge, CDP 입력·`window.__CIRCUIT_LAB__` 상태 조회, 프로필 경로로만 프로세스를 찾아 종료·확인)와 `smoke.test.mjs`(콘솔 오류·실패 요청이 있으면 해당 시나리오 실패). 회로 편집·해석·이력·자동저장·공유·다중 선택·클립보드·전류 흐름이 대부분이고, 신호 11개(레슨 렌더·슬라이더·키·재생 정책·터치·움직임 줄이기·SVG 노드 불변), 전자기 평면·가우스·인스펙터·팔레트·3D·문제 풀이·테마·폰 폭, 작업공간 전환·회로 과정이 들어 있습니다.
 - 명령: `npm test`(engine + ui-model + tooling), `npm run test:browser`, `npm run test:all`, `npm run test:summary`, `npm run check`.

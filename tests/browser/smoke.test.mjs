@@ -2599,4 +2599,405 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await ev(`window.dispatchEvent(new Event("focus"))`);
     await until(`${L}.getSignalsCourseState().playing === true`, "focus to resume");
   });
+
+  // ---- redesigned 전자기학 workspace: plane sandbox, test-charge sensor, Gauss surface, inline inspector, palette, 3D tab, course, theme, phone ----------
+  const emState = () => ev(`${L}.getEMState()`);
+  const emPg = async () => (await emState()).playground;
+  const emSource = async (id) => (await emPg()).sources.find((source) => source.id === id);
+  /** Open the EM workspace on a fresh page (lazy-loaded through the real tab click) and wait for the plane canvas to be sized and drawn. */
+  async function openEM(options) {
+    await navigate("/", options);
+    await click("#em-workspace-tab");
+    await ev(`${L}.ensureWorkspace("em").then((controller) => typeof controller.inspect)`);
+    await until(`${L}.getEMState()?.active === true && document.getElementById("em-plane").clientWidth > 100 && ${L}.getEMState().diagnostics.frames > 0`, "the EM plane to be drawn");
+    await settle();
+  }
+  /** Screen point (and px per metre) of a world position (a, b) of the plane canvas, using the view the app reports. */
+  const emScreen = (a, b) => ev(`(() => {
+    const s = ${L}.getEMState(), c = document.getElementById("em-plane"); c.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const r = c.getBoundingClientRect(), w = c.clientWidth, h = c.clientHeight, scale = Math.min(w, h) / (2 * s.view.span);
+    return { x: r.left + w / 2 + (${a} - s.view.offset[0]) * scale, y: r.top + h / 2 - (${b} - s.view.offset[1]) * scale, scale };
+  })()`);
+  /** FNV hash of every pixel of the canvases (the plane view has a cached base layer and a live overlay: pass both ids). */
+  const canvasHash = (...ids) => ev(`(() => {
+    let h = 2166136261 >>> 0;
+    for (const id of ${JSON.stringify(ids)}) {
+      const c = document.getElementById(id), data = c.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, c.width, c.height).data;
+      for (let i = 0; i < data.length; i += 1) { h ^= data[i]; h = Math.imul(h, 16777619) >>> 0; }
+    }
+    return h;
+  })()`);
+  const planeHash = () => canvasHash("em-plane-base", "em-plane");
+  /** Number of distinct colours on a canvas (a blank canvas has one), counted up to 51: proves something was really drawn. */
+  const colorCount = (id) => ev(`(() => { const c = document.getElementById(${JSON.stringify(id)}), d = c.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, c.width, c.height).data; const seen = new Set(); for (let i = 0; i < d.length; i += 4) { seen.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); if (seen.size > 50) break; } return seen.size; })()`);
+  const sensorRows = () => ev(`Object.fromEntries([...document.querySelectorAll("#em-sensor-rows dt")].map((dt) => [dt.textContent.trim(), dt.nextElementSibling.textContent.trim()]))`);
+  const K_COULOMB = 8.9875517923e9, EPS0_SI = 8.8541878128e-12;
+  /** Coulomb field magnitude and potential of the point charges in `sources` at world point `p` (independent of the app's evaluator). */
+  function coulomb(sources, p) {
+    let ex = 0, ey = 0, ez = 0, potential = 0;
+    for (const source of sources) {
+      if (source.type !== "point" || source.enabled === false) continue;
+      const d = p.map((value, axis) => value - source.position[axis]), r = Math.hypot(...d);
+      ex += (K_COULOMB * source.q * d[0]) / r ** 3; ey += (K_COULOMB * source.q * d[1]) / r ** 3; ez += (K_COULOMB * source.q * d[2]) / r ** 3;
+      potential += (K_COULOMB * source.q) / r;
+    }
+    return { magnitude: Math.hypot(ex, ey, ez), potential };
+  }
+  const gaussLines = () => ev(`[...document.querySelectorAll("#em-gauss-lines p")].map((p) => p.textContent)`);
+  /** The flux numbers of the Gauss readout: expected Q/eps0 and the numeric surface integral, plus its tag. */
+  async function gaussFlux() {
+    const lines = await gaussLines();
+    const expected = /Φ = Q\/ε₀ = (\S+) V·m/.exec(lines[1] ?? ""), numeric = /∮E·dA = (\S+) V·m\s+\((.+)\)/.exec(lines[2] ?? "");
+    const read = (match) => (match ? Number(match[1].replace("−", "-")) : NaN);
+    return { lines, expected: read(expected), numeric: read(numeric), tag: numeric?.[2] ?? "", charge: lines[0] };
+  }
+  /** Drag the Gauss circle by grabbing it inside the ring (away from the charge handle underneath) and moving its centre to world (a, b). */
+  async function dragGaussTo(a, b) {
+    const { gauss } = await emState();
+    const centre = await emScreen(gauss.center[0], gauss.center[1]), target = await emScreen(a, b);
+    const grab = { x: centre.x, y: centre.y + gauss.radius * centre.scale * 0.5 };
+    assert.ok(gauss.radius * centre.scale * 0.5 > 26, "the ring is big enough to grab beside the charge handle");
+    await dragBetween(grab, { x: grab.x + (target.x - centre.x), y: grab.y + (target.y - centre.y) });
+  }
+
+  /** A real Enter key press including its character ("\u000d"): the text field commits its value (change event) like in a user's browser. */
+  async function pressEnter() {
+    await ctx.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\u000d" });
+    await ctx.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await settle();
+  }
+
+  test("EM plane: default sources are drawn; dragging q1 moves it, re-renders the canvas and undo restores it", async () => {
+    await openEM();
+    const initial = await emState();
+    assert.equal(initial.tab, "plane");
+    assert.equal(initial.scene, "playground");
+    assert.deepEqual(initial.playground.sources.map((source) => [source.id, source.q, source.position]), [["q1", 1e-9, [-0.75, 0, 0]], ["q2", -1e-9, [0.75, 0, 0]]], "the default sandbox is a +1 nC / -1 nC pair");
+    assert.equal(await ev(`(() => { const p = document.getElementById("em-plane"), b = document.getElementById("em-plane-base"); return !p.hidden && !b.hidden && document.getElementById("em-canvas").hidden && p.clientHeight >= 320; })()`), true, "plane visible, 3D hidden, canvas at least 320px tall");
+    assert.ok(await colorCount("em-plane-base") > 10, "the base layer (colour map, field lines) is really drawn");
+    assert.match(await ev(`document.getElementById("em-inspector").textContent`), /q1/, "the inline inspector shows the selected source");
+    const hashBefore = await planeHash();
+    const framesBefore = (await emState()).diagnostics.frames;
+    const q1 = await emScreen(-0.75, 0);
+    await dragBetween(q1, { x: q1.x + 60, y: q1.y });
+    const moved = await emSource("q1");
+    near(moved.position[0], -0.75 + 60 / q1.scale, 0.02, "q1 x after a +60 px drag", 0.005);
+    assert.equal(moved.position[1], 0);
+    assert.equal((await emPg()).past.length, 1, "one drag is one history step");
+    assert.ok((await emState()).diagnostics.frames > framesBefore, "the drag re-rendered the workspace");
+    const hashMoved = await planeHash();
+    assert.notEqual(hashMoved, hashBefore, "the canvas pixels changed");
+    await click("#em-pg-undo");
+    assert.deepEqual((await emSource("q1")).position, [-0.75, 0, 0], "undo restores q1's position");
+    assert.equal(await planeHash(), hashBefore, "the restored scene paints the same pixels as the original");
+    await click("#em-pg-redo");
+    near((await emSource("q1")).position[0], moved.position[0], 1e-9, "redo moves q1 again");
+    assert.equal(await planeHash(), hashMoved);
+  });
+
+  test("EM sensor: dragging the test charge near q1 shows E and V in SI units that follow Coulomb's law, and |E| grows towards the charge", async () => {
+    await openEM();
+    const readAt = async (a, b) => {
+      const from = await emScreen(...(await emPg()).probe.slice(0, 2));
+      await dragBetween(from, await emScreen(a, b));
+      const probe = (await emPg()).probe;
+      near(probe[0], a, 0.02, "sensor x", 0.02); near(probe[1], b, 0.02, "sensor y", 0.02);
+      const rows = await sensorRows(), compact = await ev(`document.getElementById("em-sensor-text").textContent`);
+      assert.match(rows["|E|"], /^\d+(\.\d+)?\s?[fpnµmkMG]?V\/m$/, `|E| has SI units: ${rows["|E|"]}`);
+      assert.match(rows.V, /^[−-]?\d+(\.\d+)?\s?[fpnµmkMG]?V$/, `V has SI units: ${rows.V}`);
+      assert.match(compact, /E = .*V\/m.*V = .*V$/, `compact text: ${compact}`);
+      const expected = coulomb((await emPg()).sources, probe);
+      near(parseEng(rows["|E|"]), expected.magnitude, 0.015, `|E| at (${a}, ${b})`);
+      near(parseEng(rows.V), expected.potential, 0.015, `V at (${a}, ${b})`, 0.05);
+      return parseEng(rows["|E|"]);
+    };
+    const nearField = await readAt(-0.75, 0.4), farField = await readAt(-0.75, 1.6);
+    assert.ok(nearField > farField * 3, `|E| 0.4 m above q1 (${nearField}) is much larger than 1.6 m above it (${farField})`);
+    const closer = await readAt(-0.75, 0.25);
+    assert.ok(closer > nearField, `|E| keeps growing as the sensor approaches q1 (${closer} > ${nearField})`);
+    assert.equal((await emPg()).past.length, 0, "moving the sensor is a view action, not an undo step");
+  });
+
+  test("EM Gauss surface: the circle around one +1 nC charge reads Phi = Q/eps0 = 112.9 V·m (converged, within 2%); around nothing it reads 0", async () => {
+    await openEM();
+    await click("#em-chip-gauss");
+    await until(`${L}.getEMState().chips.gauss === true && ${L}.getEMState().gauss && !document.getElementById("em-gauss-readout").hidden`, "the Gauss readout");
+    const converged = async (what) => {
+      await until(`document.querySelector("#em-gauss-lines")?.textContent.includes("정밀")`, `the precise flux (${what})`);
+      return gaussFlux();
+    };
+    const first = await converged("around q1");
+    near(first.expected, 1e-9 / EPS0_SI, 0.005, "Q/eps0 for +1 nC");
+    near(first.expected, 112.9, 0.005, "Q/eps0 reads 112.9 V·m");
+    assert.match(first.charge, /1 nC.*q1/, `the enclosed charge is q1: ${first.charge}`);
+    assert.match(first.tag, /수렴/, "the numeric flux says it converged");
+    near(first.numeric, first.expected, 0.02, "numeric surface integral vs Q/eps0");
+    assert.equal(await ev(`document.getElementById("em-gauss-lines").dataset.agrees`), "true");
+    assert.match(await ev(`document.getElementById("em-gauss-state").textContent`), /일치/);
+    // move the circle (grabbing its inside beside the charge handle) onto empty space: nothing is enclosed
+    await dragGaussTo(0, -2);
+    const g = (await emState()).gauss;
+    near(g.center[0], 0, 0.05, "circle centre x", 0.05); near(g.center[1], -2, 0.03, "circle centre y", 0.05);
+    const none = await converged("around nothing");
+    assert.match(none.charge, /^Q내부 = 0 C\s+\(없음\)$/, `nothing enclosed: ${none.charge}`);
+    assert.ok(Math.abs(none.numeric) < 0.02 * 112.9, `Phi through an empty surface is ~0 (${none.numeric})`);
+    assert.equal(await ev(`document.getElementById("em-gauss-lines").dataset.agrees`), "true");
+    // and back onto q1
+    await dragGaussTo(-0.75, 0);
+    const again = await converged("back around q1");
+    near(again.numeric, 112.9, 0.02, "numeric flux after moving back");
+    assert.match(again.tag, /수렴/);
+    assert.equal((await emPg()).past.length, 0, "moving the Gauss circle never edits the charges");
+  });
+
+  test("EM inspector: a slider gesture updates the charge live and is one history step; a typed number plus Enter applies", async () => {
+    await openEM();
+    const slider = '[data-em-field="strength-slider"]', field = '[data-em-field="strength"]';
+    assert.equal((await emPg()).selectedId, "q1");
+    assert.equal(await ev(`document.querySelector(${JSON.stringify(field)}).value`), "1");
+    const strengthFromSlider = (t) => { // src/em-source-edit.js: dead notch, then log scale 0.01..1000 nC with 3 significant digits
+      const m = Math.abs(t); if (m <= 0.03) return 0;
+      return Math.sign(t) * Number((0.01 * 1e5 ** Math.min(1, (m - 0.03) / 0.97)).toPrecision(3));
+    };
+    // A real range-input drag: press on the thumb, move with the left button held (Blink only drags a slider when button is "left"), release.
+    const dragSlider = async (toFraction, beforeRelease) => {
+      const spot = await ev(`(() => { const input = document.querySelector(${JSON.stringify(slider)}), r = input.getBoundingClientRect(), f = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min)); return { x: r.left + 8 + (r.width - 16) * f, y: r.top + r.height / 2, left: r.left + 8, width: r.width - 16 }; })()`);
+      const send = (type, x, extra) => ctx.cdp.send("Input.dispatchMouseEvent", { type, x, y: spot.y, ...extra });
+      const toX = spot.left + spot.width * toFraction;
+      await send("mouseMoved", spot.x, {});
+      await send("mousePressed", spot.x, { button: "left", buttons: 1, clickCount: 1 });
+      for (let step = 1; step <= 6; step += 1) await send("mouseMoved", spot.x + ((toX - spot.x) * step) / 6, { button: "left", buttons: 1 });
+      await settle();
+      if (beforeRelease) await beforeRelease();
+      await send("mouseReleased", toX, { button: "left", buttons: 0, clickCount: 1 });
+      await settle();
+    };
+    const gesture = async (to) => {
+      const sensorBefore = await ev(`document.getElementById("em-sensor-text").textContent`), pastBefore = (await emPg()).past.length, qBefore = (await emSource("q1")).q;
+      await dragSlider(to, async () => {
+        const q = (await emSource("q1")).q;
+        assert.notEqual(q, qBefore, "the charge already follows the slider before it is released");
+        assert.equal(await ev(`document.querySelector(${JSON.stringify(field)}).value`), String(Number((q * 1e9).toPrecision(6))), "the number field follows the slider live");
+        assert.notEqual(await ev(`document.getElementById("em-sensor-text").textContent`), sensorBefore, "the sensor readout follows live");
+        assert.equal((await emPg()).past.length, pastBefore, "the history step is closed only when the gesture ends");
+      });
+      assert.equal((await emPg()).past.length, pastBefore + 1, "one slider gesture is exactly one undo step");
+      const t = Number(await ev(`document.querySelector(${JSON.stringify(slider)}).value`));
+      near((await emSource("q1")).q * 1e9, strengthFromSlider(t), 1e-6, "q matches the slider position (nC)");
+      return (await emSource("q1")).q;
+    };
+    const first = await gesture(0.85);
+    assert.ok(first > 1e-9, `q grew to ${first}`);
+    const second = await gesture(0.6);
+    assert.ok(second < first && second > 0, `q shrank to ${second}`);
+    assert.equal((await emPg()).past.length, 2);
+    await typeInto(field, "3.5");
+    near((await emSource("q1")).q, 3.5e-9, 1e-9, "the typed number is applied as you type");
+    await pressEnter();
+    near((await emSource("q1")).q, 3.5e-9, 1e-9, "q after Enter");
+    assert.equal((await emPg()).past.length, 3, "a typed number is one undo step");
+    assert.equal(await ev(`document.querySelector(${JSON.stringify(field)}).hasAttribute("aria-invalid")`), false);
+    await typeInto(field, "-2");
+    await pressEnter();
+    near((await emSource("q1")).q, -2e-9, 1e-9, "a negative number flips the charge");
+    assert.equal((await emPg()).past.length, 4);
+    await click("#em-pg-undo");
+    near((await emSource("q1")).q, 3.5e-9, 1e-9, "undo steps back to the previous typed value");
+  });
+
+  test("EM palette: +q and −q add sources, [ and ] cycle the selection, Delete removes the selected one", async () => {
+    await openEM();
+    assert.equal((await emPg()).sources.length, 2);
+    await click('[data-em-pg-add="1"]');
+    let pg = await emPg();
+    assert.equal(pg.sources.length, 3);
+    assert.equal(pg.past.length, 1, "adding a source is one history step");
+    const added = pg.sources[2];
+    assert.equal(pg.selectedId, added.id, "the new source is selected");
+    assert.deepEqual([added.type, added.q], ["point", 1e-9]);
+    await click('[data-em-pg-add="-1"]');
+    pg = await emPg();
+    assert.equal(pg.sources.length, 4);
+    assert.equal(pg.past.length, 2);
+    assert.equal(pg.sources[3].q, -1e-9);
+    assert.equal(new Set(pg.sources.map((source) => JSON.stringify(source.position))).size, 4, "new charges are placed on free spots, not on top of others");
+    const ids = pg.sources.map((source) => source.id);
+    await ev(`document.getElementById("em-plane").focus()`);
+    const selected = async () => (await emPg()).selectedId;
+    assert.equal(await selected(), ids[3]);
+    await press("]", "BracketRight", 221);
+    assert.equal(await selected(), ids[0], "] wraps from the last source to the first");
+    await press("]", "BracketRight", 221);
+    assert.equal(await selected(), ids[1]);
+    await press("[", "BracketLeft", 219);
+    assert.equal(await selected(), ids[0]);
+    await press("[", "BracketLeft", 219);
+    assert.equal(await selected(), ids[3], "[ wraps from the first source to the last");
+    assert.match(await ev(`document.getElementById("em-live").textContent`), /선택/, "the selection is announced");
+    assert.equal((await emPg()).past.length, 2, "selecting is not a history step");
+    await press("Delete", "Delete", 46);
+    pg = await emPg();
+    assert.deepEqual(pg.sources.map((source) => source.id), ids.slice(0, 3), "Delete removed the selected source");
+    assert.equal(pg.selectedId, null);
+    assert.equal(pg.past.length, 3);
+    await press("Delete", "Delete", 46);
+    assert.equal((await emPg()).sources.length, 3, "Delete with nothing selected does nothing");
+    await click("#em-pg-undo");
+    assert.deepEqual((await emPg()).sources.map((source) => source.id), ids, "undo brings the deleted source back");
+  });
+
+  test("EM 3D tab: switching shows the WebGL canvas, back to the plane keeps the sources", async () => {
+    await openEM();
+    await click('[data-em-pg-add="1"]');
+    const sources = (await emPg()).sources;
+    assert.equal(sources.length, 3);
+    await click('[data-em-tab="3d"]');
+    await until(`${L}.getEMState().tab === "3d"`, "the 3D tab");
+    await until(`${L}.getEMState().diagnostics.frames > 1 && document.getElementById("em-canvas").clientWidth > 100`, "the 3D canvas to be laid out");
+    assert.equal(await ev(`(() => { const c = document.getElementById("em-canvas"); return !c.hidden && c.clientWidth > 100 && c.clientHeight >= 320 && document.getElementById("em-plane").hidden && document.getElementById("em-plane-base").hidden && !document.getElementById("em-3d-bar").hidden; })()`), true, "3D canvas and bar visible, plane hidden");
+    assert.equal(await ev(`document.querySelector('[data-em-tab="3d"]').getAttribute("aria-pressed")`), "true");
+    assert.match(await ev(`document.getElementById("em-renderer-status").textContent`), /WebGL/, "the renderer reports WebGL");
+    assert.equal(await ev(`document.getElementById("em-chip-contours").hidden`), true, "the plane-only contour chip is hidden in 3D");
+    assert.deepEqual((await emPg()).sources, sources, "the same sources are shown in 3D");
+    const cameraBefore = (await emState()).camera;
+    await click('[data-em-view="z"]');
+    await until(`Math.abs(${L}.getEMState().camera.pitch - (Math.PI / 2 - 0.001)) < 1e-6`, "the +z view button to set the camera");
+    assert.notDeepEqual((await emState()).camera, cameraBefore);
+    await click('[data-em-tab="plane"]');
+    await until(`${L}.getEMState().tab === "plane"`, "the plane tab");
+    assert.equal(await ev(`!document.getElementById("em-plane").hidden && document.getElementById("em-canvas").hidden && document.getElementById("em-plane").clientWidth > 100`), true);
+    assert.deepEqual((await emPg()).sources, sources, "going back keeps the sources");
+    assert.ok(await colorCount("em-plane-base") > 10, "the plane is drawn again");
+    assert.equal((await emState()).active, true, "the workspace is still active");
+  });
+
+  const courseText = (selector) => ev(`document.querySelector(${JSON.stringify(selector)}).textContent.trim()`);
+  const courseRecord = async () => { const course = (await emState()).course; return { course, record: course.records[course.selectedId] }; };
+
+  test("EM course: default experiment renders, parameter sliders change the answer live, the time experiment plays, 숫자/문자 keeps the picture, subject follows the experiment", async () => {
+    await openEM();
+    assert.equal((await emState()).course, null, "the course is not loaded before it is opened");
+    await click("#em-course-open");
+    await until(`${L}.getEMState().course?.active === true && ${L}.getEMState().course.records[${L}.getEMState().course.selectedId]?.result && document.getElementById("em-course-canvas").clientWidth > 100`, "the course experiment to render");
+    await settle();
+    const { course, record } = await courseRecord();
+    assert.equal(await ev(`document.getElementById("em-lab").hidden && !document.getElementById("em-course-root").hidden`), true, "the course replaces the free lab");
+    assert.equal(course.selectedId, "coax-current", "the default experiment");
+    assert.equal(await ev(`document.getElementById("em-course-select").value`), course.selectedId, "the experiment select shows the current experiment");
+    assert.equal(await ev(`document.getElementById("em-course-topic").selectedOptions[0].textContent`), "정자계·암페어", "the subject select matches the experiment");
+    assert.equal(record.result.status, "valid");
+    assert.ok(await colorCount("em-course-canvas") > 10, "the experiment picture is drawn");
+    // a parameter slider changes the answer text and the stored parameter at once
+    const sliderKeys = await ev(`[...document.querySelectorAll("[data-em-course-slider]")].map((input) => input.dataset.emCourseSlider)`);
+    assert.ok(sliderKeys.length >= 2, `the experiment has parameter sliders (${sliderKeys})`);
+    let changed = null;
+    for (const key of sliderKeys) {
+      const before = await courseText("#em-course-answer"), valueBefore = (await courseRecord()).record.params[key];
+      const spot = await ev(`(() => { const input = document.querySelector('[data-em-course-slider="${key}"]'), r = input.getBoundingClientRect(); return { x: r.left + 12 + (r.width - 24) * (Number(input.value) > 500 ? 0.15 : 0.85), y: r.top + r.height / 2 }; })()`);
+      await clickAt(spot.x, spot.y);
+      await settle();
+      const after = await courseText("#em-course-answer"), valueAfter = (await courseRecord()).record.params[key];
+      if (valueAfter !== valueBefore && after !== before) { changed = { key, before, after }; break; }
+    }
+    assert.ok(changed, "at least one parameter slider changes both the parameter and the answer text live");
+    // another experiment: the picture changes; the subject list follows
+    const pictureBefore = await canvasHash("em-course-canvas");
+    await select("#em-course-topic", "자기유도");
+    await until(`${L}.getEMState().course.selectedId === "faraday-loop"`, "the faraday experiment");
+    assert.equal(await ev(`document.getElementById("em-course-select").value`), "faraday-loop");
+    assert.equal(await ev(`document.getElementById("em-course-topic").value`), "자기유도");
+    assert.notEqual(await canvasHash("em-course-canvas"), pictureBefore, "another experiment draws another picture");
+    // time-dependent experiment: clock, play button, emf(t) graph
+    assert.equal(await ev(`(() => { const t = document.getElementById("em-course-time"); return !t.hidden && Boolean(document.getElementById("em-course-play")) && Boolean(document.getElementById("em-course-time-slider")) && !document.getElementById("em-course-trace").hidden && document.getElementById("em-course-trace").clientWidth > 50; })()`), true, "time slider, play button and the emf(t) graph are shown");
+    await until(`document.getElementById("em-course-trace").width > 0`, "the trace canvas to be sized");
+    assert.ok(await colorCount("em-course-trace") > 3, "the emf(t) graph is drawn");
+    const t0 = (await courseRecord()).record.params.time, traceBefore = await canvasHash("em-course-trace"), clockBefore = await courseText("#em-course-time-text");
+    await click("#em-course-play");
+    await until(`${L}.getEMState().course.playing === true`, "playback to start");
+    await until(`${L}.getEMState().course.records["faraday-loop"].params.time !== ${t0}`, "playback to advance t");
+    assert.equal(await courseText("#em-course-play"), "정지");
+    await sleep(250);
+    await click("#em-course-play");
+    await until(`${L}.getEMState().course.playing === false`, "playback to stop");
+    const t1 = (await courseRecord()).record.params.time;
+    assert.notEqual(t1, t0, "pressing play advanced t");
+    assert.notEqual(await canvasHash("em-course-trace"), traceBefore, "the emf(t) graph canvas repainted as t advanced (its time cursor moved)");
+    assert.notEqual(await courseText("#em-course-time-text"), clockBefore, "the clock text follows");
+    await sleep(200);
+    assert.equal((await courseRecord()).record.params.time, t1, "t stands still while paused");
+    // 숫자/문자 toggle keeps the picture
+    const pictureHash = await canvasHash("em-course-canvas");
+    await click('[data-em-answer-mode="symbolic"]');
+    assert.equal(await ev(`document.getElementById("em-course-answer-numeric").hidden && !document.getElementById("em-course-answer-symbolic").hidden`), true, "the symbolic answer replaces the numeric one");
+    assert.equal(await ev(`(() => { const c = document.getElementById("em-course-canvas"); return !c.hidden && c.clientWidth > 100 && c.offsetParent !== null; })()`), true, "the picture canvas stays visible in the symbolic view");
+    assert.equal(await canvasHash("em-course-canvas"), pictureHash, "and unchanged");
+    await click('[data-em-answer-mode="numeric"]');
+    assert.equal(await ev(`!document.getElementById("em-course-answer-numeric").hidden`), true);
+    // back to the free lab, and the course remembers the experiment when it is opened again
+    await click("#em-course-back");
+    await until(`${L}.getEMState().courseActive === false && !document.getElementById("em-lab").hidden && document.getElementById("em-course-root").hidden`, "return to the free lab");
+    assert.equal(await ev(`document.getElementById("em-plane").clientWidth > 100`), true);
+    await click("#em-course-open");
+    await until(`${L}.getEMState().course?.active === true && ${L}.getEMState().courseActive === true`, "the course to open again");
+    assert.equal((await emState()).course.selectedId, "faraday-loop");
+    assert.equal(await ev(`document.getElementById("em-course-select").value === "faraday-loop" && document.getElementById("em-course-topic").value === "자기유도"`), true, "subject and experiment selects still match");
+  });
+
+  test("EM theme: toggling light/dark repaints the plane and the course canvas without console errors", async () => {
+    await openEM();
+    await select("#appearance", "dark");
+    await settle();
+    const dark = await planeHash();
+    const darkBackground = await ev(`getComputedStyle(document.getElementById("em-workspace")).getPropertyValue("--canvas").trim()`);
+    await select("#appearance", "light");
+    await until(`document.documentElement.dataset.theme === "light"`, "the light theme");
+    await settle();
+    const light = await planeHash();
+    assert.notEqual(light, dark, "the plane repaints in the other theme");
+    assert.ok(await colorCount("em-plane-base") > 10);
+    assert.notEqual(await ev(`getComputedStyle(document.getElementById("em-workspace")).getPropertyValue("--canvas").trim()`), darkBackground, "the canvas colour token changed");
+    // a corner pixel of the base layer is the page's canvas colour: it follows the theme
+    const corner = (id) => ev(`Array.from(document.getElementById(${JSON.stringify(id)}).getContext("2d", { willReadFrequently: true }).getImageData(2, 2, 1, 1).data)`);
+    const lightCorner = await corner("em-plane-base");
+    await select("#appearance", "dark");
+    await settle();
+    assert.equal(await planeHash(), dark, "switching back restores the dark picture exactly");
+    assert.notDeepEqual(await corner("em-plane-base"), lightCorner, "the plane's background pixel follows the theme");
+    // the course canvases follow too
+    await click("#em-course-open");
+    await until(`${L}.getEMState().course?.active === true && document.getElementById("em-course-canvas").clientWidth > 100`, "the course");
+    await settle();
+    const courseDark = await canvasHash("em-course-canvas");
+    await select("#appearance", "light");
+    await settle();
+    assert.notEqual(await canvasHash("em-course-canvas"), courseDark, "the course picture repaints in the other theme");
+    await select("#appearance", "dark");
+    await click("#em-course-back");
+    await until(`${L}.getEMState().courseActive === false`, "return to the lab");
+    assert.equal((await emState()).active, true);
+  });
+
+  test("EM on a phone (390x844): the plane is at least 320px tall, the page does not overflow sideways, palette chips are reachable and the touch sensor moves", async () => {
+    await openEM({ width: 390, height: 844, mobile: true });
+    assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1 && document.body.scrollWidth <= innerWidth + 1`), true, "no horizontal page overflow");
+    const box = await ev(`(() => { const r = document.getElementById("em-plane").getBoundingClientRect(); return { w: r.width, h: r.height, left: r.left, right: r.right }; })()`);
+    assert.ok(box.h >= 320, `plane canvas is ${box.h}px tall`);
+    assert.ok(box.left >= -1 && box.right <= 391, `plane canvas fits the screen width (${box.left}..${box.right})`);
+    assert.equal(await ev(`(() => { const w = document.getElementById("em-workspace"); return w.scrollWidth <= w.clientWidth + 1; })()`), true, "the EM workspace itself does not overflow");
+    for (const selector of ['[data-em-pg-add="1"]', '[data-em-pg-add="-1"]', "#em-pg-add-infinite", "#em-pg-add-finite", '[data-em-chip="lines"]', "#em-chip-contours", "#em-chip-gauss", '[data-em-tab="3d"]', "#em-course-open", "#em-pg-undo"]) {
+      const spot = await center(selector); // scrolls it into view and requires that a click would really hit it
+      assert.ok(spot.x >= 0 && spot.x <= 390 && spot.w >= 24 && spot.h >= 24, `${selector} sits inside the screen and is big enough to touch (${Math.round(spot.x)}, ${Math.round(spot.w)}x${Math.round(spot.h)})`);
+    }
+    await click('[data-em-pg-add="1"]');
+    assert.equal((await emPg()).sources.length, 3, "the palette works on the phone");
+    await click("#em-chip-gauss");
+    assert.equal((await emState()).chips.gauss, true);
+    assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true, "still no overflow with the Gauss readout open");
+    // a one-finger drag on the plane moves the test charge (the canvas claims the gesture)
+    const probe = (await emPg()).probe.slice(0, 2), from = await emScreen(...probe);
+    await touchDrag(from, { x: from.x + 40, y: from.y + 30 });
+    const moved = (await emPg()).probe;
+    assert.ok(Math.hypot(moved[0] - probe[0], moved[1] - probe[1]) > 0.1, `the sensor followed the finger (${probe} -> ${moved})`);
+    await navigate("/"); // back to the desktop viewport
+  });
 });
