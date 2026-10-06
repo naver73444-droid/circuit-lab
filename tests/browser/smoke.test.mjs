@@ -2353,9 +2353,9 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal((await flowState()).suspended, false, "the late drag frame did not hide the overlay after the release");
   });
 
-  // ---- signals workspace: all six lessons, keyboard, playback, touch, reduced motion, custom input ----------------------
-  const SG_LESSONS = [["time", "a", 2.5], ["convolution", "T1", 3], ["series", "N", 3], ["fourier", "T", 2.5], ["roc", "re", -2], ["sampling", "f0", 4]];
-  const SG_KEYED = new Set(["time", "convolution", "series", "roc"]); // views with key handling are focusable, the others are not
+  // ---- signals workspace: all nine lessons, keyboard, playback, touch, reduced motion, custom input ----------------------
+  const SG_LESSONS = [["time", "a", 2.5], ["ops", "B", 2], ["lti", "tau", 0.5], ["convolution", "T1", 3], ["series", "N", 3], ["series", "T0", 2], ["fourier", "T", 2.5], ["fourier", "A", 2], ["freq", "fc", 100], ["roc", "re", -2], ["sampling", "f0", 4]];
+  const SG_KEYED = new Set(["time", "lti", "convolution", "series", "roc"]); // views with key handling are focusable, the others are not
   const sgSvgExpr = `document.querySelector(".sg-stage > div:not([hidden]) svg")`;
   const sgState = () => ev(`${L}.getSignalsCourseState()`);
   async function openSignals(lesson, view) {
@@ -3626,6 +3626,356 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await click("#run-button");
     await until(`${L}.getState().runState.status === "error"`, "the over-coupled run to fail");
     assert.equal((await state()).runState.error.code, "INVALID_VALUE");
+  });
+
+  // ---- 전기회로2 course: live tools, amplitude basis (peak/RMS), live experiments, 3-phase examples, phone ------------------------------
+  const CC_HOST = "#circuit-course-host";
+  const ccState = () => ev(`${L}.getCircuitCourseState()`);
+  const ccPanel = (id) => `${CC_HOST} [data-circuit-course-tool-panel=${id}]`; // the id is a plain identifier: no quotes, so the selector can sit inside any JS string
+  const CC_TOOLS = ["complex", "three-phase-ext", "loads", "max-power", "coupled", "transformer"];
+  async function openCircuitCourse(view) {
+    await navigate("/", view);
+    await click("#circuit-course-workspace-tab");
+    await until(`${L}.getCircuitCourseState()?.active === true && document.querySelectorAll("${CC_HOST} [data-circuit-course-experiment]").length > 0`, "the circuit course");
+    await settle();
+  }
+  /** Click the lecture-example button of the open experiment whose label contains `text`. */
+  async function ccExample(text) {
+    const index = await ev(`[...document.querySelectorAll("${CC_HOST} [data-circuit-course-example]")].findIndex((button) => button.textContent.includes(${JSON.stringify(text)}))`);
+    assert.ok(index >= 0, `an example containing "${text}"`);
+    await click(`${CC_HOST} [data-circuit-course-example="${index}"]`);
+  }
+  /** The five numeric experiments open on the symbolic (문자식) presentation; the numeric one shows the typed inputs, phasors and graphs. */
+  async function ccNumeric(id) {
+    await click(`${CC_HOST} [data-circuit-course-experiment="${id}"]`);
+    await select(`${CC_HOST} [data-circuit-course-key="presentation"]`, "numeric");
+    await until(`${L}.getCircuitCourseState().drafts.presentation === "numeric" && ${L}.getCircuitCourseState().result.status === "valid"`, `${id}: the numeric presentation`);
+  }
+  const ccOverflow = () => ev(`document.documentElement.scrollWidth <= innerWidth + 1 && document.getElementById("circuit-course-workspace").scrollWidth <= innerWidth + 1 && document.querySelector(".circuit-course").scrollWidth <= innerWidth + 1`);
+
+  test("circuit course tools: all six live tabs open without an apply button and every lecture example passes its check (검산 PASS)", async () => {
+    await openCircuitCourse();
+    const tabs = await ev(`[...document.querySelectorAll("${CC_HOST} [data-circuit-course-tool]")].map((button) => button.dataset.circuitCourseTool)`);
+    assert.deepEqual(tabs, ["y-delta", ...CC_TOOLS], "the Y–Δ tool and the six live tools share one tab row");
+    for (const id of CC_TOOLS) {
+      await click(`${CC_HOST} [data-circuit-course-tool="${id}"]`);
+      assert.equal((await ccState()).tool, id);
+      assert.equal(await ev(`document.querySelector("${CC_HOST} .circuit-course-layout").hidden`), true, `${id}: the experiment form is hidden while the tool is open`);
+      assert.equal(await ev(`[...document.querySelectorAll("${ccPanel(id)} button")].every((button) => !/적용/.test(button.textContent))`), true, `${id}: no apply button`);
+    }
+    // One real click on a lecture example, then every example of every tool through the same button.
+    await click(`${CC_HOST} [data-circuit-course-tool="three-phase-ext"]`);
+    await click(`${ccPanel("three-phase-ext")} [data-cc-preset="0"]`);
+    assert.match(await ev(`document.querySelector("${ccPanel("three-phase-ext")} [data-circuit-course-verification] h3").textContent`), /모두 일치/);
+    assert.match(await ev(`document.querySelector("${ccPanel("three-phase-ext")} [data-circuit-course-verification]").textContent`), /PASS/);
+    const examples = [];
+    for (const id of CC_TOOLS) {
+      await click(`${CC_HOST} [data-circuit-course-tool="${id}"]`);
+      const count = await ev(`document.querySelectorAll("${ccPanel(id)} [data-cc-preset]").length`);
+      assert.ok(count >= 2, `${id} has lecture examples (${count})`);
+      for (let index = 0; index < count; index += 1) {
+        const shown = await ev(`(() => {
+          document.querySelector('${ccPanel(id)} [data-cc-preset="${index}"]').click();
+          const box = document.querySelector("${ccPanel(id)} [data-circuit-course-verification]");
+          const tool = ${L}.getCircuitCourseState().courseTools[${JSON.stringify(id)}];
+          return { title: box?.querySelector("h3").textContent ?? null, fails: box ? (box.textContent.match(/FAIL/g) ?? []).length : -1, passes: box ? (box.textContent.match(/PASS/g) ?? []).length : 0, status: tool.status, rows: tool.verification };
+        })()`);
+        examples.push(`${id}#${index}`);
+        assert.equal(shown.status, "valid", `${id}#${index}: valid`);
+        assert.match(shown.title ?? "", /모두 일치/, `${id}#${index}: the verification table says everything matches`);
+        assert.ok(shown.passes > 0 && shown.fails === 0, `${id}#${index}: PASS rows only (${shown.passes} PASS, ${shown.fails} FAIL)`);
+        assert.ok(shown.rows.length > 0 && shown.rows.every((row) => row.pass), `${id}#${index}: inspect() reports every row passing`);
+      }
+    }
+    assert.ok(examples.length >= 25, `all lecture examples were checked (${examples.length})`);
+  });
+
+  test("circuit course: the peak/RMS toggle rewrites the same input by √2 in experiments and tools, and the second press restores it", async () => {
+    await openCircuitCourse();
+    const pressed = () => ev(`document.querySelector('${CC_HOST} [data-circuit-course-basis][aria-pressed="true"]').dataset.circuitCourseBasis`);
+    assert.equal(await pressed(), "rms", "RMS is the default display basis");
+    await ccNumeric("impedance");
+    const voltage = () => ev(`Number(document.querySelector('${CC_HOST} [data-circuit-course-key="voltageRms"]').value)`);
+    const currentOf = async () => { const { I } = (await ccState()).result.branches[0]; return Math.hypot(I.re, I.im); };
+    near(await voltage(), 100, 1e-9, "the source field in RMS");
+    const rmsCurrent = await currentOf();
+    await click(`${CC_HOST} [data-circuit-course-basis="peak"]`);
+    assert.equal(await pressed(), "peak");
+    assert.equal((await ccState()).basis, "peak");
+    near(await voltage(), 100 * Math.SQRT2, 1e-6, "the same source in peak");
+    near(await currentOf(), rmsCurrent, 1e-9, "the physical current (internal RMS) does not change");
+    assert.match(await ev(`document.querySelector("${CC_HOST} [data-circuit-course-results]").textContent`), /peak/, "the results are labelled with the new basis");
+    // a live tool: the 3-phase tool's source voltage (110 V RMS)
+    await click(`${CC_HOST} [data-circuit-course-tool="three-phase-ext"]`);
+    const toolVoltage = () => ev(`Number(document.querySelector('${ccPanel("three-phase-ext")} [data-cc-key="voltage"]').value)`);
+    near(await toolVoltage(), 110 * Math.SQRT2, 1e-6, "the tool follows the course-wide toggle");
+    assert.equal((await ccState()).courseTools["three-phase-ext"].basis, "peak");
+    await click(`${CC_HOST} [data-circuit-course-basis="rms"]`);
+    near(await toolVoltage(), 110, 1e-9, "pressing RMS again restores the tool value");
+    await click(`${CC_HOST} [data-circuit-course-experiment="impedance"]`);
+    near(await voltage(), 100, 1e-9, "and the experiment value");
+    near(await currentOf(), rmsCurrent, 1e-9, "the result is the original one");
+    // a peak-basis lecture example (예제 11.5) switches the whole course to peak
+    await click(`${CC_HOST} [data-circuit-course-tool="max-power"]`);
+    await click(`${ccPanel("max-power")} [data-cc-preset="0"]`);
+    assert.equal(await pressed(), "peak", "a peak-basis example flips the toggle");
+  });
+
+  test("circuit course: experiments 1–5 apply as you type (no apply button), a bad entry keeps the last result and says why, '내 문제' keeps its button", async () => {
+    await openCircuitCourse();
+    const applyShown = () => ev(`(() => { const button = document.querySelector("${CC_HOST} [data-circuit-course-apply]"); return !button.hidden && button.offsetParent !== null; })()`);
+    for (const id of ["phasor-wave", "impedance", "power", "three-phase", "correction"]) {
+      await click(`${CC_HOST} [data-circuit-course-experiment="${id}"]`);
+      assert.equal(await applyShown(), false, `${id}: the apply button is hidden`);
+    }
+    await click(`${CC_HOST} [data-circuit-course-experiment="problem"]`);
+    assert.equal(await applyShown(), true, "the free problem keeps its apply button");
+
+    await ccNumeric("impedance");
+    const field = (key) => `${CC_HOST} [data-circuit-course-key="${key}"]`;
+    const resultsHtml = () => ev(`document.querySelector("${CC_HOST} [data-circuit-course-results]").innerHTML`);
+    const statusKind = () => ev(`document.querySelector("${CC_HOST} [data-circuit-course-status]").dataset.kind`);
+    const before = (await ccState()).params.r;
+    await typeInto(field("r"), "4");
+    assert.equal((await ccState()).params.r, 4, "a typed number is applied at once");
+    assert.notEqual((await ccState()).params.r, before);
+    assert.equal((await ccState()).status, "valid");
+    const good = await resultsHtml();
+    await typeInto(field("r"), "abc");
+    const bad = await ccState();
+    assert.equal(bad.status, "invalid");
+    assert.equal(bad.params.r, 4, "the last valid value is still the one in use");
+    assert.equal(await statusKind(), "error");
+    assert.match(await ev(`document.querySelector("${CC_HOST} [data-circuit-course-status]").textContent`), /저항 R.*마지막 유효 결과/s, "the reason names the field and says the last result stays");
+    assert.equal(await resultsHtml(), good, "the result on screen is the last valid one");
+    await typeInto(field("r"), "5");
+    assert.equal((await ccState()).status, "valid");
+    assert.equal(await statusKind(), "valid", "a valid value clears the complaint");
+
+    // the same rule in a live tool: the field says why, the result stays
+    await click(`${CC_HOST} [data-circuit-course-tool="three-phase-ext"]`);
+    const key = `${ccPanel("three-phase-ext")} [data-cc-key="voltage"]`;
+    const read = () => ev(`document.querySelector("${ccPanel("three-phase-ext")} [data-cc-read]").textContent`);
+    const toolBefore = await read();
+    await typeInto(key, "abc");
+    assert.equal(await ev(`document.querySelector('${key}').getAttribute("aria-invalid")`), "true");
+    assert.match(await ev(`document.querySelector('${ccPanel("three-phase-ext")} [data-cc-error="voltage"]').textContent`), /마지막 유효 값/);
+    assert.equal(await read(), toolBefore, "the tool keeps the last valid result");
+    await click(`${CC_HOST} [data-circuit-course-tool="complex"]`);
+    const expression = `${ccPanel("complex")} [data-cc-key="expression"]`;
+    const complexRead = () => ev(`document.querySelector("${ccPanel("complex")} [data-cc-read]").textContent`);
+    const complexBefore = await complexRead();
+    await typeInto(expression, "1 +");
+    assert.match(await ev(`document.querySelector('${ccPanel("complex")} [data-cc-error="expression"]').textContent`), /마지막 유효 값/);
+    assert.equal(await complexRead(), complexBefore);
+    await typeInto(expression, "3+j4");
+    assert.equal(await ev(`document.querySelector('${ccPanel("complex")} [data-cc-error="expression"]').textContent`), "", "a valid expression clears the complaint");
+    assert.notEqual(await complexRead(), complexBefore);
+  });
+
+  test("circuit course 3-phase: after the reverse-sequence example, 예제 12.3 returns to abc and gives ∠IAB = 13.435°", async () => {
+    await openCircuitCourse();
+    await click(`${CC_HOST} [data-circuit-course-experiment="three-phase"]`);
+    await ccExample("역상순 acb");
+    assert.equal((await ccState()).drafts.sequence, "acb");
+    assert.equal(await ev(`document.querySelector('${CC_HOST} [data-circuit-course-key="sequence"]').value`), "acb");
+    await ccExample("예제 12.3");
+    const after = await ccState();
+    assert.equal(after.drafts.sequence, "abc", "the example starts from the defaults, not on top of the previous one");
+    assert.equal(await ev(`document.querySelector('${CC_HOST} [data-circuit-course-key="sequence"]').value`), "abc");
+    assert.equal(after.status, "valid");
+    const iab = after.result.loadCurrents[0], angle = (Math.atan2(iab.im, iab.re) * 180) / Math.PI;
+    near(angle, 13.435, 1e-4, "∠IAB");
+    near(Math.hypot(iab.re, iab.im), 19.36, 1e-3, "|IAB|");
+    assert.match(await ev(`document.querySelector("${CC_HOST} [data-circuit-course-verification] h3").textContent`), /모두 일치/);
+  });
+
+  test("circuit course on a phone (390x844): experiments, the peak toggle and every tool stay inside the page width", async () => {
+    await openCircuitCourse({ width: 390, height: 844, mobile: true });
+    assert.equal(await ccOverflow(), true, "experiment view");
+    await click(`${CC_HOST} [data-circuit-course-basis="peak"]`);
+    assert.equal(await ccOverflow(), true, "after the peak toggle");
+    await click(`${CC_HOST} [data-circuit-course-experiment="three-phase"]`);
+    assert.equal(await ccOverflow(), true, "3-phase experiment");
+    for (const id of ["y-delta", ...CC_TOOLS]) {
+      await click(`${CC_HOST} [data-circuit-course-tool="${id}"]`);
+      assert.equal((await ccState()).tool, id);
+      if (id !== "y-delta") await ev(`document.querySelector('${ccPanel(id)} [data-cc-preset="0"]')?.click()`);
+      await settle();
+      assert.equal(await ccOverflow(), true, `${id}: no horizontal overflow`);
+    }
+  });
+
+  // ---- 전자기학 Hayt Ch.8 course topics and the magnetic ("자기") mode of the plane sandbox ------------------------------------------------------
+  const EM_CH8_TOPICS = [["자기력·토크", "force-"], ["자성체·경계", "matter-"], ["자기회로", "mcircuit-"], ["에너지·인덕턴스", "induct-"]];
+
+  test("EM course (Hayt Ch.8): the topic select has the four new topics, the gap-core preset needs NI ≈ 1780 and passes its checks, an xy-curve experiment draws", async () => {
+    await openEM();
+    await click("#em-course-open");
+    await until(`${L}.getEMState().course?.active === true && document.getElementById("em-course-canvas").clientWidth > 100`, "the EM course");
+    const topics = await ev(`[...document.querySelectorAll("#em-course-topic option")].map((option) => option.value)`);
+    for (const [topic] of EM_CH8_TOPICS) assert.ok(topics.includes(topic), `the topic select lists ${topic}`);
+
+    await select("#em-course-topic", "자기회로");
+    await until(`${L}.getEMState().course.selectedId === "mcircuit-gap-core"`, "the gap-core experiment");
+    await until(`(() => { const course = ${L}.getEMState().course, record = course.records[course.selectedId]; return Array.isArray(record.checks) && record.checks.length > 0 && record.checked; })()`, "the checks to run");
+    const { record } = await courseRecord();
+    assert.equal(record.result.status, "valid");
+    near(record.result.scalars.find((item) => item.key === "NI").value, 1780, 1e-3, "NI of the preset");
+    near(record.result.scalars.find((item) => item.key === "B").value, 1, 1e-9, "B of the preset");
+    assert.match(await courseText("#em-course-answer"), /NI ?= ?1780 A·turn/);
+    assert.ok(record.checks.every((row) => row.status === "pass"), `every check passes: ${record.checks.map((row) => row.status)}`);
+    assert.match(await courseText("#em-course-checks"), /PASS/);
+    assert.doesNotMatch(await courseText("#em-course-checks"), /FAIL/);
+
+    // xy-curve view: the force topic opens on the Lorentz orbit, the magnetic-circuit topic has the hysteresis loop
+    for (const [topic, id] of [["자기력·토크", "force-lorentz"], ["자기회로", "mcircuit-hysteresis"]]) {
+      await select("#em-course-topic", topic);
+      if (id !== "force-lorentz") await select("#em-course-select", id);
+      await until(`${L}.getEMState().course.selectedId === ${JSON.stringify(id)}`, id);
+      await until(`${L}.getEMState().course.records[${JSON.stringify(id)}]?.result?.status === "valid"`, `${id} to evaluate`);
+      await settle();
+      assert.ok(await colorCount("em-course-canvas") > 10, `${id}: the xy-curve picture is drawn`);
+      assert.ok((await courseText("#em-course-answer")).length > 0, `${id}: an answer is shown`);
+    }
+    // every new topic opens on one of its experiments and draws
+    for (const [topic, prefix] of EM_CH8_TOPICS) {
+      await select("#em-course-topic", topic);
+      await until(`${L}.getEMState().course.selectedId.startsWith(${JSON.stringify(prefix)})`, `a ${topic} experiment`);
+      await settle();
+      assert.equal(await ev(`document.getElementById("em-course-topic").value`), topic);
+      assert.ok(await colorCount("em-course-canvas") > 10, `${topic}: the picture is drawn`);
+    }
+  });
+
+  test("EM magnetic mode: 한 도선 + 암페어 루프 reads +10 A and agrees with Ampère's law, 평행 도선 쌍 shows 1.0e-4 N/m, and undo is separate per mode", async () => {
+    await openEM();
+    assert.equal(await ev(`document.getElementById("em-current-palette").hidden`), true, "the current palette belongs to the magnetic mode");
+    // electric edit first: one more charge (one history step of the electric editor)
+    await click('[data-em-pg-add="1"]');
+    const electricAfterEdit = await ev(`JSON.stringify(${L}.getEMState().playground.sources)`);
+    const electricPast = await ev(`${L}.getEMState().playground.past.length`);
+    assert.ok(electricPast >= 1, "the electric edit is in its own history");
+
+    await click('[data-em-field-mode="magnetic"]');
+    await until(`${L}.getEMState().field === "magnetic" && !document.getElementById("em-current-presets").hidden`, "the magnetic mode");
+    assert.equal(await ev(`document.getElementById("em-current-palette").hidden`), false, "the current palette is shown");
+    assert.equal(await ev(`document.querySelectorAll("#em-current-palette [data-em-current-add]").length`), 5, "five kinds of current: ⊙, ⊗, loop, sheet, finite segment");
+    assert.equal(await ev(`document.getElementById("em-palette").hidden`), true, "the charge palette is gone");
+    const currentDefault = await ev(`JSON.stringify(${L}.getEMState().current.sources)`);
+    assert.equal(await ev(`${L}.getEMState().current.past.length`), 0, "the magnetic editor starts with an empty history");
+    assert.equal(await ev(`document.getElementById("em-pg-undo").disabled`), true, "undo is disabled here although the electric editor has history");
+
+    await click('[data-em-current-preset="wire-ampere"]');
+    await until(`!document.getElementById("em-ampere-readout").hidden && document.getElementById("em-ampere-state").textContent !== ""`, "the Ampère readout");
+    const ampere = await ev(`[...document.querySelectorAll("#em-ampere-lines p")].map((p) => p.textContent)`);
+    assert.match(ampere[0], /I내부 = \+10 A/, "the enclosed current reads +10 A");
+    assert.match(ampere.join("\n"), /수치 ∮H·dl = \+10 A/, "and so does the numeric circulation");
+    assert.equal(await ev(`document.getElementById("em-ampere-state").textContent`), "암페어 법칙과 일치");
+    assert.equal(await ev(`document.getElementById("em-ampere-lines").dataset.agrees`), "true");
+
+    await click('[data-em-current-preset="pair"]');
+    await until(`!document.getElementById("em-force-readout").hidden && document.querySelectorAll("#em-force-lines p").length > 0`, "the force readout");
+    const forceLines = await ev(`[...document.querySelectorAll("#em-force-lines p")].map((p) => p.textContent)`);
+    const perLength = /F\/ℓ = (\S+ \S+)$/.exec(forceLines[0]);
+    assert.ok(perLength, `a force per length is shown: ${forceLines[0]}`);
+    near(parseEng(perLength[1]), 1.0e-4, 0.01, "force per length between two 10 A wires 0.2 m apart (N/m)");
+    assert.match(forceLines.join("\n"), /끌어당깁니다/, "parallel currents attract");
+
+    // history is separate: undoing the preset leaves the electric sources alone
+    assert.ok((await ev(`${L}.getEMState().current.past.length`)) >= 1, "the presets are magnetic history steps");
+    assert.equal(await ev(`document.getElementById("em-pg-undo").disabled`), false);
+    while (await ev(`!document.getElementById("em-pg-undo").disabled`)) await click("#em-pg-undo");
+    assert.equal(await ev(`JSON.stringify(${L}.getEMState().current.sources)`), currentDefault, "undo walked the magnetic sources back to where they started");
+    assert.equal(await ev(`JSON.stringify(${L}.getEMState().playground.sources)`), electricAfterEdit, "the electric sources were not touched");
+    assert.equal(await ev(`${L}.getEMState().playground.past.length`), electricPast, "nor was the electric history");
+
+    // and the other way round: back in electric mode undo removes the added charge, not a current
+    await click('[data-em-field-mode="electric"]');
+    await until(`${L}.getEMState().field === "electric" && !document.getElementById("em-pg-undo").disabled`, "the electric mode with its history");
+    await click("#em-pg-undo");
+    assert.notEqual(await ev(`JSON.stringify(${L}.getEMState().playground.sources)`), electricAfterEdit, "electric undo removed the added charge");
+    assert.equal(await ev(`JSON.stringify(${L}.getEMState().current.sources)`), currentDefault, "and left the magnetic sources alone");
+  });
+
+  // ---- signals: nine lessons (ops, lti, freq added), choice controls, the shared panes frame, phone tabs ----------------------------------------
+  const sgText = (selector) => ev(`document.querySelector(${JSON.stringify(selector)}).textContent`);
+  const sgSvgTitles = () => ev(`[...${sgSvgExpr}.querySelectorAll("text")].map((node) => node.textContent).join("\\n")`);
+
+  test("signals: a choice control is a select whose value is the option number — the Fourier frequency axis switches the graph titles to ω [rad/s] and back", async () => {
+    await openSignals("fourier");
+    const kind = await ev(`(() => { const e = document.querySelector('[data-signals-param="axis"]'); return { tag: e.tagName, options: [...e.options].map((o) => o.textContent) }; })()`);
+    assert.equal(kind.tag, "SELECT", "the axis is chosen in a select, not a slider");
+    assert.deepEqual(kind.options, ["f [Hz]", "ω [rad/s]"]);
+    assert.equal((await sgState()).params.axis, 0);
+    assert.match(await sgSvgTitles(), /f \[Hz\]/);
+    assert.doesNotMatch(await sgSvgTitles(), /ω \[rad\/s\]/);
+    await setSgParam("axis", 1);
+    await until(`${L}.getSignalsCourseState().params.axis === 1`, "the axis to be 1");
+    await settle();
+    assert.equal((await sgState()).params.axis, 1);
+    assert.equal(await ev(`document.querySelector('[data-signals-param="axis"]').value`), "1");
+    assert.match(await sgSvgTitles(), /ω \[rad\/s\]/, "the spectrum title names the angular-frequency axis");
+    assert.doesNotMatch(await sgSvgTitles(), /f \[Hz\]/, "and no longer the Hz one");
+    await setSgParam("axis", 0);
+    await settle();
+    assert.match(await sgSvgTitles(), /f \[Hz\]/, "the second choice restores the Hz axis");
+    assert.equal((await sgState()).params.axis, 0);
+  });
+
+  test("signals: LTI step response — the keyboard moves the time marker, and the linearity test calls y=5x+3 nonlinear whatever α is", async () => {
+    await openSignals("lti");
+    await ev(`${sgSvgExpr}.focus()`);
+    const start = (await sgState()).cursor;
+    await press("ArrowRight", "ArrowRight", 39);
+    const moved = (await sgState()).cursor;
+    assert.ok(moved > start, `ArrowRight moves the marker right (${start} -> ${moved})`);
+    await press("ArrowLeft", "ArrowLeft", 37);
+    near((await sgState()).cursor, start, 0, "ArrowLeft goes back", 1e-9);
+
+    await select("[data-signals-family]", "test");
+    await until(`${L}.getSignalsCourseState().family === "test"`, "the linearity/time-invariance example");
+    await settle();
+    const live = () => sgText("[data-signals-live]");
+    assert.equal((await sgState()).params.sys, 1, "the default system is y=5x(t)+3");
+    assert.match(await live(), /y=5x\(t\)\+3 · 이론 판정: 비선형, 시불변/);
+    // α pairs whose sum is 1 hide the failure in this input: the curves match, the theoretical verdict stays
+    for (const [a1, a2] of [[2, 1.25], [0.5, 0.5], [-1, 2], [0, 0], [3, -3]]) {
+      await setSgParam("a1", a1);
+      await setSgParam("a2", a2);
+      await until(`${L}.getSignalsCourseState().params.a1 === ${a1} && ${L}.getSignalsCourseState().params.a2 === ${a2}`, `α = (${a1}, ${a2})`);
+      await settle();
+      assert.match(await live(), /이론 판정: 비선형/, `α = (${a1}, ${a2}): the theoretical verdict does not depend on α`);
+    }
+    await setSgParam("a1", 0.5);
+    await setSgParam("a2", 0.5);
+    await settle();
+    assert.match(await live(), /선형성 일치/, "this input does not expose the nonlinearity (α₁+α₂ = 1)");
+    assert.match(await live(), /선형성은 이 입력으로는 드러나지 않음/);
+    await setSgParam("sys", 0);
+    await settle();
+    assert.match(await live(), /y=5x\(t\) · 이론 판정: 선형, 시불변/, "y=5x is linear whichever α");
+  });
+
+  test("signals on a phone (390x844): all nine lesson tabs are visible in a 3×3 grid, the two choice selects of the frequency-response lesson share a line, nothing scrolls sideways", async () => {
+    await openSignals("freq", { width: 390, height: 844, mobile: true });
+    const tabs = await ev(`[...document.querySelectorAll("[data-signals-lesson]")].map((button) => { const r = button.getBoundingClientRect(); return { id: button.dataset.signalsLesson, left: r.left, right: r.right, top: Math.round(r.top), width: r.width, height: r.height }; })`);
+    assert.deepEqual(tabs.map((tab) => tab.id), ["time", "ops", "lti", "convolution", "series", "fourier", "freq", "roc", "sampling"], "nine lessons in course order");
+    for (const tab of tabs) assert.ok(tab.width > 40 && tab.height > 20 && tab.left >= 0 && tab.right <= 390, `${tab.id}: the tab is fully on screen (${tab.left}..${tab.right})`);
+    const rows = [...new Set(tabs.map((tab) => tab.top))];
+    assert.equal(rows.length, 3, `three rows of tabs (${rows})`);
+    for (const top of rows) assert.equal(tabs.filter((tab) => tab.top === top).length, 3, "three tabs per row");
+    assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1 && document.getElementById("signals-workspace").scrollWidth <= innerWidth + 1`), true, "no horizontal scrolling");
+    const choices = await ev(`[...document.querySelectorAll("select[data-signals-param]")].map((select) => { const r = select.getBoundingClientRect(); return { key: select.dataset.signalsParam, left: r.left, right: r.right, top: Math.round(r.top) }; })`);
+    assert.deepEqual(choices.map((item) => item.key), ["axis", "scale"]);
+    assert.ok(Math.abs(choices[0].top - choices[1].top) <= 2, `axis and scale are on one line (${choices[0].top} / ${choices[1].top})`);
+    assert.ok(choices[0].right <= choices[1].left && choices[1].right <= 390, "side by side and inside the screen");
+    for (const lesson of ["ops", "sampling"]) {
+      await click(`[data-signals-lesson="${lesson}"]`);
+      await until(`${L}.getSignalsCourseState().lessonId === ${JSON.stringify(lesson)}`, lesson);
+      await settle();
+      assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true, `${lesson}: no horizontal scrolling`);
+    }
   });
 
 });
