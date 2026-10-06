@@ -49,8 +49,9 @@ function solenoidVerify(p) {
 }
 
 const solenoid = defineLecture({
-  id: 'induct-solenoid', title: '긴 솔레노이드의 인덕턴스 L = μn²S · 6주차 §8.10', topic: TOPIC, week: WEEK, sections: ['8.9', '8.10'],
+  id: 'induct-solenoid', title: '긴 솔레노이드의 인덕턴스 L = μn²S', topic: TOPIC, week: WEEK, sections: ['8.9', '8.10'],
   description: '쇄교자속 Λ = nΦ, L = Λ/I = μn²S [H/m]. 그래프에서 전류 I를 끌면 Λ와 W = ½LI²이 어떻게 변하는지 봅니다.',
+  answers: ['Lper','L'], coordinateScalars: ['current'],
   parameters: solenoidParameters, probeDefault: [0, 0, 2],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('I', 'A', '코일 전류') },
   compute: solenoidCompute,
@@ -134,8 +135,9 @@ function coaxVerify(p) {
 }
 
 const coax = defineLecture({
-  id: 'induct-coax', title: '동축 케이블의 단위 길이 인덕턴스 · 6주차 §8.10', topic: TOPIC, week: WEEK, sections: ['8.10'],
+  id: 'induct-coax', title: '동축 케이블의 단위 길이 인덕턴스', topic: TOPIC, week: WEEK, sections: ['8.10'],
   description: 'L′ = μ ln(b/a)/(2π) (외부) + μ/(8π) (내부 도체 속). 그래프에서 반지름 r을 끌어 B와 에너지 밀도를 봅니다.',
+  answers: ['Ltotal','Lext','Lint'], coordinateScalars: [],
   parameters: coaxParameters, probeDefault: [0, 0, 0.02],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('r', 'm', '축으로부터의 반지름') },
   validate: p => (p.b > p.a ? '' : '외부 반지름 b는 내부 반지름 a보다 커야 합니다 (모두 축 기준 반경).'),
@@ -208,8 +210,9 @@ function toroidVerify(p) {
 }
 
 const toroid = defineLecture({
-  id: 'induct-toroid', title: '직사각 단면 토로이드의 인덕턴스 · 6주차 §8.10', topic: TOPIC, week: WEEK, sections: ['8.10'],
+  id: 'induct-toroid', title: '직사각 단면 토로이드의 인덕턴스', topic: TOPIC, week: WEEK, sections: ['8.10'],
   description: 'B = μNI/(2πρ), Φ = (μNIc/2π) ln(b/a), L = μN²c ln(b/a)/(2π). 그래프에서 ρ를 끌어 B와 에너지 밀도를 봅니다.',
+  answers: ['L'], coordinateScalars: [],
   parameters: toroidParameters, probeDefault: [0, 0, 0.07],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('ρ', 'm', '토로이드 축으로부터의 반지름') },
   validate: p => (p.b > p.a ? '' : '바깥 반지름 b는 안쪽 반지름 a보다 커야 합니다.'),
@@ -282,8 +285,9 @@ function mutualVerify(p) {
 }
 
 const mutual = defineLecture({
-  id: 'induct-mutual', title: '두 동축 솔레노이드의 상호 인덕턴스 M · 6주차 §8.10', topic: TOPIC, week: WEEK, sections: ['8.9', '8.10'],
+  id: 'induct-mutual', title: '두 동축 솔레노이드의 상호 인덕턴스 M', topic: TOPIC, week: WEEK, sections: ['8.9', '8.10'],
   description: 'M₁₂ ≈ μ n₁n₂ S₁ ℓ, 직렬 연결 L₁ + L₂ ± 2M, 에너지 ½L₁I₁² ± M I₁I₂ + ½L₂I₂². 그래프에서 I₂를 끌어 봅니다.',
+  answers: ['M','seriesAiding','seriesOpposing'], coordinateScalars: ['current2'],
   parameters: mutualParameters, probeDefault: [0, 0, 1],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('I₂', 'A', '바깥 코일 전류') },
   validate: p => (p.r2 > p.r1 ? '' : '바깥 코일 반지름 r₂는 안쪽 r₁보다 커야 합니다.'),

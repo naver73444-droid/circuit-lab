@@ -114,6 +114,8 @@ export function defineLecture(spec) {
   const definition = {
     id: spec.id, title: spec.title, topic: spec.topic, modelKind: spec.modelKind || 'lecture-closed-form',
     lecture: { week: spec.week, sections: spec.sections }, description: spec.description,
+    // Which scalars are the final answers (the first is the default "구할 값") and which only repeat the sweep coordinate.
+    answerKeys: spec.answers || [], coordinateKeys: spec.coordinateScalars || [],
     parameters, probeDefault, view: spec.view,
     assumptions: spec.assumptions, validity: spec.validity, singularities: spec.singularities, formulas: spec.formulas, references: spec.references,
     evaluate, verify, profile,
@@ -122,5 +124,7 @@ export function defineLecture(spec) {
   return definition;
 }
 
-/** view.coordinate for a sweep along point[2]. */
-export const coordinate = (key, unit, label) => ({ key, unit, label });
+/** view.coordinate for a sweep along point[2]. `scale` is SI per display unit (point[2] stays SI; only the text and the typed value use it). */
+export const coordinate = (key, unit, label, scale = 1) => ({ key, unit, label, scale });
+/** An angle swept in radians (point[2]) that the screen shows and accepts in degrees. */
+export const angleCoordinate = (key, label) => coordinate(key, '°', label, Math.PI / 180);

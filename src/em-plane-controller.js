@@ -132,7 +132,7 @@ export function createPlaneController({
     const gauss = gaussInfo(mode, field), ampere = ampereInfo(mode), force = forceInfo(mode);
     return {
       mode, field, plane, sensor, result, gauss, ampere, force,
-      readout: sensorReadout(field, result, plane, { showH: lab.chips.hfield === true }),
+      readout: sensorReadout(field, result, plane, {}),
       inPlane: result.status === 'valid' ? [result.vector[a], result.vector[b]] : null,
     };
   }

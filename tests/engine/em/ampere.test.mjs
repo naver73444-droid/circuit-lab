@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createCurrentEvaluator, validateCurrentSources } from '../../../src/em-current-field.js';
 import {
   ampereCoarse, ampereEnclosure, ampereLength, ampereMeasure, ampereSamples, amperePrecise, circulationAgrees, clampAmpere,
+  ampereSize, ampereSizeText, resizeAmpere, switchAmpereShape,
 } from '../../../src/em-ampere.js';
 import { ampereReadout } from '../../../src/em-readout.js';
 
@@ -153,8 +154,10 @@ test('the readout reports I_enc, agreement, the symmetry hint, unsupported and e
   assert.equal(readout.status, 'ok');
   assert.equal(readout.agrees, true);
   assert.equal(readout.stateText, '암페어 법칙과 일치');
-  assert.match(readout.lines[0], /^I내부 = \+10 A  \(W, 반시계 경로\)$/);
-  assert.match(readout.lines[2], /수치 ∮H·dl = \+10 A  \(정밀 · 수렴\)/);
+  assert.match(readout.lines[0], /^I내부 = ∮H·dl = \+10 A  \(W, 반시계 경로\)$/);
+  assert.match(readout.lines[1], /^수치 ∮H·dl = \+10 A  \(정밀 · 수렴\) · ∮B·dl = μ₀I내부/);
+  assert.match(readout.lines[2], /^\|H\| 경로 위: 최대 .* · 최소 /);
+  assert.equal(readout.lines.slice(0, 3).filter(line => /∮H·dl = I내부/.test(line)).length, 0, 'the law is not stated twice');
   assert.ok(readout.lines.some(line => /∮B·dl = μ₀I내부 = 1\.257e-5 T·m/.test(line)));
   assert.ok(readout.lines.some(line => /H가 일정하지 않아도/.test(line)));
   assert.equal(readout.compact, '∮H·dl = +10 A');
@@ -167,4 +170,28 @@ test('the readout reports I_enc, agreement, the symmetry hint, unsupported and e
   const none = ampereMeasure(validateCurrentSources([wire('W', 10, 4, 0)]), circle(0, 0, 1), 'xy');
   const zero = ampereReadout({ enclosure: none.enclosure, numeric: none.numeric });
   assert.ok(zero.lines.some(line => /내부 전류가 없으면/.test(line)));
+});
+
+// ---- the size slider: one measure for value and label, no jump between shapes -----------------------------------------------------
+test('the size slider keeps a rectangle\'s aspect ratio and reads the same measure the label shows', () => {
+  const loop = rect(0, 0, 1, 0.5);
+  const bigger = resizeAmpere(loop, 2);
+  assert.equal(bigger.halfWidth, 2);
+  assert.equal(bigger.halfHeight, 1);
+  assert.equal(ampereSize(bigger), 2);
+  assert.match(ampereSizeText(bigger), /^반폭 a = 2 m \(4 × 2 m\)$/);
+  assert.equal(resizeAmpere(circle(0, 0, 1), 0.6).radius, 0.6);
+  assert.equal(ampereSizeText(circle(0, 0, 0.8)), 'r = 0.8 m');
+});
+
+test('switching circle <-> rectangle keeps the slider value and the rectangle\'s own aspect ratio', () => {
+  const asCircle = { ...circle(0, 0, 0.8), halfWidth: 1, halfHeight: 0.5 };
+  const asRect = switchAmpereShape(asCircle, 'rect');
+  assert.equal(asRect.shape, 'rect');
+  assert.equal(ampereSize(asRect), ampereSize(asCircle));
+  assert.equal(asRect.halfHeight / asRect.halfWidth, 0.5);
+  const back = switchAmpereShape(asRect, 'circle');
+  assert.equal(back.shape, 'circle');
+  assert.equal(ampereSize(back), ampereSize(asRect));
+  assert.equal(switchAmpereShape(back, 'circle').radius, back.radius);
 });

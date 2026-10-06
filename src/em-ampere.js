@@ -260,3 +260,32 @@ export function enclosedSummary(sources, enclosure) {
     return { id, current: source ? strengthOf(source) : 0 };
   });
 }
+
+// ---- the size slider -------------------------------------------------------------------------------------------------
+// One measure for the slider, its label and its value: the circle's radius, the rectangle's half-width. The slider scales the loop
+// (a rectangle keeps its aspect ratio) and switching the shape keeps that measure, so the slider does not jump.
+const roundText = value => Number(value.toFixed(2));
+export const ampereSize = loop => (loop.shape === 'rect' ? loop.halfWidth : loop.radius);
+
+export function ampereSizeText(loop) {
+  return loop.shape === 'rect'
+    ? `반폭 a = ${roundText(loop.halfWidth)} m (${roundText(2 * loop.halfWidth)} × ${roundText(2 * loop.halfHeight)} m)`
+    : `r = ${roundText(loop.radius)} m`;
+}
+
+/** The loop with its size measure set to `size`; a rectangle keeps its aspect ratio. */
+export function resizeAmpere(loop, size) {
+  if (loop.shape !== 'rect') return { ...loop, radius: size };
+  const scale = loop.halfWidth > 0 ? size / loop.halfWidth : 1;
+  return { ...loop, halfWidth: size, halfHeight: loop.halfHeight * scale };
+}
+
+/** Circle <-> rectangle with the same size measure (r = a); the rectangle comes back with its last aspect ratio. */
+export function switchAmpereShape(loop, shape) {
+  if (shape === loop.shape) return clampAmpere(loop);
+  if (shape === 'rect') {
+    const ratio = loop.halfWidth > 0 && Number.isFinite(loop.halfHeight / loop.halfWidth) ? loop.halfHeight / loop.halfWidth : 0.7;
+    return clampAmpere({ ...loop, shape, halfWidth: loop.radius, halfHeight: loop.radius * ratio });
+  }
+  return clampAmpere({ ...loop, shape, radius: loop.halfWidth });
+}

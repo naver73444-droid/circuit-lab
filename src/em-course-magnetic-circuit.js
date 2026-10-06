@@ -14,14 +14,14 @@ const gapParameters = [
   parameter('area', '코어 단면적 S', 'm²', 'cm²', 1e-4, 6e-4, 1e-6, 1),
   parameter('meanDiameter', '환상 코어 평균 지름 (코어 길이 l = π D)', 'm', 'cm', 0.01, 0.3, 1e-3, 10),
   parameter('gap', '공극 길이 g', 'm', 'mm', 1e-3, 2e-3, 0, 0.1),
-  parameter('targetB', '목표 공극 자속밀도 B (풀이 방향 0)', 'T', 'T', 1, 1, 1e-3, 1.9),
-  parameter('turns', '감은 수 N (풀이 방향 1)', '1', '1', 1, 500, 1, 1e5),
-  parameter('current', '전류 I (풀이 방향 1)', 'A', 'A', 1, 4, 0, 1000),
-  parameter('muR', '선형 코어의 비투자율 μ_r', '1', '1', 1, 4000, 1, 1e6),
-  parameter('h1', 'B–H 표 점 1: H₁', 'A/m', 'A/m', 1, 200, 1, 1e6),
-  parameter('b1', 'B–H 표 점 1: B₁', 'T', 'T', 1, 1, 1e-3, 3),
-  parameter('h2', 'B–H 표 점 2: H₂ (H₂ > H₁)', 'A/m', 'A/m', 1, 300, 1, 1e7),
-  parameter('b2', 'B–H 표 점 2: B₂ (B₂ > B₁)', 'T', 'T', 1, 1.13, 1e-3, 3),
+  parameter('targetB', '목표 공극 자속밀도 B', 'T', 'T', 1, 1, 1e-3, 1.9, { visibleWhen: { key: 'mode', equals: 0 } }),
+  parameter('turns', '감은 수 N', '1', '1', 1, 500, 1, 1e5, { visibleWhen: { key: 'mode', equals: 1 } }),
+  parameter('current', '전류 I', 'A', 'A', 1, 4, 0, 1000, { visibleWhen: { key: 'mode', equals: 1 } }),
+  parameter('muR', '선형 코어의 비투자율 μ_r', '1', '1', 1, 4000, 1, 1e6, { visibleWhen: { key: 'coreModel', equals: 1 } }),
+  parameter('h1', 'B–H 표 점 1: H₁', 'A/m', 'A/m', 1, 200, 1, 1e6, { visibleWhen: { key: 'coreModel', equals: 0 } }),
+  parameter('b1', 'B–H 표 점 1: B₁', 'T', 'T', 1, 1, 1e-3, 3, { visibleWhen: { key: 'coreModel', equals: 0 } }),
+  parameter('h2', 'B–H 표 점 2: H₂ (H₂ > H₁)', 'A/m', 'A/m', 1, 300, 1, 1e7, { visibleWhen: { key: 'coreModel', equals: 0 } }),
+  parameter('b2', 'B–H 표 점 2: B₂ (B₂ > B₁)', 'T', 'T', 1, 1.13, 1e-3, 3, { visibleWhen: { key: 'coreModel', equals: 0 } }),
 ];
 
 /** Piecewise-linear H(B) through (0,0), (h1,b1), (h2,b2); above the last point the core is saturated (slope μ₀). */
@@ -168,8 +168,9 @@ const workedOne = `B = 1 T → H_core = 200 A/m, V_m,core = ${plainText(presetOn
 const workedTwo = `NI = 2000: ${presetTwo.iteration.list.slice(0, 4).map(r => `B${r.k} = ${plainText(r.b, 4)} T`).join(', ')} … → B = ${plainText(presetTwo.b, 4)} T (${presetTwo.iteration.list.length}회)`;
 
 const gapCore = defineLecture({
-  id: 'mcircuit-gap-core', title: '공극 있는 코어의 자기회로 NI와 B · 6주차 §8.8', topic: TOPIC, week: WEEK, sections: ['8.8'],
+  id: 'mcircuit-gap-core', title: '공극 있는 코어의 자기회로 NI와 B', topic: TOPIC, week: WEEK, sections: ['8.8'],
   description: '환상 코어(S = 6 cm², 평균 지름 0.3 m, 공극 2 mm): B = 1 T에 필요한 NI는 약 1780 A·turn. 반대로 NI = 2000에서 B는 μ를 가정·갱신하는 반복으로 구합니다.',
+  answers: ['NI','B'], coordinateScalars: ['probeB'],
   parameters: gapParameters, probeDefault: [0, 0, 1],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('B', 'T', '공극(=코어) 자속밀도') },
   validate: p => tableError(p),
@@ -266,8 +267,9 @@ function hysteresisVerify(p) {
 }
 
 const hysteresis = defineLecture({
-  id: 'mcircuit-hysteresis', title: '히스테리시스 B–H 루프와 손실 (개념 모형) · 6주차 §8.8', topic: TOPIC, week: WEEK, sections: ['8.8', '8.10'],
+  id: 'mcircuit-hysteresis', title: '히스테리시스 B–H 루프와 손실 (개념 모형)', topic: TOPIC, week: WEEK, sections: ['8.8', '8.10'],
   description: '잔류 B_r, 보자력 H_c, 포화 B_s를 갖는 tanh 루프. 루프가 에워싼 면적이 한 주기의 손실 W = V∮H dB입니다. 그림을 가로로 끌어 구동 위상을 바꿉니다.',
+  answers: ['area','cycleLoss','power'], coordinateScalars: ['phase'],
   modelKind: 'lecture-concept', parameters: hysteresisParameters, probeDefault: [0, 0, Math.PI / 4],
   view: { kind: 'xy-curve', plane: 'xy', extent: 1, probeAxes: [0, 1], coordinate: coordinate('φ', 'rad', '구동 위상'),
     curve: { xLabel: 'H', xUnit: 'A/m', yLabel: 'B', yUnit: 'T', marker: { x: 'H', y: 'B' }, sweep: () => [0, TWO_PI] } },

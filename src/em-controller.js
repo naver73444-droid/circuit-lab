@@ -6,8 +6,8 @@ import { createPointChargeEditor } from './em-playground-state.js';
 import { createCurrentMode, createSandboxMode, createSceneMode } from './em-plane-modes.js';
 import { createCurrentEditor } from './em-current-state.js';
 import * as currentEdit from './em-current-edit.js';
-import { CURRENT_PRESETS, currentPreset } from './em-current-presets.js';
-import { clampAmpere } from './em-ampere.js';
+import { currentPreset, presetNoteText } from './em-current-presets.js';
+import { clampAmpere, ampereSize, ampereSizeText, resizeAmpere, switchAmpereShape } from './em-ampere.js';
 import { createPlaneController } from './em-plane-controller.js';
 import { create3DPanel } from './em-3d-panel.js';
 import { createInspector } from './em-inspector.js';
@@ -39,10 +39,11 @@ const WAVE_CYCLES_PER_SECOND = 0.5;
 // Assigning identical text still invalidates layout; the readouts update on every drag frame.
 const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
 const FIELD_KEY = 'circuit-lab.em-field-mode';
-const MAGNETIC_ONLY = ['mcolor', 'arrows', 'hfield', 'ampere', 'force'];
+const MAGNETIC_ONLY = ['mcolor', 'arrows', 'ampere', 'force']; // the H chip is gone: |B| and |H| are both always in the readout
+const UNDO_SCOPE = '원천 편집만 되돌림(암페어 루프·칩·확대는 제외)';
 const AMPERE_SLIDER = 'em-ampere-size';
 const HINTS = {
-  current: '도선·루프·판을 끌어 옮기고 노란 측정점으로 B·H를 읽어 보세요 · 암페어 루프(점선)를 끌어 ∮H·dl = I내부 확인 · 휠로 확대',
+  current: `도선·루프·판을 끌어 옮기고 노란 측정점으로 B·H를 읽어 보세요 · 암페어 루프(점선)를 끌어 ∮H·dl = I내부 확인 · 휠로 확대 · 키보드: [ ] 로 원천 선택, 화살표로 이동(Shift는 5배), Delete로 삭제 · ${UNDO_SCOPE}`,
   sandbox: '전하와 노란 시험전하를 끌어 보세요 · 휠로 확대 · 키보드: [ ] 로 전하 선택, 화살표로 이동',
   scene: '노란 관측점을 끌어 보세요 · 휠로 확대',
   '3d': '빈 곳을 끌면 시점이 돌아갑니다 · 휠로 확대 · 전하는 선택한 평면 위에서 끌 수 있습니다',
@@ -115,7 +116,7 @@ export function createEMController(root) {
     write: ({ sources, selectedId, ampere, chips }) => {
       currentEditor.replaceWorld({ sources, selectedId });
       lab.ampere = ampere ? structuredClone(ampere) : null;
-      if (chips) EM_MAGNETIC_CHIPS.forEach(name => { if (name in chips) lab.chips[name] = chips[name]; });
+      if (chips) EM_MAGNETIC_CHIPS.forEach(name => { if (name in chips && name !== 'hfield') lab.chips[name] = chips[name]; }); // 'hfield' of an older file is ignored
     },
   };
   const project = createProjectPanel({
@@ -130,6 +131,42 @@ export function createEMController(root) {
     },
   });
 
+  // ---- toolbar folds -----------------------------------------------------------------------------------------------
+  // Built here so the page markup stays as it is: the H chip is dropped, the rarely used display chips go under "고급", and on a phone
+  // the source palette and the examples fold (the examples stay open; on a wide screen both are plain, always visible rows).
+  const chrome = (() => {
+    $('#em-chip-hfield')?.remove();
+    const make = (className, label, before) => {
+      const details = document.createElement('details'), summary = document.createElement('summary');
+      details.className = className;
+      summary.textContent = label;
+      details.append(summary);
+      before.before(details);
+      return details;
+    };
+    const chipsBox = $('.em-chips'), contours = $('#em-chip-contours');
+    const advanced = make('em-chip-advanced', '고급', $('#em-chip-ampere')), advancedBody = document.createElement('div');
+    advancedBody.className = 'em-chips';
+    advancedBody.append($('#em-chip-arrows'));
+    advanced.append(advancedBody);
+    const paletteFold = make('em-fold', '원천 추가', $('#em-current-palette')), presetFold = make('em-fold', '자기 예제', $('#em-current-presets'));
+    paletteFold.append($('#em-current-palette'));
+    presetFold.append($('#em-current-presets'));
+    const narrow = window.matchMedia?.('(max-width: 900px)');
+    const fit = () => { paletteFold.open = !narrow?.matches; presetFold.open = true; };
+    fit();
+    narrow?.addEventListener('change', fit, listen);
+    return {
+      sync(magnetic) {
+        advanced.hidden = !magnetic;
+        paletteFold.hidden = presetFold.hidden = !magnetic;
+        // 등크기선 (magnetic) is an advanced chip; 등전위선 (electric) stays in the main row.
+        const home = magnetic ? advancedBody : chipsBox;
+        if (contours.parentNode !== home) { if (magnetic) advancedBody.prepend(contours); else chipsBox.insertBefore(contours, $('#em-chip-gauss')); }
+      },
+    };
+  })();
+
   // ---- one render ------------------------------------------------------------------------------------------------
 
   function syncChrome() {
@@ -140,6 +177,8 @@ export function createEMController(root) {
     $('#em-current-palette').hidden = !magnetic;
     $('#em-current-presets').hidden = !magnetic;
     MAGNETIC_ONLY.forEach(name => { $(`#em-chip-${name}`).hidden = !magnetic; });
+    chrome.sync(magnetic);
+    $('#em-pg-undo').title = magnetic ? UNDO_SCOPE : '';
     root.querySelector('[data-em-tab="3d"]').hidden = magnetic;
     root.querySelector('[data-em-chip="lines"]').textContent = magnetic ? '자기장선' : '장선';
     root.querySelectorAll('[data-em-tab]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emTab === lab.tab)));
@@ -223,10 +262,9 @@ export function createEMController(root) {
     $('#em-ampere-state').textContent = info.ampere.stateText ?? '';
     root.querySelectorAll('[data-em-ampere-shape]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emAmpereShape === lab.ampere.shape)));
     $('#em-ampere-turn').textContent = lab.ampere.orientation === -1 ? '시계 ↻' : '반시계 ↺';
-    const size = lab.ampere.shape === 'rect' ? lab.ampere.halfWidth : lab.ampere.radius, slider = $(`#${AMPERE_SLIDER}`);
-    if (slider !== document.activeElement) slider.value = String(size);
-    $('#em-ampere-size-text').textContent = lab.ampere.shape === 'rect'
-      ? `${Number((2 * lab.ampere.halfWidth).toFixed(2))} × ${Number((2 * lab.ampere.halfHeight).toFixed(2))} m` : `r = ${Number(lab.ampere.radius.toFixed(2))} m`;
+    const slider = $(`#${AMPERE_SLIDER}`);
+    if (slider !== document.activeElement) slider.value = String(ampereSize(lab.ampere));
+    setText($('#em-ampere-size-text'), ampereSizeText(lab.ampere));
   }
 
   function showForce(info) {
@@ -319,10 +357,11 @@ export function createEMController(root) {
     plane.cancel();
     if (!currentEditor.load(preset.sources, preset.selectedId)) return;
     lab.view = { span: preset.view.span, offset: [0, 0] };
+    const chipsBefore = { ...lab.chips };
     Object.assign(lab.chips, preset.chips);
     lab.ampere = preset.ampere ? clampAmpere(preset.ampere) : null;
     modes.current.moveSensor(preset.sensor);
-    lab.presetNote = `${CURRENT_PRESETS[name]}: ${preset.note}`;
+    lab.presetNote = presetNoteText(name, preset, chipsBefore);
     lab.presetSources = JSON.stringify(cs.sources);
     announce(lab.presetNote);
     plane.invalidate();
@@ -348,7 +387,7 @@ export function createEMController(root) {
     if (target.dataset.emCurrentAdd) { addCurrent(target.dataset.emCurrentAdd); requestRender(); return; }
     if (target.dataset.emCurrentPreset) { applyPreset(target.dataset.emCurrentPreset); requestRender(); return; }
     if (target.dataset.emAmpereShape) {
-      lab.ampere = clampAmpere({ ...lab.ampere, shape: target.dataset.emAmpereShape });
+      lab.ampere = switchAmpereShape(lab.ampere, target.dataset.emAmpereShape);
       requestRender();
       return;
     }
@@ -405,8 +444,7 @@ export function createEMController(root) {
     if (event.target.id === AMPERE_SLIDER && lab.ampere) {
       interaction.begin('ampere-slider');
       const size = Number(event.target.value);
-      lab.ampere = clampAmpere(lab.ampere.shape === 'rect'
-        ? { ...lab.ampere, halfWidth: size, halfHeight: size * 0.7 } : { ...lab.ampere, radius: size }, lab.ampere);
+      lab.ampere = clampAmpere(resizeAmpere(lab.ampere, size), lab.ampere);
       requestRender();
       return;
     }

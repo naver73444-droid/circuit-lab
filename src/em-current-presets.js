@@ -68,3 +68,19 @@ export function currentPreset(name, plane = 'xy') {
   }
   return null;
 }
+
+const CHIP_NAMES = Object.freeze({ lines: '자기장선', contours: '등크기선', mcolor: '|B| 색', arrows: 'B 화살표', ampere: '암페어 루프', force: '힘' });
+export const PRESET_COURSE_HINT = '직사각 루프 변별 힘 풀이: 문제 풀이 ▸ 자기력·토크';
+
+/** "힘 켬 · 암페어 루프 끔" for the chips a preset flips (before: current chip values); '' when none changes. */
+export function presetChipChanges(preset, before = {}) {
+  return Object.entries(preset?.chips ?? {})
+    .filter(([name, value]) => name in CHIP_NAMES && (before[name] === true) !== (value === true))
+    .map(([name, value]) => `${CHIP_NAMES[name]} ${value ? '켬' : '끔'}`).join(' · ');
+}
+
+/** The text under the plane after a preset loaded: title, note, which chips it changed, and where the rectangular-loop force is solved. */
+export function presetNoteText(name, preset, chipsBefore = {}) {
+  const changes = presetChipChanges(preset, chipsBefore);
+  return [`${CURRENT_PRESETS[name]}: ${preset.note}`, changes && `바뀐 칩: ${changes}`, PRESET_COURSE_HINT].filter(Boolean).join('\n');
+}

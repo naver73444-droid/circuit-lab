@@ -2,7 +2,7 @@
 // Sweep coordinate (point[2]): orbit phase, distance, angle or axial position, named per experiment by view.coordinate.
 import { AMU, C, E_CHARGE, SPEED_LIMIT_RATIO } from './em-course-constants.js';
 import {
-  FOUR_PI, MU0, REF, TWO_PI, checkRow, coordinate, defineLecture, excluded, hayt, linspace, parameter, scalar, series,
+  FOUR_PI, MU0, REF, TWO_PI, angleCoordinate, checkRow, coordinate, defineLecture, excluded, hayt, linspace, parameter, scalar, series,
 } from './em-course-lecture.js';
 
 const TOPIC = 'forces';
@@ -68,8 +68,9 @@ function lorentzVerify(p) {
 }
 
 const lorentz = defineLecture({
-  id: 'force-lorentz', title: '로런츠 힘 — 균일 B 속 원운동 · 6주차 §8.1', topic: TOPIC, week: WEEK, sections: ['8.1'],
-  description: '자기장에 수직으로 입사한 하전입자의 원궤도: r = mv/(qB), ω_c = qB/m, 주기. 이온 임플랜터에서 질량 선택에 쓰는 원리입니다.',
+  id: 'force-lorentz', title: '로런츠 힘 — 균일 B 속 원운동', topic: TOPIC, week: WEEK, sections: ['8.1'],
+  description: '자기장에 수직으로 입사한 하전입자의 원궤도: r = mv/(qB), ω_c = qB/m, 주기. 이온 임플랜터에서 질량 선택에 쓰는 원리입니다. 임의 배치로 보기: 평면 ▸ 자기.',
+  answers: ['radius','omegaC','frequency','period'], coordinateScalars: ['phase','x','y'],
   parameters: lorentzParameters, probeDefault: [0, 0, Math.PI / 2],
   view: { kind: 'xy-curve', plane: 'xy', extent: 1, probeAxes: [0, 1], coordinate: coordinate('Ωt', 'rad', '궤도 위상'),
     curve: { xLabel: 'x', xUnit: 'm', yLabel: 'y', yUnit: 'm', equal: true, marker: { x: 'x', y: 'y' }, sweep: () => [0, TWO_PI] } },
@@ -159,8 +160,9 @@ function wireLoopVerify(p) {
 }
 
 const wireLoop = defineLecture({
-  id: 'force-wire-loop', title: '직선전류 옆 직사각 루프의 힘 · 6주차 §8.2', topic: TOPIC, week: WEEK, sections: ['8.2'],
-  description: '무한 직선전류의 비균일 B 속 직사각 루프: 변별 힘과 알짜힘. 변 ①·③은 상쇄하고 변 ②·④가 알짜힘을 만듭니다.',
+  id: 'force-wire-loop', title: '직선전류 옆 직사각 루프의 힘', topic: TOPIC, week: WEEK, sections: ['8.2'],
+  description: '무한 직선전류의 비균일 B 속 직사각 루프: 변별 힘과 알짜힘. 변 ①·③은 상쇄하고 변 ②·④가 알짜힘을 만듭니다. 임의 배치로 보기: 평면 ▸ 자기.',
+  answers: ['netX','F2x','F4x','F1y'], coordinateScalars: [],
   parameters: wireLoopParameters, probeDefault: [0, 0, 1],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('ρ', 'm', '도선으로부터의 거리') },
   validate: p => (p.d2 > p.d1 ? '' : '먼 변까지 거리 d₂는 가까운 변까지 거리 d₁보다 커야 합니다.'),
@@ -225,8 +227,9 @@ function parallelWiresVerify(p) {
 }
 
 const parallelWires = defineLecture({
-  id: 'force-parallel-wires', title: '평행한 두 직선 도선 사이의 힘 · 6주차 §8.3', topic: TOPIC, week: WEEK, sections: ['8.3'],
-  description: '도선 1의 B 속에 놓인 도선 2의 힘: 단위 길이당 μ₀I₁I₂/(2πd). 그래프에서 거리 d를 끌어 바꿉니다.',
+  id: 'force-parallel-wires', title: '평행한 두 직선 도선 사이의 힘', topic: TOPIC, week: WEEK, sections: ['8.3'],
+  description: '도선 1의 B 속에 놓인 도선 2의 힘: 단위 길이당 μ₀I₁I₂/(2πd). 그래프에서 거리 d를 끌어 바꿉니다. 임의 배치로 보기: 평면 ▸ 자기.',
+  answers: ['perLength','total'], coordinateScalars: ['distance'],
   parameters: parallelWiresParameters, probeDefault: [0, 0, 1],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('d', 'm', '두 도선의 간격') },
   compute: parallelWiresCompute,
@@ -291,8 +294,9 @@ function sheetsVerify(p) {
 }
 
 const sheets = defineLecture({
-  id: 'force-parallel-sheets', title: '평행 면전류판 사이의 B와 힘 · 6주차 §8.3', topic: TOPIC, week: WEEK, sections: ['8.3'],
-  description: '반대 방향 면전류 ±K: 사이 B = μ₀K, 바깥 B = 0, 판이 받는 압력 μ₀K²/2(= 사이 에너지 밀도).',
+  id: 'force-parallel-sheets', title: '평행 면전류판 사이의 B와 힘', topic: TOPIC, week: WEEK, sections: ['8.3'],
+  description: '반대 방향 면전류 ±K: 사이 B = μ₀K, 바깥 B = 0, 판이 받는 압력 μ₀K²/2(= 사이 에너지 밀도). 임의 배치로 보기: 평면 ▸ 자기.',
+  answers: ['Bbetween','pressure','force'], coordinateScalars: [],
   parameters: sheetsParameters, probeDefault: [0, 0, 0.025],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('z', 'm', '판에 수직인 위치') },
   compute: sheetsCompute,
@@ -353,8 +357,9 @@ function solenoidPressureVerify(p) {
 }
 
 const solenoidPressure = defineLecture({
-  id: 'force-solenoid-pressure', title: '솔레노이드 표면의 자기압 B²/(2μ₀) · 6주차 §8.3', topic: TOPIC, week: WEEK, sections: ['8.3', '8.10'],
-  description: '긴 솔레노이드 코일면의 면전류가 받는 힘: 평균장 μ₀K/2를 쓰면 B²/(2μ₀)이고 코일은 바깥으로 팽창합니다.',
+  id: 'force-solenoid-pressure', title: '솔레노이드 표면의 자기압 B²/(2μ₀)', topic: TOPIC, week: WEEK, sections: ['8.3', '8.10'],
+  description: '긴 솔레노이드 코일면의 면전류가 받는 힘: 평균장 μ₀K/2를 쓰면 B²/(2μ₀)이고 코일은 바깥으로 팽창합니다. 임의 배치로 보기: 평면 ▸ 자기.',
+  answers: ['pressure','Binside','wallForce'], coordinateScalars: [],
   parameters: solenoidPressureParameters, probeDefault: [0, 0, 0.03],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('ρ', 'm', '축으로부터의 반지름') },
   compute: solenoidPressureCompute,
@@ -420,10 +425,11 @@ function torqueVerify(p) {
 }
 
 const torque = defineLecture({
-  id: 'force-loop-torque', title: '자기장 속 전류 루프의 토크 τ = m×B · 6주차 §8.4', topic: TOPIC, week: WEEK, sections: ['8.4'],
-  description: '균일 B₀ ẑ 속 원형 루프(법선이 z축과 θ): m = Iπa², τ = mB₀ sinθ x̂. 그래프에서 θ를 끌어 봅니다.',
+  id: 'force-loop-torque', title: '자기장 속 전류 루프의 토크 τ = m×B', topic: TOPIC, week: WEEK, sections: ['8.4'],
+  description: '균일 B₀ ẑ 속 원형 루프(법선이 z축과 θ): m = Iπa², τ = mB₀ sinθ x̂. 그래프에서 θ를 끌어 봅니다. 임의 배치로 보기: 평면 ▸ 자기.',
+  answers: ['tauX','tauMax','energy'], coordinateScalars: ['thetaDeg'],
   parameters: torqueParameters, probeDefault: [0, 0, Math.PI / 3],
-  view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('θ', 'rad', '법선과 B 사이의 각') },
+  view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: angleCoordinate('θ', '법선과 B 사이의 각') },
   compute: torqueCompute,
   profile: (p, count) => {
     const angle = linspace(0, Math.PI, count), m = p.current * Math.PI * p.radius ** 2;
@@ -453,7 +459,7 @@ const torque = defineLecture({
 const dipoleParameters = [
   parameter('radius', '루프 반지름 a', 'm', 'mm', 1e-3, 0.01, 1e-5, 1),
   parameter('current', '루프 전류 I (+z 법선)', 'A', 'A', 1, 5, -1e4, 1e4),
-  parameter('theta', '관측 방향의 극각 θ (z축 기준)', 'rad', 'rad', 1, Math.PI / 3, 0, Math.PI),
+  parameter('theta', '관측 방향의 극각 θ (z축 기준)', 'rad', '°', Math.PI / 180, Math.PI / 3, 0, Math.PI),
 ];
 
 /** Independent Biot–Savart sum of a circular loop in the xy-plane (counter-clockwise from +z), midpoint rule in φ′. */
@@ -504,8 +510,9 @@ function dipoleVerify(p) {
 }
 
 const dipole = defineLecture({
-  id: 'force-dipole-field', title: '자기쌍극자의 원거리 장 B_r, B_θ · 6주차 §8.4', topic: TOPIC, week: WEEK, sections: ['8.4'],
-  description: '반지름 a ≪ r인 전류 루프의 장 B = μ₀m/(4πr³)(2cosθ a_r + sinθ a_θ). 그래프에서 거리 r을 끌어 정확한 비오–사바르 합과 비교합니다.',
+  id: 'force-dipole-field', title: '자기쌍극자의 원거리 장 B_r, B_θ', topic: TOPIC, week: WEEK, sections: ['8.4'],
+  description: '반지름 a ≪ r인 전류 루프의 장 B = μ₀m/(4πr³)(2cosθ a_r + sinθ a_θ). 그래프에서 거리 r을 끌어 정확한 비오–사바르 합과 비교합니다. 임의 배치로 보기: 평면 ▸ 자기.',
+  answers: ['Br','Btheta','Bmag'], coordinateScalars: [],
   parameters: dipoleParameters, probeDefault: [0, 0, 0.1],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('r', 'm', '중심으로부터의 거리') },
   compute: dipoleCompute,

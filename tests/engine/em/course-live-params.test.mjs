@@ -13,7 +13,7 @@ test('every parameter of all 42 experiments gets a usable control, and its examp
     for (const parameter of definition.parameters) {
       const spec = paramSpec(parameter);
       assert.ok(['select', 'range', 'number'].includes(spec.kind), `${definition.id}.${parameter.key}`);
-      assert.ok(spec.label.length > 0 && !/[()]/.test(spec.label), `short label of ${parameter.key}: "${spec.label}"`);
+      assert.ok(spec.label.length > 0 && !/s[(（]/.test(spec.label), `short label of ${parameter.key}: "${spec.label}"`); // a parenthetical note moves to spec.note
       if (spec.kind === 'range') {
         assert.ok(spec.lo < spec.hi && spec.lo >= parameter.min && spec.hi <= parameter.max, `${parameter.key} slider range`);
         const back = valueFromRange(spec, rangeFromValue(spec, parameter.initial));

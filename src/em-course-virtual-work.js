@@ -60,8 +60,9 @@ function gapForceVerify(p) {
 }
 
 const gapForceExperiment = defineLecture({
-  id: 'induct-virtual-gap', title: '가상변위법 — 공극 코어의 흡인력 F = −B²S/(2μ₀) · 6주차 §8.10', topic: TOPIC, week: WEEK, sections: ['8.10'],
+  id: 'induct-virtual-gap', title: '가상변위법 — 공극 코어의 흡인력 F = −B²S/(2μ₀)', topic: TOPIC, week: WEEK, sections: ['8.10'],
   description: '공극 x의 코어: Λ(x) = N²Iμ₀μS/(μ₀l+μx), F = ½I² dL/dx. 일정 전류와 일정 자속의 에너지 수지를 비교합니다(힘은 같음). 그래프에서 공극 x를 끌어 봅니다.',
+  answers: ['F'], coordinateScalars: [],
   parameters: gapForceParameters, probeDefault: [0, 0, 2e-3],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('x', 'm', '공극 길이') },
   compute: gapForceCompute,
@@ -130,8 +131,9 @@ function coilsVerify(p) {
 }
 
 const coils = defineLecture({
-  id: 'induct-virtual-coils', title: '가상변위법 — 두 솔레노이드 사이의 힘 F = I₁I₂ dM/dx · 6주차 §8.10', topic: TOPIC, week: WEEK, sections: ['8.10'],
+  id: 'induct-virtual-coils', title: '가상변위법 — 두 솔레노이드 사이의 힘 F = I₁I₂ dM/dx', topic: TOPIC, week: WEEK, sections: ['8.10'],
   description: '안쪽 코일을 바깥 코일 속으로 x만큼 넣을 때 M(x) = μ n₁n₂ S₁ x: F = I₁I₂ dM/dx = μ n₁n₂ S₁ I₁I₂. 일정 전류와 일정 자속의 수지를 비교합니다.',
+  answers: ['F'], coordinateScalars: [],
   parameters: coilsParameters, probeDefault: [0, 0, 0.3],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('x', 'm', '코일이 겹친 길이') },
   compute: coilsCompute,

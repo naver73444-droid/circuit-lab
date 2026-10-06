@@ -99,15 +99,12 @@ export function ampereReadout({ enclosure, sources = [], numeric = null, precise
   if (enclosure.status === 'unsupported') return { status: 'unsupported', lines: [enclosure.reason, '이 경우의 수치 비교는 지원하지 않습니다 (미지원).'], agrees: null, stateText: '미지원', compact: '' };
   const enclosed = enclosure.enclosedIds.length ? enclosure.enclosedIds.join(', ') : '없음';
   const expected = enclosure.enclosedCurrent;
-  const lines = [
-    `I내부 = ${currentText(expected)}  (${enclosed}, ${enclosure.orientation === -1 ? '시계' : '반시계'} 경로)`,
-    `∮H·dl = I내부 = ${currentText(expected)}`,
-  ];
+  // The enclosed current and the law are one line; the numeric check with ∮B·dl, and the |H| range, are one line each.
+  const lines = [`I내부 = ∮H·dl = ${currentText(expected)}  (${enclosed}, ${enclosure.orientation === -1 ? '시계' : '반시계'} 경로)`];
   let agrees = null, stateText = '';
   if (numeric?.status === 'valid') {
     const tag = !precise ? '근사' : numeric.converged === false ? '미수렴' : '정밀 · 수렴';
-    lines.push(`수치 ∮H·dl = ${currentText(numeric.circulation)}  (${tag})`);
-    lines.push(`∮B·dl = μ₀I내부 = ${plainText(predictedBCirculation(expected), 4)} T·m  (= Wb/m)`);
+    lines.push(`수치 ∮H·dl = ${currentText(numeric.circulation)}  (${tag}) · ∮B·dl = μ₀I내부 = ${plainText(predictedBCirculation(expected), 4)} T·m  (= Wb/m)`);
     agrees = precise && numeric.converged === false ? null : circulationAgrees(numeric.circulation, expected);
     stateText = precise && numeric.converged === false ? '미수렴' : agrees ? '암페어 법칙과 일치' : '근사 중';
     const ratio = numeric.minH > 0 ? numeric.maxH / numeric.minH : Infinity;

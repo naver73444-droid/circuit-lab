@@ -32,7 +32,9 @@ test('19 lecture experiments are registered with unique ids, four groups and lec
     assert.equal(typeof def.evaluate, 'function', def.id);
     assert.equal(def.lecture.week, 6);
     assert.ok(def.lecture.sections.every(s => /^8\.\d+$/.test(s)), def.id);
-    assert.ok(def.title.includes('6주차'), def.id);
+    assert.ok(!def.title.includes('6주차') && !def.title.includes('§'), `${def.id}: the week and section live in the topic group and the subtitle, not in the title`);
+    const scalarKeys = def.evaluate(defaults(def), [...def.probeDefault]).scalars.map(item => item.key);
+    assert.ok(def.answerKeys.length >= 1 && [...def.answerKeys, ...def.coordinateKeys].every(key => scalarKeys.includes(key)), `${def.id}: answer and coordinate keys are scalars of the preset`);
     assert.ok(def.references.some(r => r.title.includes('Hayt') && r.url.startsWith('https://')), `${def.id} cites Hayt`);
     assert.ok(def.assumptions.length >= 1 && def.formulas.length >= 1 && def.validity.length >= 1 && def.singularities.length >= 1, def.id);
   }

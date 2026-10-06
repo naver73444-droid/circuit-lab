@@ -1,6 +1,6 @@
 // Hayt Ch.8 §8.5–8.7 lecture experiments: magnetic materials, bound currents and magnetic boundary conditions. Pure: no DOM.
 import {
-  FOUR_PI, MU0, REF, TWO_PI, checkRow, coordinate, defineLecture, excluded, hayt, linspace, parameter, choiceParameter, scalar, series, skippedRow,
+  FOUR_PI, MU0, REF, TWO_PI, angleCoordinate, checkRow, coordinate, defineLecture, excluded, hayt, linspace, parameter, choiceParameter, scalar, series, skippedRow,
 } from './em-course-lecture.js';
 
 const TOPIC = 'materials';
@@ -54,8 +54,9 @@ function magnetizationVerify(p) {
 }
 
 const magnetization = defineLecture({
-  id: 'matter-magnetization', title: '자화와 구속전류 — 막대자석 · 6주차 §8.6', topic: TOPIC, week: WEEK, sections: ['8.5', '8.6'],
+  id: 'matter-magnetization', title: '자화와 구속전류 — 막대자석', topic: TOPIC, week: WEEK, sections: ['8.5', '8.6'],
   description: '균일 자화 M의 막대자석은 표면 구속전류 K_b = M × a_n 의 솔레노이드와 같습니다. 축상 B와 H = B/μ₀ − M를 비교합니다.',
+  answers: ['Kb','Bz','Hz'], coordinateScalars: [],
   parameters: magnetizationParameters, probeDefault: [0, 0, 0],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('z', 'm', '막대 중심에서의 축 위치') },
   compute: magnetizationCompute,
@@ -109,8 +110,9 @@ function susceptibilityCompute(p, h) {
 }
 
 const susceptibility = defineLecture({
-  id: 'matter-susceptibility', title: '자화율·투자율 관계 B = μ₀(1+χ_m)H · 6주차 §8.5–8.6', topic: TOPIC, week: WEEK, sections: ['8.5', '8.6'],
+  id: 'matter-susceptibility', title: '자화율·투자율 관계 B = μ₀(1+χ_m)H', topic: TOPIC, week: WEEK, sections: ['8.5', '8.6'],
   description: '반자성·상자성·강자성의 선형 모형: M = χ_m H, B = μ₀(H+M) = μ₀μ_r H. 그래프에서 H를 끌어 봅니다.',
+  answers: ['B','M','mur'], coordinateScalars: [],
   parameters: susceptibilityParameters, probeDefault: [0, 0, 1e4],
   view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('H', 'A/m', '자기장 세기') },
   compute: susceptibilityCompute,
@@ -189,14 +191,15 @@ function boundaryVerify(p) {
 }
 
 const boundary = defineLecture({
-  id: 'matter-boundary', title: '자기 경계조건과 굴절 tanθ₂/tanθ₁ = μ₂/μ₁ · 6주차 §8.7', topic: TOPIC, week: WEEK, sections: ['8.7'],
+  id: 'matter-boundary', title: '자기 경계조건과 굴절 tanθ₂/tanθ₁ = μ₂/μ₁', topic: TOPIC, week: WEEK, sections: ['8.7'],
   description: '두 자성체의 경계: B_n 연속, H_t는 면전류 K만큼 점프. 그래프에서 입사각 θ₁을 끌어 굴절각 θ₂를 봅니다(프리셋 μ₂/μ₁ = 10⁴).',
+  answers: ['theta2','tanRatio'], coordinateScalars: ['theta1'],
   parameters: boundaryParameters, probeDefault: [0, 0, 0.5],
-  view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('θ₁', 'rad', '영역 1의 입사각(법선 기준)') },
+  view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: angleCoordinate('θ₁', '영역 1의 입사각(법선 기준)') },
   compute: boundaryCompute,
   profile: (p, count) => {
     const angles = linspace(0, Math.PI / 2, count), fields = angles.map(t => boundaryFields(p, t));
-    return [series('theta2', '굴절각 θ₂(θ₁)', 'rad', 'θ₁', 'rad', angles.map((t, i) => ({ coordinate: t, value: fields[i].theta2 }))),
+    return [series('theta2', '굴절각 θ₂(θ₁)', '°', 'θ₁', 'rad', angles.map((t, i) => ({ coordinate: t, value: fields[i].theta2 * 180 / Math.PI }))),
       series('B2t', '접선 B₂t(θ₁)', 'T', 'θ₁', 'rad', angles.map((t, i) => ({ coordinate: t, value: fields[i].b2t }))),
       series('B2', '|B₂|(θ₁)', 'T', 'θ₁', 'rad', angles.map((t, i) => ({ coordinate: t, value: Math.hypot(fields[i].b2t, fields[i].b2n) })))];
   },
@@ -270,8 +273,9 @@ function imageVerify(p) {
 }
 
 const image = defineLecture({
-  id: 'matter-image', title: '영상 전류 — 철(μ→∞)·초전도체 위의 선전류 · 6주차 §8.7', topic: TOPIC, week: WEEK, sections: ['8.7'],
+  id: 'matter-image', title: '영상 전류 — 철(μ→∞)·초전도체 위의 선전류', topic: TOPIC, week: WEEK, sections: ['8.7'],
   description: '무한 직선전류가 평면 경계에서 거리 h에 있을 때: μ → ∞는 같은 방향 영상, 초전도체는 반대 방향 영상. 흰 점을 끌어 B, H를 읽습니다.',
+  answers: ['imageCurrent','wireForce'], coordinateScalars: [],
   parameters: imageParameters, probeDefault: [0.03, 0.02, 0],
   view: { kind: 'lecture-plane', plane: 'xy', extent: 0.25, probeAxes: [0, 1],
     overlay: p => ({ lines: [{ a: [-1, -p.h], b: [1, -p.h], label: '경계면' }], glyphs: [{ at: [0, -2 * p.h], sign: Math.sign(imageRatio(p) * p.current), label: '영상 전류 I′ = kI' }],

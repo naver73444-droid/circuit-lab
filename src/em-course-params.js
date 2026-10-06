@@ -1,5 +1,6 @@
 // Live parameter controls of the course: how an experiment parameter becomes a slider or a choice, and how
 // slider positions and typed text map to SI values. Pure: no DOM. The experiment definitions are not touched.
+import { siText } from './em-format.js';
 
 // Parameters that are really a choice between a few named cases.
 const CHOICES = {
@@ -12,9 +13,44 @@ const INTEGER_KEYS = new Set(['turns']);
 const SPREAD = 30; // a log slider covers initial/30 ... initial*30 (within the parameter's own limits)
 const SIGNED_SPAN = 3; // a signed slider covers +-3 x |initial|
 
-/** Short label for a control: the first clause, without the parenthetical notes. */
+/**
+ * Label of a control split into its body and a small helper line. The body keeps everything that names the quantity
+ * ("B–H 표 점 1: H₁", "V(0)−V(d)"); only a space-separated parenthetical ("(부호 포함)") or the "…: 0=…, 1=…" case list after
+ * a colon moves to the helper line.
+ */
+export function splitLabel(label) {
+  const notes = [];
+  let main = String(label).replace(/\s+[(（]([^)）]*)[)）]/g, (_, inner) => { notes.push(inner.trim()); return ''; });
+  const colon = main.indexOf(':');
+  if (colon > 0 && main.slice(colon + 1).includes('=')) { notes.unshift(main.slice(colon + 1).trim()); main = main.slice(0, colon); }
+  return { main: main.replace(/\s+/g, ' ').trim(), note: notes.filter(Boolean).join(' · ') };
+}
+
+/** Short label for a control: the body of the label without its helper notes. */
 export function shortLabel(label) {
-  return String(label).replace(/\s*[(（][^)）]*[)）]/g, '').split(':')[0].replace(/\s+/g, ' ').trim();
+  return splitLabel(label).main;
+}
+
+/** Whether a parameter is shown for the current values: visibleWhen = { key, equals } or { key, in: [...] } (absent: always). */
+export function isParamVisible(parameter, params) {
+  const rule = parameter.visibleWhen;
+  if (!rule) return true;
+  const value = params?.[rule.key];
+  return Array.isArray(rule.in) ? rule.in.includes(value) : value === rule.equals;
+}
+
+/** Sweep coordinate of a lecture experiment (view.coordinate) in display units: { scale: SI per display unit, unit }. */
+export function coordinateScale(coordinate) {
+  return { scale: coordinate?.scale > 0 ? coordinate.scale : 1, unit: coordinate?.unit ?? '' };
+}
+
+/** "60 °" / "0.05 m": a sweep coordinate value (SI) as text in the coordinate's display unit. */
+export function coordinateText(coordinate, value, digits = 4) {
+  const { scale, unit } = coordinateScale(coordinate);
+  if (!Number.isFinite(value)) return '미정';
+  if (scale === 1 && unit !== '°') return siText(value, unit, digits);
+  const shown = Number((value / scale).toPrecision(digits)), text = String(Math.abs(shown) < 1e-4 && shown !== 0 ? shown.toExponential() : shown).replace(/^-/, '−');
+  return unit === '°' ? `${text}°` : unit && unit !== '1' ? `${text} ${unit}` : text;
 }
 
 const clamp = (value, lo, hi) => Math.min(hi, Math.max(lo, value));
@@ -30,7 +66,7 @@ export function paramSpec(param) {
   const displayScale = param.displayScale || 1;
   const unit = param.displayUnit ?? param.unit ?? '';
   const spec = {
-    key, label: shortLabel(param.label), fullLabel: param.label, min, max, initial,
+    key, label: splitLabel(param.label).main, note: splitLabel(param.label).note, fullLabel: param.label, min, max, initial,
     displayScale, unit: unit === '1' ? '' : unit, integer: INTEGER_KEYS.has(key) || undefined,
   };
   // A parameter may carry its own named cases: choices = [[value, label], ...] (the Hayt Ch.8 lecture experiments do).

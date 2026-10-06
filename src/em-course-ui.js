@@ -2,7 +2,7 @@
 // Everything is built once per experiment; value changes only update values in place so focus is never lost.
 import { appendCourseMath } from './course-math-view.js';
 import { siComplex, siText, siVector } from './em-format.js';
-import { formatParam, paramSpec, rangeFromValue } from './em-course-params.js';
+import { formatParam, isParamVisible, paramSpec, rangeFromValue } from './em-course-params.js';
 
 const statusLabel = { valid: '유효', singular: '특이점', boundary: '경계', invalid: '입력 오류', unsupported: '지원 범위 밖' };
 const UNITS = { E: 'V/m', D: 'C/m²', B: 'T', H: 'A/m' };
@@ -21,6 +21,7 @@ export const SHELL = `
       <div class="em-course-heading">
         <strong id="em-course-title"></strong><span id="em-course-status" class="em-course-status"></span>
       </div>
+      <p class="em-note" id="em-course-desc" hidden></p>
       <p class="em-note" id="em-course-picture-note" hidden></p>
       <div class="em-course-canvas-box" id="em-course-canvas-box">
         <canvas id="em-course-canvas" tabindex="0"
@@ -56,6 +57,11 @@ export const SHELL = `
           <output id="em-course-radius-value"></output>
         </div>
         <p class="em-error" id="em-course-error" role="alert" hidden></p>
+      </div>
+      <div class="em-card em-course-sweep" id="em-course-sweep" hidden>
+        <label for="em-course-sweep-input" id="em-course-sweep-label"></label>
+        <span class="em-number"><input id="em-course-sweep-input" inputmode="decimal" autocomplete="off"><i id="em-course-sweep-unit"></i></span>
+        <p class="em-error" id="em-course-sweep-error" role="alert" hidden></p>
       </div>
       <div class="em-card em-course-answer-card">
         <div class="em-side-head">
@@ -119,9 +125,17 @@ export function buildParameterStrip(host, definition, params, skip) {
     row.className = 'em-param';
     row.dataset.param = parameter.key;
     row.title = parameter.label;
+    row.hidden = !isParamVisible(parameter, params);
     const label = document.createElement('span');
     label.className = 'em-param-label';
     label.textContent = spec.label;
+    // The parenthetical of the label is a helper line under it, visible on a phone too (a tooltip is not).
+    if (spec.note) {
+      const note = document.createElement('small');
+      note.className = 'em-param-note';
+      note.textContent = spec.note;
+      label.append(note);
+    }
     row.append(label);
     if (spec.kind === 'select') {
       const select = document.createElement('select');
@@ -157,6 +171,8 @@ export function buildParameterStrip(host, definition, params, skip) {
 export function syncParameterStrip(host, definition, params) {
   for (const parameter of definition.parameters || []) {
     const spec = paramSpec(parameter), value = params[parameter.key];
+    const row = host.querySelector(`[data-param="${parameter.key}"]`);
+    if (row) row.hidden = !isParamVisible(parameter, params);
     const input = host.querySelector(`[data-em-course-parameter="${parameter.key}"]`);
     const slider = host.querySelector(`[data-em-course-slider="${parameter.key}"]`);
     if (input && input !== document.activeElement) input.value = spec.kind === 'select' ? String(value) : formatParam(spec, value);
@@ -166,37 +182,50 @@ export function syncParameterStrip(host, definition, params) {
 
 // ---- answer -----------------------------------------------------------------------------------------------------
 
-/** The selectable quantities of a result: [{ key, label, text }]. */
-export function answerItems(result) {
+/** The selectable quantities of a result: [{ key, label, text, group }]; group is '답' | '중간값' | '좌표'. */
+export function answerItems(result, definition) {
+  const answers = definition?.answerKeys || [], coordinates = definition?.coordinateKeys || [];
+  const groupOf = key => (answers.includes(key) ? '답' : coordinates.includes(key) ? '좌표' : '중간값');
   const items = [];
   for (const [key, v] of Object.entries(result.vectors || {})) {
     if (!Array.isArray(v) || !v.every(Number.isFinite)) continue;
     const unit = UNITS[key] || '';
-    items.push({ key: `vector:${key}`, label: `${key} 벡터`, text: `${key}=${siVector(v, unit)}` });
-    items.push({ key: `magnitude:${key}`, label: `|${key}| 크기`, text: `|${key}|=${siText(Math.hypot(...v), unit)}` });
+    items.push({ key: `vector:${key}`, label: `${key} 벡터`, text: `${key}=${siVector(v, unit)}`, group: '중간값' });
+    items.push({ key: `magnitude:${key}`, label: `|${key}| 크기`, text: `|${key}|=${siText(Math.hypot(...v), unit)}`, group: '중간값' });
   }
   for (const s of result.scalars || []) {
-    if (Number.isFinite(s.value)) items.push({ key: `scalar:${s.key}`, label: s.label, text: `${s.label}=${siText(s.value, s.unit || '')}` });
+    if (Number.isFinite(s.value)) items.push({ key: `scalar:${s.key}`, label: s.label, text: `${s.label}=${siText(s.value, s.unit || '')}`, group: groupOf(s.key) });
   }
   for (const p of result.phasors || []) {
     if (Number.isFinite(p.re) && Number.isFinite(p.im)) {
       const value = siComplex(p.re, p.im, p.unit || '', { polar: false });
-      items.push({ key: `phasor:${p.key}`, label: `${p.label} 위상자`, text: `${p.label}=${value} · ${p.reference || ''}` });
+      items.push({ key: `phasor:${p.key}`, label: `${p.label} 위상자`, text: `${p.label}=${value} · ${p.reference || ''}`, group: '중간값' });
     }
   }
   return items;
 }
 
 /** Fill the "구할 값" select and return the text of the chosen item (or an explanation). */
-export function renderRequested(select, output, data, result) {
-  const items = answerItems(result);
+export function renderRequested(select, output, data, result, definition) {
+  const items = answerItems(result, definition);
   if (!data.requestedKey && items.length) {
-    const first = items.find(item => item.key === 'phasor:voltage') || items[0];
+    // An experiment that names its final answers opens on the first of them; the others open on the voltage phasor or the first item.
+    const headline = definition?.answerKeys?.[0] && items.find(item => item.key === `scalar:${definition.answerKeys[0]}`);
+    const first = headline || items.find(item => item.key === 'phasor:voltage') || items[0];
     data.requestedKey = first.key;
     data.requestedLabel = first.label;
   }
   select.replaceChildren();
-  for (const item of items) select.append(Object.assign(document.createElement('option'), { value: item.key, textContent: item.label }));
+  const grouped = items.some(item => item.group === '답');
+  const groups = new Map();
+  for (const item of items) {
+    const entry = Object.assign(document.createElement('option'), { value: item.key, textContent: item.label });
+    if (!grouped) { select.append(entry); continue; }
+    if (!groups.has(item.group)) groups.set(item.group, Object.assign(document.createElement('optgroup'), { label: item.group }));
+    groups.get(item.group).append(entry);
+  }
+  // Answers first, then intermediate values, then the sweep coordinate.
+  for (const name of ['답', '중간값', '좌표']) if (groups.has(name)) select.append(groups.get(name));
   const chosen = items.find(item => item.key === data.requestedKey);
   if (data.requestedKey && !chosen) {
     select.append(Object.assign(document.createElement('option'), {

@@ -7,7 +7,7 @@ import { inductionAfterStructural, inductionAfterNumeric, inductionNumericReason
 import { renderSymbolic } from './course-symbolic-view.js';
 import { siText, siVector } from './em-format.js';
 import { createPalette, watchReducedMotion } from './em-palette.js';
-import { paramSpec, parseParam, topicOf, valueFromRange } from './em-course-params.js';
+import { coordinateScale, coordinateText, formatParam, isParamVisible, paramSpec, parseParam, topicOf, valueFromRange } from './em-course-params.js';
 import { advanceTime, clampTime, instantProfiles, normalizeTime, timeSpec, timeTrace } from './em-course-time.js';
 import { highlightSymbolic } from './em-course-symbolic.js';
 import {
@@ -15,6 +15,12 @@ import {
 } from './em-course-ui.js';
 
 const TOPICS = [...new Set(EXPERIMENTS.map(d => topicOf(d.id)))];
+// The Hayt Ch.8 (6주차) subjects come first in the subject select, the Electromagnetics 1 review subjects after them.
+const CH8_TOPICS = ['자기력·토크', '자성체·경계', '자기회로', '에너지·인덕턴스'].filter(name => TOPICS.includes(name));
+const FIRST_EXPERIMENT = 'force-lorentz';
+const LAST_KEY = 'circuit-lab.em-course.last';
+const rememberedId = () => { try { const id = localStorage.getItem(LAST_KEY); return id && getExperiment(id) ? id : ''; } catch { return ''; } };
+const remember = id => { try { localStorage.setItem(LAST_KEY, id); } catch { /* storage may be blocked */ } };
 const CHECK_DELAY = 300;
 const MODEL_KIND = {
   'finite-integration': '유한 형상 · 적분 모델', 'boundary-solver': '경계값 수치해석',
@@ -27,7 +33,7 @@ const option = (value, text) => Object.assign(document.createElement('option'), 
 export function createEMCourseController(root, { onClose } = {}) {
   const events = new AbortController(), listen = { signal: events.signal }, records = new Map();
   const $ = selector => root.querySelector(selector);
-  let active = false, selectedId = EXPERIMENTS.find(d => d.id === 'coax-current')?.id || EXPERIMENTS[0]?.id;
+  let active = false, selectedId = rememberedId() || getExperiment(FIRST_EXPERIMENT)?.id || EXPERIMENTS[0]?.id;
   let playing = false, playFrame = null, lastTick = 0, checkTimer = null, renderFrame = null;
   root.innerHTML = SHELL;
   // A theme change recolours every canvas of the screen: the picture and the emf(t) time graph under it.
@@ -175,8 +181,9 @@ export function createEMCourseController(root, { onClose } = {}) {
     if (def.id === 'faraday-loop') return '고정 루프입니다. 아래 시간을 끌거나 재생하면 B(t)와 기전력이 변합니다.';
     if (def.id === 'motional-rod') return '시간을 끌거나 재생하면 도선이 레일 위를 달립니다. 위치는 x₀+vt입니다.';
     if (kind === 'axis-only') return '축 위의 흰 점을 끌어 답을 확인하세요.';
-    if (kind === 'profile') return '그래프를 끌어 관측 위치를 옮기세요.';
-    if (kind === 'xy-curve') return '그림을 가로로 끌거나 좌우 방향키로 위상(관측 위치)을 옮기세요.';
+    const axis = def.view?.coordinate, named = axis ? `${axis.label ? `${axis.label} ` : ''}${axis.key} — ` : '';
+    if (kind === 'profile') return axis ? `${named}그래프를 끌거나 위 입력칸에 숫자로 입력하세요.` : '그래프를 끌어 관측 위치를 옮기세요.';
+    if (kind === 'xy-curve') return axis ? `${named}그림을 가로로 끌거나 좌우 방향키·숫자 입력으로 옮기세요.` : '그림을 가로로 끌거나 좌우 방향키로 위상(관측 위치)을 옮기세요.';
     if (def.id.startsWith('coax-current')) return '흰 점을 끌거나 아래 반경을 조절하세요.';
     return '흰 점을 끌어 관측 위치를 바꾸세요.';
   }
@@ -245,16 +252,17 @@ export function createEMCourseController(root, { onClose } = {}) {
     $('#em-course-grid-chip').hidden = isSweepView(def) || def.view?.kind === 'axis-only';
     const numericText = $('#em-course-answer');
     // A lecture experiment opens on its headline number (r, L, NI ...) rather than on the field vector that only draws the picture.
-    if (def.lecture && !data.requestedKey && result.scalars?.length) { data.requestedKey = `scalar:${result.scalars[0].key}`; data.requestedLabel = result.scalars[0].label; }
-    renderRequested($('#em-course-requested'), numericText, data, result);
+    if (def.lecture && !def.answerKeys?.length && !data.requestedKey && result.scalars?.length) { data.requestedKey = `scalar:${result.scalars[0].key}`; data.requestedLabel = result.scalars[0].label; }
+    renderRequested($('#em-course-requested'), numericText, data, result, def);
     if (flags.symbolicOnly) numericText.textContent = NOTE_SYMBOLIC_ONLY;
-    const parameterText = (def.parameters || []).filter(p => p.key !== 'time').map(p => {
+    const parameterText = (def.parameters || []).filter(p => p.key !== 'time' && isParamVisible(p, data.params)).map(p => {
       const spec = paramSpec(p);
-      return spec.kind === 'select' ? '' : `${spec.label}: ${siText(data.params[p.key], p.unit)}`;
+      // An angle shown in degrees reads in degrees here too.
+      return spec.kind === 'select' ? '' : `${spec.label}: ${spec.unit === '°' ? `${formatParam(spec, data.params[p.key])}°` : siText(data.params[p.key], p.unit)}`;
     }).filter(Boolean).join(' · ');
     const region = result.region ? ` · 영역 ${result.region}` : '';
     const coordinate = def.view?.coordinate; // lecture sweeps read point[2] as an angle, a distance, a field strength ...
-    const where = coordinate ? `${coordinate.label || coordinate.key} ${coordinate.key} = ${siText(data.point[2], coordinate.unit)}` : `측정점 ${siVector(data.point, 'm')}`;
+    const where = coordinate ? `${coordinate.label || coordinate.key} ${coordinate.key} = ${coordinateText(coordinate, data.point[2])}` : `측정점 ${siVector(data.point, 'm')}`;
     $('#em-course-substitution').textContent = `${parameterText} · ${where}${region}`;
     renderValues($('#em-course-values'), result);
     const unresolved = (data.profiles || []).filter(p => p.sampling?.status === 'unresolved')
@@ -268,6 +276,7 @@ export function createEMCourseController(root, { onClose } = {}) {
       if (slider !== document.activeElement) slider.value = String(ratio);
       $('#em-course-radius-value').textContent = `r/a = ${Number(ratio.toPrecision(3))}`;
     }
+    renderSweep(def, data);
     const error = $('#em-course-error');
     error.hidden = !data.error;
     error.textContent = data.error;
@@ -275,6 +284,49 @@ export function createEMCourseController(root, { onClose } = {}) {
     renderTime(def, data);
     renderPicture();
   }
+
+  // ---- sweep coordinate as a typed number ------------------------------------------------------------------------------
+
+  const sweepAxis = def => (isSweepView(def) ? def.view?.coordinate : null);
+  /** SI limits the typed coordinate may take: the parametric sweep, or the sampled profile's extent (null: no limit known). */
+  function sweepLimits(def, data) {
+    if (def.view?.kind === 'xy-curve') return def.view.curve?.sweep?.(data.params) ?? null;
+    const points = data.profiles?.[0]?.points || [];
+    return points.length ? [Math.min(...points.map(p => p.coordinate)), Math.max(...points.map(p => p.coordinate))] : null;
+  }
+  function renderSweep(def, data) {
+    const axis = sweepAxis(def), box = $('#em-course-sweep');
+    box.hidden = !axis;
+    if (!axis) return;
+    const { scale, unit } = coordinateScale(axis), input = $('#em-course-sweep-input');
+    $('#em-course-sweep-label').textContent = `${axis.label ? `${axis.label} ` : ''}${axis.key} =`;
+    $('#em-course-sweep-unit').textContent = unit === '1' ? '' : unit;
+    input.setAttribute('aria-label', `${axis.label || axis.key} (${unit || '무차원'})`);
+    if (input !== document.activeElement) {
+      input.value = String(Number((data.point[2] / scale).toPrecision(5)));
+      input.removeAttribute('aria-invalid');
+      $('#em-course-sweep-error').hidden = true;
+    }
+  }
+  $('#em-course-sweep-input').addEventListener('input', event => {
+    const def = definition(), data = record(), axis = sweepAxis(def), input = event.target, error = $('#em-course-sweep-error');
+    if (!axis) return;
+    const raw = input.value.trim(), number = Number(raw), { scale } = coordinateScale(axis), limits = sweepLimits(def, data);
+    const fail = text => { input.setAttribute('aria-invalid', 'true'); error.textContent = text; error.hidden = false; };
+    if (!raw || !Number.isFinite(number)) { fail('유한한 숫자를 입력하세요.'); return; }
+    const value = number * scale, slack = limits ? Math.abs(limits[1] - limits[0]) * 1e-9 : 0;
+    if (limits && (value < limits[0] - slack || value > limits[1] + slack)) {
+      fail(`${coordinateText(axis, limits[0])} … ${coordinateText(axis, limits[1])} 범위 밖입니다.`);
+      return;
+    }
+    input.removeAttribute('aria-invalid');
+    error.hidden = true;
+    data.point = [0, 0, value];
+    data.result = evaluate(def, data.params, data.point);
+    renderNumeric();
+  }, listen);
+  // leaving the field with an unusable value restores the current coordinate
+  $('#em-course-sweep-input').addEventListener('change', () => { $('#em-course-sweep-input').blur(); renderNumeric(); }, listen);
 
   // ---- checks (automatic, after the last change) ---------------------------------------------------------------------
 
@@ -483,7 +535,16 @@ export function createEMCourseController(root, { onClose } = {}) {
 
   function fillChoices() {
     const topic = $('#em-course-topic'), name = topicOf(selectedId);
-    if (!topic.options.length) topic.replaceChildren(...TOPICS.map(title => option(title, title)));
+    if (!topic.options.length) {
+      const group = (label, names) => {
+        const element = document.createElement('optgroup');
+        element.label = label;
+        element.append(...names.map(title => option(title, title)));
+        return element;
+      };
+      const review = TOPICS.filter(title => !CH8_TOPICS.includes(title));
+      topic.replaceChildren(...[CH8_TOPICS.length && group('Hayt Ch.8 (6주차)', CH8_TOPICS), review.length && group('전자기1 복습', review)].filter(Boolean));
+    }
     topic.value = name;
     const select = $('#em-course-select');
     select.replaceChildren(...EXPERIMENTS.filter(d => topicOf(d.id) === name).map(def => option(def.id, def.title)));
@@ -495,7 +556,10 @@ export function createEMCourseController(root, { onClose } = {}) {
     const def = definition(), data = record();
     fillChoices();
     $('#em-course-title').textContent = def.title;
-    $('#em-course-kind').textContent = MODEL_KIND[def.modelKind] || '대칭·가정에 따른 해석 모델';
+    const sections = def.lecture?.sections?.length ? `Hayt §${def.lecture.sections.join(', ')} · ` : '';
+    $('#em-course-kind').textContent = sections + (MODEL_KIND[def.modelKind] || '대칭·가정에 따른 해석 모델');
+    $('#em-course-desc').textContent = def.description || '';
+    $('#em-course-desc').hidden = !def.description;
     $('#em-course-gesture').textContent = gestureText(def);
     // A structural choice that is also a choice parameter is shown once, as the structural select.
     const isChoice = key => def.parameters.some(p => p.key === key && paramSpec(p).kind === 'select');
@@ -516,6 +580,7 @@ export function createEMCourseController(root, { onClose } = {}) {
     if (!getExperiment(id)) return;
     const previous = carryFrom ? { params: { ...carryFrom.params }, point: [...carryFrom.point] } : null;
     selectedId = id;
+    remember(id);
     if (carryOptions && previous) {
       const target = record(), next = definition();
       target.symbolicOptions = carryOptions;

@@ -162,7 +162,8 @@ export function createCourseView(canvas, onProbe, getPalette) {
     const withEnvelope = layers.every(layer => layer.live && layer.envelope);
     const note = noEnvelope ? ' · 진폭 포락선은 표본 상한으로 생략' : withEnvelope ? ' · 파선: 진폭 포락선' : '';
     const axis = current.definition.view?.coordinate || { key: 'z', unit: 'm' };
-    ctx.fillText(`${axis.key} ${xMin.toPrecision(3)} … ${xMax.toPrecision(3)} ${axis.unit} · 점선: 측정 위치${note}`, 10, h - 17);
+    const unitScale = axis.scale > 0 ? axis.scale : 1, unitText = axis.unit === '°' ? '°' : ` ${axis.unit}`;
+    ctx.fillText(`${axis.key} ${(xMin / unitScale).toPrecision(3)} … ${(xMax / unitScale).toPrecision(3)}${unitText} · 점선: 측정 위치${note}`, 10, h - 17);
     Object.assign(canvas.dataset, { profileSeries: String(layers.length), profileXMin: String(xMin), profileXMax: String(xMax) });
   }
 

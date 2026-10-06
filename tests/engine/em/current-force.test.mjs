@@ -100,3 +100,16 @@ test('force readout: magnitude, direction, pair relation and the theory value', 
   assert.match(readout.lines.join('\n'), /평면 안 ∠ 0°/);
   assert.equal(forceReadout(null).status, 'none');
 });
+
+test('a preset note names the chips the preset flipped and points to the rectangular-loop force solution', async () => {
+  const { currentPreset, presetChipChanges, presetNoteText, PRESET_COURSE_HINT } = await import('../../../src/em-current-presets.js');
+  const preset = currentPreset('wire-ampere');
+  assert.equal(presetChipChanges(preset, { force: true, ampere: false }), '힘 끔 · 암페어 루프 켬');
+  assert.equal(presetChipChanges(preset, { force: false, ampere: true }), '');
+  const note = presetNoteText('wire-ampere', preset, { force: true, ampere: false });
+  assert.match(note, /^한 도선 \+ 암페어 루프: /);
+  assert.match(note, /\n바뀐 칩: 힘 끔 · 암페어 루프 켬\n/);
+  assert.ok(note.endsWith('직사각 루프 변별 힘 풀이: 문제 풀이 ▸ 자기력·토크'));
+  assert.equal(PRESET_COURSE_HINT, '직사각 루프 변별 힘 풀이: 문제 풀이 ▸ 자기력·토크');
+  assert.doesNotMatch(presetNoteText('wire-ampere', preset, { force: false, ampere: true }), /바뀐 칩/);
+});
