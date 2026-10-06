@@ -53,7 +53,6 @@ let emLazy = null;
 let circuitCourseLazy = null;
 let signalsLazy = null;
 let workspaceSeq = 0;
-let circuitCourseActive = false;
 
 function setStatus(text, kind = "ready") {
   elements["engine-status"].textContent = text;
@@ -65,7 +64,8 @@ const phasorPanelVisible = () => !panels || panels.isOpen("phasor");
 
 // Modules are created in dependency order; calls that point back to a later module are wrapped in arrows.
 const session = createEditorSession({
-  state, inputDrafts, renderAll, resetProjectSession, refreshProbeViews,
+  state, inputDrafts, renderAll, resetProjectSession, beforeHistoryRestore, afterHistoryRestore, refreshProbeViews,
+  beforeProjectBoundary: () => projectIO.retireForBoundary(),
   synchronizeIntent: () => analysis.synchronizeIntent(),
   markStale: () => analysis.markStale(),
   scheduleAutoRun: () => analysis.scheduleAutoRun(),
@@ -105,7 +105,7 @@ const input = createEditorInput({
   runAnalysis: () => analysis.runAnalysis(), saveProject: () => projectIO.saveProject(),
   mutate: session.mutate, mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, snapshot: session.snapshot, commitMove: session.commitMove, undo: session.undo, redo: session.redo,
   addVoltageProbe: session.addVoltageProbe, addVoltageProbeEndpoint: session.addVoltageProbeEndpoint, addCurrentProbe: session.addCurrentProbe, removeProbe: session.removeProbe,
-  renderCanvas: renderer.renderCanvas, renderOverlay: renderer.renderOverlay, scheduleDragUpdate: renderer.scheduleDragUpdate, scheduleOverlayRender: renderer.scheduleOverlayRender,
+  renderCanvas: renderer.renderCanvas, renderOverlay: renderer.renderOverlay, scheduleDragUpdate: renderer.scheduleDragUpdate, cancelDragUpdate: renderer.cancelDragUpdate, scheduleOverlayRender: renderer.scheduleOverlayRender,
   updateCanvasView: renderer.updateCanvasView, endpointPosition: renderer.endpointPosition, pinPosition: renderer.pinPosition, routeForWireId: renderer.routeForWireId,
   renderInspector: inspector.renderInspector, openInlineEditor: inspector.openInlineEditor, closeInlineEditor: inspector.closeInlineEditor,
   assignPortEndpoint: analysis.assignPortEndpoint, presentProbe: analysis.presentProbe,
@@ -114,6 +114,7 @@ const projectIO = createProjectIO({
   state, elements, resetProjectSession, setStatus,
   mutate: session.mutate, confirmDiscardDrafts: inspector.confirmDiscardDrafts, commitPendingInputs: inspector.commitPendingInputs,
   setTool: input.setTool, fitCanvas: input.fitCanvas, seriesForProbes: analysis.seriesForProbes,
+  showCircuitWorkspace: () => showCircuitWorkspace(),
 });
 
 /** Clear everything tied to the previous project: pending runs, gestures, drafts, selection, results and port state. */
@@ -137,7 +138,6 @@ function resetProjectSession() {
   state.result = null;
   state.phasorResult = null;
   state.stale = false;
-  state.cursorIndex = null;
   state.runState = { status: "not-run", analysis: null, generation: null, error: null };
   state.port = { mode: null, p: null, n: null, loadIds: [], result: null, stale: false, error: null };
   elements["error-box"].classList.add("hidden");
@@ -146,6 +146,29 @@ function resetProjectSession() {
   scopeView.resetForProject();
   flow.refresh();
   setStatus("해석 준비", "ready");
+}
+
+/**
+ * Undo/redo inside one project: only what the replay really invalidates is dropped. The in-flight run is cancelled (its result would
+ * describe the circuit being left) and drafts/gestures end; the finished result stays, marked stale by the session, and the scope
+ * zoom and cursors, the port selection and the sweep form survive.
+ */
+function beforeHistoryRestore() {
+  analysis.cancelScheduledRun();
+  analysis.invalidateActiveAnalysis("history-restore");
+  state.runSerial += 1;
+  input.cancelPointerSessions();
+  inputDrafts.clear();
+  state.inlineEdit = null;
+  elements["inline-value-editor"].classList.add("hidden");
+  elements["inline-value-editor"].classList.remove("input-invalid", "input-editing");
+  input.closeProbeContextMenu();
+}
+
+/** The replayed circuit may lack parts the port selection or sweep form point at. */
+function afterHistoryRestore() {
+  analysis.reconcileWithCircuit();
+  input.restoreToolHint();
 }
 
 function updateHistoryButtons() {
@@ -200,35 +223,18 @@ function renderAll() {
   analysis.updateAnalysisControls();
 }
 
-function updateCircuitCourseTop(){
-  document.getElementById('circuit-course-shell').style.setProperty('--circuit-course-top',document.querySelector('.topbar').getBoundingClientRect().bottom+'px');
+function activateLazyWorkspace(lazy, name) {
+  const seq = ++workspaceSeq;
+  lazy.whenReady((controller) => { if (seq === workspaceSeq && workspaceTabs.active === name) controller.activate(); });
 }
-function activateCircuitCourse(){
-  const seq=++workspaceSeq;
-  circuitCourseLazy.whenReady(course=>{if(seq===workspaceSeq&&circuitCourseActive&&workspaceTabs.active==='circuit')course.activate();});
-}
-function activateLazyWorkspace(lazy,name){
-  const seq=++workspaceSeq;
-  lazy.whenReady(controller=>{if(seq===workspaceSeq&&workspaceTabs.active===name)controller.activate();});
-}
-function showCircuitCourse(value){
-  workspace.switching=true;
-  input.cancelInteractions();panels.cancelInteractions();
-  circuitCourseActive=value;workspace.circuitActive=!value;document.body.dataset.circuitExperience=value?'course':'editor';
-  const workbench=document.getElementById('workbench'),shell=document.getElementById('circuit-course-shell');
-  workbench.hidden=value;workbench.inert=value;shell.hidden=!value;shell.inert=!value;
-  workspaceSeq++;
-  if(value){updateCircuitCourseTop();activateCircuitCourse();}
-  else{circuitCourseLazy.controller?.deactivate();panels.synchronize();if(workspace.renderDeferred)renderAll();else{renderer.updateCanvasView();scopeView.render();analysis.renderPhasorLearning();}}
-  queueMicrotask(()=>{workspace.switching=false;});
+
+/** Bring the circuit editor to the front (a share link opened into a tab that was on another workspace). */
+function showCircuitWorkspace() {
+  if (workspaceTabs.active !== "circuit") workspaceTabs.activate("circuit", false);
 }
 
 function setupEvents() {
-  document.getElementById('circuit-course-open').addEventListener('pointerdown',event=>{event.preventDefault();});
-  document.getElementById('circuit-course-open').addEventListener('click',()=>showCircuitCourse(true));
-  for(const type of ['pointerenter','focus'])document.getElementById('circuit-course-open').addEventListener(type,()=>circuitCourseLazy.prefetch());
-  document.getElementById('circuit-course-back').addEventListener('click',()=>showCircuitCourse(false));
-  window.addEventListener('resize',()=>{if(circuitCourseActive&&workspaceTabs.active==='circuit')updateCircuitCourseTop();});
+  document.getElementById("circuit-course-back").addEventListener("click", () => workspaceTabs.activate("circuit"));
   initResponsiveEditor(document, window);
   // The help card is a popover: Escape or an outside click closes it.
   const help = document.getElementById("interaction-help");
@@ -265,31 +271,24 @@ function initialize() {
   emLazy = createLazyController({ host: document.getElementById("em-workspace"), load: (retry) => import("./em-controller.js" + retry), create: (module, host) => module.createEMController(host) });
   circuitCourseLazy = createLazyController({ host: document.getElementById("circuit-course-host"), load: (retry) => import("./circuit-course-controller.js" + retry), create: (module, host) => module.createCircuitCourseController(host) });
   signalsLazy = createLazyController({ host: document.getElementById("signals-workspace"), load: (retry) => import("./signals-course-controller.js" + retry), create: (module, host) => module.createSignalsCourseController(host) });
-  const lazyWorkspaces = { em: emLazy, signals: signalsLazy, circuitCourse: circuitCourseLazy };
+  const lazyWorkspaces = { em: emLazy, signals: signalsLazy, "circuit-course": circuitCourseLazy };
   const requestedWorkspace = new URLSearchParams(location.search).get("workspace");
-  const startupWorkspace = ["em", "signals"].includes(requestedWorkspace) ? requestedWorkspace : document.querySelector('[data-workspace-tab][aria-selected="true"]')?.dataset.workspaceTab;
+  const startupWorkspace = Object.hasOwn(lazyWorkspaces, requestedWorkspace) ? requestedWorkspace : document.querySelector('[data-workspace-tab][aria-selected="true"]')?.dataset.workspaceTab;
   lazyWorkspaces[startupWorkspace]?.prefetch();
   workspaceTabs = createWorkspaceTabs({
     onBeforeChange: (from) => {
       workspace.switching = true;
       if (from === "circuit") {
-        circuitCourseLazy.controller?.deactivate();document.getElementById('circuit-course-shell').hidden=true;document.getElementById('circuit-course-shell').inert=true;
         input.cancelInteractions();
         panels.cancelInteractions();
         workspace.circuitActive = false;
         panels.synchronize();
-      } else if (from === "em") emLazy.controller?.deactivate();
-      else if (from === "signals") signalsLazy.controller?.deactivate();
+      } else lazyWorkspaces[from]?.controller?.deactivate();
     },
     onIntent: (name) => lazyWorkspaces[name]?.prefetch(),
     onChange: (name) => {
-      if (name === "em") activateLazyWorkspace(emLazy, "em");
-      else if (name === "signals") activateLazyWorkspace(signalsLazy, "signals");
-      else if(circuitCourseActive){
-        workspace.circuitActive=false;const workbench=document.getElementById('workbench'),shell=document.getElementById('circuit-course-shell');
-        workbench.hidden=true;workbench.inert=true;shell.hidden=false;shell.inert=false;
-        updateCircuitCourseTop();activateCircuitCourse();
-      } else {
+      if (Object.hasOwn(lazyWorkspaces, name)) activateLazyWorkspace(lazyWorkspaces[name], name);
+      else {
         workspaceSeq++;
         workspace.circuitActive = true;
         panels.synchronize();
@@ -324,13 +323,10 @@ function initialize() {
     getEMState: () => emLazy.controller?.inspect() ?? null,
     getCircuitCourseState: () => circuitCourseLazy.controller?.inspect() ?? null,
     getSignalsCourseState: () => signalsLazy.controller?.inspect() ?? null,
-    ensureWorkspace: (name) => {
-      const key = name === "circuit-course" ? "circuitCourse" : name;
-      return lazyWorkspaces[key] ? lazyWorkspaces[key].ensure() : Promise.resolve(null);
-    },
+    ensureWorkspace: (name) => (Object.hasOwn(lazyWorkspaces, name) ? lazyWorkspaces[name].ensure() : Promise.resolve(null)),
     activateWorkspace: (name) => workspaceTabs.activate(name, false),
   };
-  if (["em", "signals"].includes(requestedWorkspace)) workspaceTabs.activate(requestedWorkspace, false);
+  if (Object.hasOwn(lazyWorkspaces, requestedWorkspace)) workspaceTabs.activate(requestedWorkspace, false);
   scheduleWorkspacePrefetch([emLazy, circuitCourseLazy, signalsLazy]);
   const query = new URLSearchParams(location.search);
   const exampleId = query.get("example");
@@ -339,7 +335,7 @@ function initialize() {
   projectIO.registerLaunch({ example: query.has("example"), run: query.has("run"), hash: hasShareHash(location.hash) });
   if (hasShareHash(location.hash)) {
     // A share link wins over ?example and over the restore offer; a link that cannot be opened falls back to the restore offer.
-    projectIO.openShareHash(location.hash).then((opened) => { if (!opened) projectIO.offerRestore(); });
+    projectIO.openShareHash(location.hash).then((opened) => { if (opened === false) projectIO.offerRestore(); }); // null: a newer link took over
   } else if (exampleRequested) {
     projectIO.loadExample(exampleId, { silent: true });
   } else {

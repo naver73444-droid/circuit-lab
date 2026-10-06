@@ -1,11 +1,7 @@
-import { componentDefaults, parseValue, pinCount } from "./circuit-engine.js";
+import { componentDefaults, endpointKey, parseValue, pinCount } from "./circuit-engine.js";
 import { circuitGeometryVersion, projectSplitPoint, snapPoint, splitRouteWaypoints } from "./circuit-geometry.js";
 
-export function endpointKey(endpoint) {
-  return endpoint?.junctionId !== undefined
-    ? `J:${endpoint.junctionId}`
-    : `P:${endpoint?.componentId}:${endpoint?.pin}`;
-}
+export { endpointKey };
 
 export function endpointsEqual(first, second) {
   return endpointKey(first) === endpointKey(second);
@@ -192,10 +188,6 @@ export function remapFragment(circuit, fragment, offset = 40, { resolveControl =
 
 export function cloneComponentSet(circuit, componentIds, offset = 40, { junctionIds = [], allocator = null } = {}) {
   return remapFragment(circuit, extractFragment(circuit, componentIds, junctionIds), offset, { allocator });
-}
-
-export function cloneSelectedComponent(circuit, componentId, offset = 40) {
-  return cloneComponentSet(circuit, [componentId], offset).components[0] ?? null;
 }
 
 export function classifyNumericInput(input, { positive = false } = {}) {

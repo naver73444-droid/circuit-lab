@@ -1,14 +1,8 @@
-import { CircuitError, componentDefaults, pinCount, simulateDC, validateCircuitStructure } from "./circuit-engine.js";
+import { CircuitError, componentDefaults, endpointKey, junctionKey, pinCount, pinKey, simulateDC, validateCircuitStructure } from "./circuit-engine.js";
 import { UnionFind } from "./union-find.js";
 
 const TRIAL_CURRENT = 1e-3;
 const TRIAL_VOLTAGE = 1;
-
-const pinKey = (componentId, pin) => `pin:${componentId}:${pin}`;
-const junctionKey = (junctionId) => `junction:${junctionId}`;
-const endpointKey = (endpoint) => endpoint?.junctionId !== undefined
-  ? junctionKey(endpoint.junctionId)
-  : pinKey(endpoint?.componentId, endpoint?.pin);
 
 function uniqueId(prefix, used) {
   let index = 1;

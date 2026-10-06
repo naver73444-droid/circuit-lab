@@ -4,11 +4,10 @@ import { deserializeProject, serializeProject } from "./project-format.js";
 import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geometry.js";
 import { currentProbeLabel } from "./current-direction.js";
 import { escapeHtml } from "./safe-dom.js";
-import { PROBE_COLORS, newProjectId } from "./editor-session.js";
+import { PROBE_COLORS, defaultSettings, newProjectId } from "./editor-session.js";
 import { createAutosave, describeSavedAt, isEmptyProject } from "./persistence.js";
-import { buildShareUrl, decodeProjectFromHash, encodeProjectToHash } from "./share-url.js";
+import { buildShareUrl, decodeProjectFromHash, encodeProjectToHash, hasShareHash } from "./share-url.js";
 import { createCanvasNotices } from "./canvas-notices.js";
-import { clearSelection } from "./selection-model.js";
 
 /**
  * Whole-project operations: example loading, new circuit, JSON save/open, CSV export, autosave + restore offer and share links.
@@ -47,9 +46,10 @@ export function createProjectIO(deps) {
     launch.hash = false;
   }
 
-  /** Called once the user has agreed to replace the project: no earlier save may land on top of the new one, and the launch link is spent. */
+  /** Called once the user has agreed to replace the project: the old project's pending save is finished (never lost, never written over the new one), and the launch link is spent. */
   function beginReplacement({ startup = false } = {}) {
-    autosave.cancel();
+    // The old project's last edits are written first and its slot becomes the "previous" slot at the next save (see persistence.js).
+    autosave.retire();
     if (!startup) dropLaunchSources();
   }
 
@@ -82,9 +82,6 @@ export function createProjectIO(deps) {
     if (!confirmDiscardDrafts()) { elements["example-select"].value = ""; return; }
     beginReplacement({ startup: silent });
     const example = cloneExample(id);
-    const manualSettings = Object.fromEntries([...state.manualSettingKeys]
-      .filter((key) => key !== "analysis" && state.settings[key] !== undefined)
-      .map((key) => [key, state.settings[key]]));
     const defaults = {
       divider: [{ kind: "voltage", componentId: "R2", pin: 0 }, { kind: "current", componentId: "R1" }],
       "rc-charge": [{ kind: "voltage", componentId: "C1", pin: 0 }, { kind: "current", componentId: "R1" }],
@@ -98,7 +95,8 @@ export function createProjectIO(deps) {
       state.projectId = newProjectId();
       state.intent = "manual";
       state.circuit = { ...example.circuit, junctions: example.circuit.junctions ?? [] };
-      state.settings = { ...state.settings, ...example.settings, ...manualSettings };
+      // An example brings its own settings: nothing the user typed into the previous project (end time, step, …) may carry over.
+      state.settings = { ...defaultSettings(), ...example.settings };
       state.title = example.name;
       state.subtitle = example.description;
       state.probes = (defaults[id] ?? []).map((probe, index) => {
@@ -107,13 +105,7 @@ export function createProjectIO(deps) {
           ? { ...probe, key: `V:${probe.componentId}:${probe.pin}`, label: `V(${component.props.ref}.${probe.pin + 1})`, color: PROBE_COLORS[index] }
           : { ...probe, key: `I:${probe.componentId}`, label: currentProbeLabel(component, circuitGeometryVersion(state.circuit)), color: PROBE_COLORS[index] };
       });
-      clearSelection(state);
       state.learningId = ["rc-lowpass", "rl", "rlc", "parallel-sine"].includes(id) ? id : null;
-      state.result = null;
-      state.phasorResult = null;
-      state.stale = false;
-      state.runState = { status: "not-run", analysis: null, generation: null, error: null };
-      state.cursorIndex = null;
       elements["result-summary"].textContent = state.learningId ? "학습 예제 준비 · 자동 계산을 기다립니다." : "예제를 불러왔습니다. 해석 실행으로 계산하세요.";
     }, { autosave: !silent }); // a startup ?example= load must not replace an earlier autosave
     elements["example-select"].value = "";
@@ -159,20 +151,15 @@ export function createProjectIO(deps) {
       });
       if (project.wrapped) {
         state.settings = project.settings;
-        state.manualSettingKeys = new Set(Object.keys(project.settings).filter((key) => key !== "analysis"));
         state.probes = project.probes;
         state.title = project.title ?? fallbackTitle;
         state.subtitle = project.subtitle ?? fallbackSubtitle;
       } else {
+        state.settings = defaultSettings();
         state.probes = [];
         state.title = fallbackTitle;
         state.subtitle = fallbackSubtitle;
       }
-      state.result = null;
-      state.phasorResult = null;
-      state.stale = false;
-      state.runState = { status: "not-run", analysis: null, generation: null, error: null };
-      state.cursorIndex = null;
       state.learningId = null;
       elements["result-summary"].textContent = resultText;
     }, { autosave: save });
@@ -184,7 +171,7 @@ export function createProjectIO(deps) {
   async function loadProject(file) {
     const importGeneration = state.generation;
     try {
-      const project = deserializeProject(await file.text(), state.settings);
+      const project = deserializeProject(await file.text(), defaultSettings());
       if (state.generation !== importGeneration) throw new Error("읽는 동안 회로가 변경되어 불러오기를 취소했습니다. 파일을 다시 선택하세요.");
       if (!openProject(project, { fallbackTitle: file.name.replace(/\.json$/i, ""), fallbackSubtitle: "JSON에서 불러온 회로", resultText: "JSON에서 회로를 불러왔습니다. 해석 실행으로 계산하세요." })) return;
       setStatus("JSON 불러오기 완료", "ready");
@@ -200,8 +187,11 @@ export function createProjectIO(deps) {
   /** At startup: if a valid autosave differs from the loaded circuit, offer (never apply) it in a dismissible banner. */
   function offerRestore() {
     // The newest slot whose content differs from what is loaded: this tab's own slot after a reload, or another tab's/older work.
-    const saved = autosave.loadDetailed(state.settings, { current: currentProject() });
+    const saved = autosave.loadDetailed(defaultSettings(), { current: currentProject() });
     if (!saved.ok) return false;
+    // The offered work must survive whatever happens first: the first save of this session moves that slot to "prev" instead of overwriting it.
+    // When the offer is the tab's own .prev slot, that slot is protected: the first save must not rotate over the very copy on offer.
+    autosave.retire({ keepPrev: saved.prev === true });
     notices.show({
       kind: "restore",
       text: `이전 작업이 있습니다 (${describeSavedAt(saved.savedAt)})`,
@@ -210,14 +200,15 @@ export function createProjectIO(deps) {
           label: "복원",
           primary: true,
           onClick: () => {
-            // Restoring replaces the circuit on screen only on this click; the old content stays one undo away.
-            const opened = openProject(saved.project, { fallbackTitle: "복원한 회로", fallbackSubtitle: "자동 저장에서 복원한 회로", resultText: "이전 작업을 복원했습니다. 해석 실행으로 계산하세요.", autosave: false });
+            // Restoring replaces the circuit on screen only on this click; the old content stays one undo away. The restored project is saved
+            // right away (it becomes this tab's slot; whatever was on screen before is kept in the prev slot).
+            const opened = openProject(saved.project, { fallbackTitle: "복원한 회로", fallbackSubtitle: "자동 저장에서 복원한 회로", resultText: "이전 작업을 복원했습니다. 해석 실행으로 계산하세요." });
             if (!opened) return false;
             setStatus("이전 작업 복원 완료", "ready");
             return true;
           },
         },
-        { label: "무시" },
+        { label: "무시", onClick: () => { autosave.releaseProtection(); } },
       ],
     });
     return true;
@@ -253,10 +244,18 @@ export function createProjectIO(deps) {
     if (execCopied) shown.element.querySelector(".canvas-notice-text").textContent = "링크를 복사했습니다";
   }
 
-  /** Startup with #p=...: decode, open atomically, or explain why not and keep the default editor. */
-  async function openShareHash(hash) {
+  /**
+   * #p=... at startup, or pasted into the address bar of an open tab (hashchange): decode, open atomically, or explain why not and keep what is
+   * on screen. A link opened into a running session is a replacement like any other (draft prompt, launch parameters cleaned, old work kept in the prev slot).
+   */
+  let shareRequestSeq = 0;
+  async function openShareHash(hash, { fromHashChange = false } = {}) {
+    if (fromHashChange) registerLaunch({ hash: true });
+    // Two links opened in quick succession: only the newest request may apply (the generation check below still detects edits made meanwhile).
+    const sequence = (shareRequestSeq += 1);
     const generation = state.generation;
-    const decoded = await decodeProjectFromHash(hash, { fallbackSettings: state.settings });
+    const decoded = await decodeProjectFromHash(hash, { fallbackSettings: defaultSettings() });
+    if (sequence !== shareRequestSeq) return null; // superseded by a newer link: it reports its own outcome
     if (!decoded.ok) {
       notices.show({ kind: "error", text: `공유 링크를 열 수 없습니다 · ${decoded.reason}`, autoHideMs: 12000 });
       setStatus("공유 링크 불러오기 실패", "error");
@@ -266,7 +265,7 @@ export function createProjectIO(deps) {
       notices.show({ kind: "error", text: "불러오는 동안 회로가 변경되어 공유 링크 열기를 취소했습니다.", autoHideMs: 9000 });
       return false;
     }
-    const opened = openProject(decoded.project, { fallbackTitle: "공유된 회로", fallbackSubtitle: "공유 링크에서 불러온 회로", resultText: "공유 링크에서 회로를 불러왔습니다. 해석 실행으로 계산하세요.", autosave: false, startup: true });
+    const opened = openProject(decoded.project, { fallbackTitle: "공유된 회로", fallbackSubtitle: "공유 링크에서 불러온 회로", resultText: "공유 링크에서 회로를 불러왔습니다. 해석 실행으로 계산하세요.", autosave: fromHashChange, startup: !fromHashChange });
     if (!opened) return false;
     notices.show({ text: "공유 링크에서 불러왔습니다", autoHideMs: 6000 });
     setStatus("공유 링크에서 불러오기 완료", "ready");
@@ -285,6 +284,11 @@ export function createProjectIO(deps) {
     setStatus("CSV 저장 완료", "ready");
   }
 
+  /** Another way a project can be replaced: undo/redo across a project boundary (see editor-session). Same bookkeeping as an explicit replacement. */
+  function retireForBoundary() {
+    beginReplacement();
+  }
+
   function newCircuit() {
       if (!confirmDiscardDrafts()) return;
       beginReplacement();
@@ -292,21 +296,12 @@ export function createProjectIO(deps) {
       resetProjectSession();
       state.projectId = newProjectId();
       state.intent = "auto";
-      state.manualSettingKeys.clear();
+      state.settings = defaultSettings();
       state.circuit = { version: 1, geometryVersion: CURRENT_GEOMETRY_VERSION, components: [], wires: [], junctions: [] };
       state.title = "새 회로";
       state.subtitle = "빈 캔버스에서 시작하세요";
-      clearSelection(state);
       state.learningId = null;
       state.probes = [];
-      state.result = null;
-      state.phasorResult = null;
-      state.stale = false;
-      state.runState = { status: "not-run", analysis: null, generation: null, error: null };
-      state.cursorIndex = null;
-      state.pendingPin = null;
-      state.pendingWaypoints = [];
-      state.pointer = null;
       elements["result-summary"].textContent = "회로에서 프로브를 선택하고 해석을 실행하세요.";
       }, { autosave: false }); // a new circuit keeps the previous autosave until the next real edit
   }
@@ -320,10 +315,15 @@ export function createProjectIO(deps) {
     elements["file-input"].addEventListener("change", () => { if (elements["file-input"].files[0]) loadProject(elements["file-input"].files[0]); elements["file-input"].value = ""; });
     elements["csv-button"].addEventListener("click", exportCSV);
     elements["share-button"].addEventListener("click", copyShareLink);
+    window.addEventListener("hashchange", () => {
+      if (!hasShareHash(location.hash)) return;
+      deps.showCircuitWorkspace?.(); // the opened circuit must be visible, whichever workspace the tab was on
+      openShareHash(location.hash, { fromHashChange: true });
+    });
     // A pending autosave must not be lost when the tab closes or is backgrounded within the debounce window.
     window.addEventListener("pagehide", flushAutosave);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushAutosave(); });
   }
 
-  return { loadExample, saveProject, loadProject, openProject, exportCSV, newCircuit, offerRestore, copyShareLink, openShareHash, registerLaunch, noteCommitted, flushAutosave, autosaveStatus: () => autosave.getStatus(), attach };
+  return { loadExample, saveProject, loadProject, openProject, exportCSV, newCircuit, offerRestore, copyShareLink, openShareHash, registerLaunch, noteCommitted, retireForBoundary, flushAutosave, autosaveStatus: () => autosave.getStatus(), attach };
 }

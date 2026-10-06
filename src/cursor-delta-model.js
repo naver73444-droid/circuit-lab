@@ -53,11 +53,6 @@ export function describeCursorDelta({ analysis, xValues, values, indexA, indexB,
   };
 }
 
-/** 한 줄 텍스트(접근성 라벨·테스트용). */
-export function deltaText(description) {
-  return description.items.map((item) => `${item.label} ${item.text}`).join(" · ");
-}
-
 /** B 커서 인덱스 이동. step: ±1 / "home" / "end". current가 null이면 fallback에서 시작한다. */
 export function nextCursorB(current, step, length, fallback = 0) {
   if (!Number.isInteger(length) || length < 1) return null;

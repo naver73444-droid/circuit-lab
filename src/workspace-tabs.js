@@ -64,13 +64,16 @@ export function createLazyController({ host, load, create }) {
   };
 }
 
+/** Top-level workspaces; each non-circuit one owns a panel with id "<name>-workspace". */
+export const WORKSPACES = ['circuit', 'em', 'signals', 'circuit-course'];
+
 export function createWorkspaceTabs({ onBeforeChange = () => {}, onChange = () => {}, onIntent = () => {} } = {}) {
   const tabs = [...document.querySelectorAll('[data-workspace-tab]')];
   const circuitRoots = [document.getElementById('workbench')];
   let active = tabs.find(tab => tab.getAttribute('aria-selected') === 'true')?.dataset.workspaceTab ?? 'circuit';
   let prepared = null;
   function activate(name, focus = true) {
-    if (!['circuit', 'em', 'signals'].includes(name) || name === active) return false;
+    if (!WORKSPACES.includes(name) || name === active) return false;
     if (prepared?.from === active && prepared?.to === name) prepared = null;
     else onBeforeChange(active, name);
     active = name;
@@ -80,7 +83,7 @@ export function createWorkspaceTabs({ onBeforeChange = () => {}, onChange = () =
       tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;
       if (selected && focus) tab.focus({ preventScroll: true });
     });
-    for (const field of ['em', 'signals']) {
+    for (const field of WORKSPACES.filter(item => item !== 'circuit')) {
       const panel = document.getElementById(field + '-workspace');
       panel.hidden = name !== field; panel.inert = name !== field;
     }

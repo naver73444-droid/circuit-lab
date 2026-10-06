@@ -1,8 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { beginPointerSession, finishPointerSession, ownsPointer } from "../../src/pointer-session.js";
-import { passedDragSlop, nearestScreenTarget, viewForPinch, CANVAS_VIEW_MIN_WIDTH, CANVAS_VIEW_MAX_WIDTH } from "../../src/interaction-math.js";
-import { distanceToSegment } from "../../src/touch-targets.js";
+import { beginPointerSession, finishPointerSession, ownsPointer, passedDragSlop, nearestScreenTarget, viewForPinch, distanceToSegment, CANVAS_VIEW_MIN_WIDTH, CANVAS_VIEW_MAX_WIDTH } from "../../src/interaction-math.js";
 
 test("pointer transaction은 단일 owner·비소유 무시·취소/commit 멱등을 보장한다", () => {
   const first = beginPointerSession(null, 11, { kind: "component", id: "R1", origin: { x: 0, y: 0 } });

@@ -24,9 +24,8 @@ export class ScopeView {
     this.cursorB = null;
     this.bArmed = false;
     this.activeTraceKey = null;
-    this.onChange = null;
-    // Called whenever cursor A (hover, pinned or keyboard) may have moved; cheap observers only (the current-flow overlay).
-    this.onCursor = null;
+    // Observers: subscribe(fn) -> unsubscribe. fn(type, detail): "change" (active trace / cursor B) or "cursor" (cursor A may have moved; cheap observers only).
+    this.listeners = new Set();
     this.selectedTraceKeys = new Map();
     this.stale = false;
     this.forceFit = true;
@@ -75,8 +74,20 @@ export class ScopeView {
     this.wheelBalance.clear();
   }
 
+  /** Observe the scope without displacing anyone else. Returns the function that stops observing. */
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  emit(type, detail) {
+    for (const listener of [...this.listeners]) {
+      try { listener(type, detail); } catch { /* a failing observer must not break the plot */ }
+    }
+  }
+
   notify() {
-    try { this.onChange?.(); } catch { /* a failing observer must not break the plot */ }
+    this.emit("change");
   }
 
   /** The trace the A/B delta describes: the chosen one, else the first. */
@@ -419,7 +430,7 @@ export class ScopeView {
   }
 
   renderCursor() {
-    try { this.onCursor?.(this.cursorIndex); } catch { /* an observer must not break the plot */ }
+    this.emit("cursor", this.cursorIndex);
     const target = this.svg.querySelector("#scope-cursor");
     if (!target) return;
     target.replaceChildren();

@@ -2,8 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { simulateDC } from "../../src/circuit-engine.js";
-import { acMagnitudeLevel, acPhaseDegrees } from "../../src/measurement-format.js";
-import { currentDisplayScale, dcOperatingPointModel, displayAxes } from "../../src/plot-format.js";
+import { acMagnitudeLevel, acPhaseDegrees, currentDisplayScale, displayAxes } from "../../src/plot-format.js";
 import { deserializeProject } from "../../src/project-format.js";
 import { phasorAxis, quantityDisplayScale } from "../../src/phasor-format.js";
 
@@ -57,22 +56,6 @@ test("페이저 숫자축은 물리량별 실제 범위와 같은 물리량의 �
   assert.deepEqual(current, { scale: 1e3, unit: "mA", minimum: -10, maximum: 10, ticks: [10, 5, 0, -5, -10] });
   assert.notEqual(voltage.maximum, current.maximum);
   assert.deepEqual(phasorAxis([{ re: 0, im: 0 }], "V"), { scale: 1, unit: "V", minimum: -1, maximum: 1, ticks: [1, .5, 0, -.5, -1] });
-});
-
-test("DC plot model은 한 operating point를 상수 level과 부호 있는 실제 값으로 표현한다", () => {
-  const series = [
-    { probe: { label: "V(in)", color: "#1" }, unit: "V", values: [10] },
-    { probe: { label: "V(out)", color: "#2" }, unit: "V", values: [5] },
-    { probe: { label: "V(gnd)", color: "#3" }, unit: "V", values: [0] },
-    { probe: { label: "I(V1)", color: "#4" }, unit: "mA", values: [-5] },
-  ];
-  const model = dcOperatingPointModel(series);
-  assert.equal(model.xLabel, "DC operating point · 시간축 없음");
-  assert.deepEqual(model.axes.map((axis) => axis.unit), ["V", "mA"]);
-  assert.deepEqual(model.levels.map(({ label, value, unit }) => ({ label, value, unit })), [
-    { label: "V(in)", value: 10, unit: "V" }, { label: "V(out)", value: 5, unit: "V" },
-    { label: "V(gnd)", value: 0, unit: "V" }, { label: "I(V1)", value: -5, unit: "mA" },
-  ]);
 });
 
 test("zero AC amplitude is minus infinity, not an artificial floor", () => {

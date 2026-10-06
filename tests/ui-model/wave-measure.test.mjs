@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { measureTraces, summaryLine, MEASURE_MAX_ROWS } from "../../src/wave-measure-model.js";
-import { describeCursorDelta, deltaText, nextCursorB } from "../../src/cursor-delta-model.js";
+import { describeCursorDelta, nextCursorB } from "../../src/cursor-delta-model.js";
 import { measurePeriod, measureCutoff } from "../../src/measure-model.js";
 import { simulate } from "../../src/circuit-engine.js";
 import { cloneExample } from "../../src/examples.js";
@@ -107,7 +107,6 @@ test("A/B 차이: 시간응답 ΔT·ΔV·1/ΔT·기울기 (B−A, 원 표본)", 
   near(Number.parseFloat(dv.text), (raw[350] - raw[100]) * 1000, 0.5, "mV");
   assert.match(inverse.text, /^400 Hz$/);
   assert.match(slope.text, /V\/s$/);
-  assert.match(deltaText(described), /ΔT 2.5 ms/);
   // 전류는 ΔI
   assert.equal(describeCursorDelta({ analysis: "transient", xValues, values: raw, indexA: 1, indexB: 2, quantity: "A" }).items[1].label, "ΔI");
   // 같은 인덱스: 1/ΔT·기울기는 계산 불가

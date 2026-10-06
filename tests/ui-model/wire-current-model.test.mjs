@@ -204,3 +204,19 @@ test("a precomputed net analysis gives the same answer and can be reused for eve
     assert.deepEqual(wireCurrents({ circuit, componentCurrents, nets }), wireCurrents({ circuit, componentCurrents }));
   }
 });
+
+test("byWire에는 프로토타입이 없어 constructor·__proto__ 같은 배선 id도 평범한 데이터다", () => {
+  const circuit = {
+    version: 1, geometryVersion: 2, junctions: [],
+    components: [{ id: "V1", type: "V", x: 0, y: 0, rotation: 0, props: {} }, { id: "R1", type: "R", x: 0, y: 0, rotation: 0, props: {} }, { id: "G1", type: "GND", x: 0, y: 0, rotation: 0, props: {} }],
+    wires: [
+      { id: "constructor", a: { componentId: "V1", pin: 0 }, b: { componentId: "R1", pin: 0 } },
+      { id: "__proto__", a: { componentId: "R1", pin: 1 }, b: { componentId: "G1", pin: 0 } },
+    ],
+  };
+  const { byWire } = wireCurrents({ circuit, componentCurrents: { V1: -0.005, R1: 0.005, G1: 0 } });
+  assert.equal(Object.getPrototypeOf(byWire), null);
+  assert.equal(Object.hasOwn(byWire, "constructor"), true);
+  assert.equal(Object.hasOwn(byWire, "__proto__"), true);
+  assert.deepEqual(Object.keys(byWire).sort(), ["__proto__", "constructor"]);
+});

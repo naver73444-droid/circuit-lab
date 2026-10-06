@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { analyzeIdealVoltageConstraints, CircuitError, buildTopology, parseValue, simulateAC, simulateACAtFrequency, simulateDC, simulateTransient, validateCircuitStructure } from "../../../src/circuit-engine.js";
 import { cloneExample } from "../../../src/examples.js";
-import { acMagnitudeLevel } from "../../../src/measurement-format.js";
+import { acMagnitudeLevel } from "../../../src/plot-format.js";
 import { deserializeProject, serializeProject } from "../../../src/project-format.js";
-import { buildResultsCSV, parseCSV } from "../../../src/csv-format.js";
-import { divideComplex, phasorFromPolar, phasorPolar, theoreticalImpedance, wrapPhaseDifference } from "../../../src/phasor-format.js";
+import { buildResultsCSV } from "../../../src/csv-format.js";
+import { parseCSV } from "../../helpers/csv.mjs";
+import { divideComplex, phasorPolar, theoreticalImpedance, wrapPhaseDifference } from "../../../src/phasor-format.js";
+import { phasorFromPolar } from "../../helpers/complex.mjs";
 import { UnionFind } from "../../../src/union-find.js";
 
 describe("basic analyses", () => {

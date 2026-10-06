@@ -1,4 +1,4 @@
-import { endpointKey } from "./circuit-edit.js";
+import { endpointKey, pinKey } from "./circuit-engine.js";
 
 /**
  * Wire currents for the "전류 흐름" view. Pure: no DOM, no solver call.
@@ -105,7 +105,8 @@ export function analyzeWireNets(circuit) {
  */
 export function wireCurrents({ circuit, componentCurrents, nets = analyzeWireNets(circuit) }) {
   const { wires, index, ground, pieces } = nets;
-  const byWire = {};
+  // No prototype: a wire id like "__proto__" or "constructor" must stay plain data.
+  const byWire = Object.create(null);
   const injection = new Array(index.size).fill(0);
   const bad = new Array(index.size).fill(false);
 
@@ -115,7 +116,7 @@ export function wireCurrents({ circuit, componentCurrents, nets = analyzeWireNet
     const into = Number.isFinite(raw) || component.type === "GND" ? pinCurrentsInto(component, Number.isFinite(raw) ? raw : 0) : null;
     const count = into ? into.length : 4;
     for (let pin = 0; pin < count; pin += 1) {
-      const vertex = index.get(component.type === "GND" ? GROUND_KEY : `P:${component.id}:${pin}`);
+      const vertex = index.get(component.type === "GND" ? GROUND_KEY : pinKey(component.id, pin));
       if (vertex === undefined) continue;
       if (!into) { bad[vertex] = true; continue; }
       injection[vertex] -= into[pin]; // current leaving the pin into the wires

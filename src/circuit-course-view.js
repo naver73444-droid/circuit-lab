@@ -9,40 +9,43 @@ export function formatNumber(n) { return n === null || n === undefined || !Numbe
 const fmt = formatNumber;
 const zText = z => !z ? '유한한 값 없음' : fmt(z.re) + (z.im < 0 ? ' − j' : ' + j') + fmt(Math.abs(z.im));
 const polarText = z => { const p = rectangularPolar(z); return fmt(p.magnitude) + ' ∠ ' + (p.angleDeg === null ? '위상 미정' : fmt(p.angleDeg) + '°'); };
-const colors = ['#52b4ff', '#ffb75c', '#c3a1ff', '#55dfaa', '#ff859b', '#c6d572'];
+// Series colors are theme tokens (defined with the stylesheet below), never literals in markup.
+const colors = [0, 1, 2, 3, 4, 5].map(n => 'var(--cc-s' + n + ')');
 const style = [
-'.circuit-course{color:#e7edf7;background:#101825;padding:18px;border-radius:14px;font:15px/1.6 system-ui,sans-serif;max-width:1600px;margin:auto;box-sizing:border-box}',
+'.circuit-course{--cc-s0:#52b4ff;--cc-s1:#ffb75c;--cc-s2:#c3a1ff;--cc-s3:#55dfaa;--cc-s4:#ff859b;--cc-s5:#c6d572}',
+':root[data-theme="light"] .circuit-course{--cc-s0:#0b64a8;--cc-s1:#a85a00;--cc-s2:#6b3fb3;--cc-s3:#16784f;--cc-s4:#b3243f;--cc-s5:#6b7300}',
+'.circuit-course{color:var(--text);background:var(--bg);padding:18px;border-radius:14px;font:15px/1.6 system-ui,sans-serif;max-width:1600px;margin:auto;box-sizing:border-box}',
 '.circuit-course *{box-sizing:border-box}.circuit-course button,.circuit-course input,.circuit-course select{font:inherit;color:inherit}',
-'.circuit-course button{cursor:pointer;border:1px solid #4b6684;background:#24354c;border-radius:8px;padding:9px 12px;min-height:44px}',
-'.circuit-course button[aria-current=true]{background:#164a67;border-color:#66d6fc}.circuit-course button:focus-visible,.circuit-course input:focus-visible,.circuit-course select:focus-visible{outline:3px solid #80dfff;outline-offset:3px}',
+'.circuit-course button{cursor:pointer;border:1px solid var(--line);background:var(--raised);border-radius:8px;padding:9px 12px;min-height:44px}',
+'.circuit-course button[aria-current=true]{background:var(--selection);border-color:var(--accent)}.circuit-course button:focus-visible,.circuit-course input:focus-visible,.circuit-course select:focus-visible{outline:3px solid var(--accent);outline-offset:3px}',
 '.circuit-course h2,.circuit-course h3,.circuit-course p{margin:0 0 10px}.circuit-course h2{font-size:24px}.circuit-course h3{font-size:18px}',
 '.circuit-course .circuit-course-primary-answers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.circuit-course .circuit-course-primary-answers>h3,.circuit-course .circuit-course-primary-answers>p{grid-column:1/-1}.circuit-course .circuit-course-primary-answers .course-symbolic-answer{margin:0}@media(max-width:760px){.circuit-course .circuit-course-primary-answers{grid-template-columns:minmax(0,1fr)}.circuit-course[data-circuit-course-presentation=symbolic] .circuit-course-layout>main{order:-1}}',
 '.circuit-course .circuit-course-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}',
 '.circuit-course .circuit-course-layout{display:grid;grid-template-columns:minmax(250px,320px) minmax(0,1fr);gap:18px}',
-'.circuit-course .circuit-course-card{background:#182436;border:1px solid #334962;border-radius:10px;padding:14px;margin-bottom:14px;min-width:0}',
+'.circuit-course .circuit-course-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px;min-width:0}',
 '.circuit-course .circuit-course-layout>aside,.circuit-course .circuit-course-layout>main{min-width:0}.circuit-course .circuit-course-schematic{max-height:240px}',
 '.circuit-course .circuit-course-form{display:grid;gap:10px}.circuit-course label{display:grid;gap:3px}',
-'.circuit-course input:not([type=range]),.circuit-course select{background:#0d1828;border:1px solid #69819d;border-radius:7px;width:100%;padding:8px;min-height:44px}',
-'.circuit-course [hidden]{display:none!important}.circuit-course .circuit-course-note{color:#becbda;font-size:13px}.circuit-course .circuit-course-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}',
-'.circuit-course .circuit-course-apply{background:#086d8b;border-color:#62cfe8;font-weight:bold}',
-'.circuit-course .circuit-course-status{padding:10px 12px;border-left:4px solid #62d3ba;background:#14322e;margin:12px 0;overflow-wrap:anywhere}',
-'.circuit-course .circuit-course-status[data-kind=error],.circuit-course .circuit-course-warning{background:#432b25;border-left-color:#ffb573;color:#ffe2bd}',
-'.circuit-course .circuit-course-status[data-kind=draft]{background:#30321c;border-left-color:#d7d873}',
+'.circuit-course input:not([type=range]),.circuit-course select{background:var(--field);border:1px solid var(--line);border-radius:7px;width:100%;padding:8px;min-height:44px}',
+'.circuit-course [hidden]{display:none!important}.circuit-course .circuit-course-note{color:var(--muted);font-size:13px}.circuit-course .circuit-course-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}',
+'.circuit-course .circuit-course-apply{background:var(--action);border-color:var(--action);color:#fff;font-weight:bold}',
+'.circuit-course .circuit-course-status{padding:10px 12px;border-left:4px solid var(--success);background:var(--success-bg);margin:12px 0;overflow-wrap:anywhere}',
+'.circuit-course .circuit-course-status[data-kind=error],.circuit-course .circuit-course-warning{background:var(--warning-bg);border-left-color:var(--warning);color:var(--text)}',
+'.circuit-course .circuit-course-status[data-kind=draft]{background:var(--selection);border-left-color:var(--accent)}',
 '.circuit-course .circuit-course-linked-results{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:12px;align-items:start}@media(max-width:1000px){.circuit-course .circuit-course-linked-results{grid-template-columns:minmax(0,1fr)}}',
 '.circuit-course .circuit-course-graphs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:12px}',
-'.circuit-course svg{width:100%;height:auto;display:block;background:#101b2a;border-radius:7px}.circuit-course svg text{font-family:system-ui,sans-serif;fill:#ccd9e8}',
+'.circuit-course svg{width:100%;height:auto;display:block;background:var(--canvas);border-radius:7px}.circuit-course svg text{font-family:system-ui,sans-serif;fill:var(--text)}',
 '.circuit-course .circuit-course-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 0;font-size:13px}',
 '.circuit-course .circuit-course-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:8px;margin:12px 0}',
-'.circuit-course .circuit-course-metric{background:#102033;border-radius:8px;padding:9px;overflow-wrap:anywhere}',
-'.circuit-course .circuit-course-metric strong{display:block;font-size:20px}.circuit-course .circuit-course-metric span{color:#bed0e4;font-size:13px}',
-'.circuit-course textarea{font:inherit;color:inherit;resize:vertical;min-height:100px;width:100%;padding:8px;background:#0d1828;border:1px solid #69819d;border-radius:7px}.circuit-course .circuit-course-worksheet li{margin-bottom:12px}.circuit-course .circuit-course-status{white-space:pre-wrap}',
+'.circuit-course .circuit-course-metric{background:var(--raised);border-radius:8px;padding:9px;overflow-wrap:anywhere}',
+'.circuit-course .circuit-course-metric strong{display:block;font-size:20px}.circuit-course .circuit-course-metric span{color:var(--muted);font-size:13px}',
+'.circuit-course textarea{font:inherit;color:inherit;resize:vertical;min-height:100px;width:100%;padding:8px;background:var(--field);border:1px solid var(--line);border-radius:7px}.circuit-course .circuit-course-worksheet li{margin-bottom:12px}.circuit-course .circuit-course-status{white-space:pre-wrap}',
 '.circuit-course .circuit-course-table-wrap{overflow:auto}.circuit-course table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:13px}',
-'.circuit-course th,.circuit-course td{text-align:left;padding:8px;border-bottom:1px solid #3a4d65;white-space:nowrap}',
-'.circuit-course .circuit-course-formula{font-family:ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#101b29;padding:8px;border-radius:6px;margin:6px 0}',
-'.circuit-course details summary{cursor:pointer;min-height:44px;padding:9px 0}.circuit-course a{color:#8adcf8;overflow-wrap:anywhere}.circuit-course ul{padding-left:20px}',
-'.circuit-course .circuit-course-time{margin:12px 0}.circuit-course input[type=range]{width:100%;min-height:30px;accent-color:#6dd5ff}',
+'.circuit-course th,.circuit-course td{text-align:left;padding:8px;border-bottom:1px solid var(--line-soft);white-space:nowrap}',
+'.circuit-course .circuit-course-formula{font-family:ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--field);padding:8px;border-radius:6px;margin:6px 0}',
+'.circuit-course details summary{cursor:pointer;min-height:44px;padding:9px 0}.circuit-course a{color:var(--accent);overflow-wrap:anywhere}.circuit-course ul{padding-left:20px}',
+'.circuit-course .circuit-course-time{margin:12px 0}.circuit-course input[type=range]{width:100%;min-height:30px;accent-color:var(--accent)}',
 '.circuit-course .circuit-course-sample{font-variant-numeric:tabular-nums}',
-'.circuit-course .circuit-course-display{border:1px solid #334962;border-radius:8px;padding:0 10px}.circuit-course .circuit-course-display[open]{display:grid;gap:10px;padding-bottom:10px}.circuit-course .circuit-course-display>summary{padding:6px 0;min-height:36px}',
+'.circuit-course .circuit-course-display{border:1px solid var(--line);border-radius:8px;padding:0 10px}.circuit-course .circuit-course-display[open]{display:grid;gap:10px;padding-bottom:10px}.circuit-course .circuit-course-display>summary{padding:6px 0;min-height:36px}',
 '@media(max-width:760px){.circuit-course{padding:10px}.circuit-course .circuit-course-layout{grid-template-columns:1fr}.circuit-course h2{font-size:21px}.circuit-course .circuit-course-tabs button{flex:1 1 150px}.circuit-course .circuit-course-graphs{grid-template-columns:1fr}}'
 ].join('\n');
 function phasorGraphs(phasors) {
@@ -51,10 +54,10 @@ function phasorGraphs(phasors) {
     const cx = 210, cy = 175, radius = 130;
     const arrows = list.map((p, i) => {
       const x = cx + p.z.re / max * radius, y = cy - p.z.im / max * radius, angle = Math.atan2(y - cy, x - cx), len = magnitude(p.z) / max * radius;
-      const head = len > 5 ? '<path d="M ' + (x - 9 * Math.cos(angle - .45)) + ' ' + (y - 9 * Math.sin(angle - .45)) + ' L ' + x + ' ' + y + ' L ' + (x - 9 * Math.cos(angle + .45)) + ' ' + (y - 9 * Math.sin(angle + .45)) + '" fill="none" stroke="' + colors[i % colors.length] + '" stroke-width="3"/>' : '';
-      return '<line x1="' + cx + '" y1="' + cy + '" x2="' + x + '" y2="' + y + '" stroke="' + colors[i % colors.length] + '" stroke-width="3"/>' + head;
+      const head = len > 5 ? '<path d="M ' + (x - 9 * Math.cos(angle - .45)) + ' ' + (y - 9 * Math.sin(angle - .45)) + ' L ' + x + ' ' + y + ' L ' + (x - 9 * Math.cos(angle + .45)) + ' ' + (y - 9 * Math.sin(angle + .45)) + '" fill="none" style="stroke:' + colors[i % colors.length] + '" stroke-width="3"/>' : '';
+      return '<line x1="' + cx + '" y1="' + cy + '" x2="' + x + '" y2="' + y + '" style="stroke:' + colors[i % colors.length] + '" stroke-width="3"/>' + head;
     }).join('');
-    return '<section class="circuit-course-card"><h3>RMS 페이저 · ' + esc(unit) + '</h3><svg viewBox="0 0 420 350" role="img" aria-label="' + esc(unit) + ' 단위 RMS 페이저"><circle cx="210" cy="175" r="130" fill="none" stroke="#344b66"/><path d="M45 175H390 M210 25V325" stroke="#52657d"/><text x="348" y="164" font-size="16">Re</text><text x="220" y="37" font-size="16">+j Im</text>' + arrows + '</svg><div class="circuit-course-legend">' + list.map((p, i) => '<span style="color:' + colors[i % colors.length] + '">' + esc(p.label) + ' = ' + esc(polarText(p.z)) + ' ' + esc(unit) + '</span>').join('') + '</div><p class="circuit-course-note">반시계방향 e^{jωt}. 단위마다 축척을 따로 씁니다.</p></section>';
+    return '<section class="circuit-course-card"><h3>RMS 페이저 · ' + esc(unit) + '</h3><svg viewBox="0 0 420 350" role="img" aria-label="' + esc(unit) + ' 단위 RMS 페이저"><circle cx="210" cy="175" r="130" fill="none" style="stroke:var(--line)"/><path d="M45 175H390 M210 25V325" style="stroke:var(--zero)"/><text x="348" y="164" font-size="16">Re</text><text x="220" y="37" font-size="16">+j Im</text>' + arrows + '</svg><div class="circuit-course-legend">' + list.map((p, i) => '<span style="color:' + colors[i % colors.length] + '">' + esc(p.label) + ' = ' + esc(polarText(p.z)) + ' ' + esc(unit) + '</span>').join('') + '</div><p class="circuit-course-note">반시계방향 e^{jωt}. 단위마다 축척을 따로 씁니다.</p></section>';
   }).join('');
 }
 function waves(traces, f) {
@@ -62,13 +65,13 @@ function waves(traces, f) {
     const list = traces.filter(t => t.unit === unit);
     const data = list.map(t => Array.from({ length: 361 }, (_, n) => t.sample ? t.sample(n * 2 / (360 * f)) : waveSample(t.phasor, f, n * 2 / (360 * f))));
     const max = Math.max(...data.flat().map(Math.abs)) || 1;
-    const path = data.map((values, i) => '<path d="' + values.map((v, n) => (n ? 'L' : 'M') + (70 + n * 490 / 360).toFixed(2) + ' ' + (140 - v / max * 90).toFixed(2)).join(' ') + '" fill="none" stroke="' + colors[i % colors.length] + '" stroke-width="2.5"/>').join('');
-    return '<section class="circuit-course-card"><h3>시간파형 · ' + esc(unit) + '</h3><svg viewBox="0 0 640 285" role="img" aria-label="' + esc(unit) + ' 단위 2주기 시간파형"><path d="M70 40V235 M70 140H570 M315 40V235 M560 40V235" stroke="#43556c"/><text x="4" y="53" font-size="15">' + esc(fmt(max)) + '</text><text x="15" y="144" font-size="15">0</text><text x="4" y="231" font-size="15">' + esc(fmt(-max)) + '</text><text x="69" y="265" font-size="17">0</text><text x="295" y="265" font-size="17">T</text><text x="545" y="265" font-size="17">2T</text><text x="578" y="265" font-size="15">t</text>' + path + '</svg><div class="circuit-course-legend">' + list.map((t, i) => '<span style="color:' + colors[i % colors.length] + '">' + esc(t.label) + ' (' + esc(unit) + ')</span>').join('') + '</div><p class="circuit-course-note">T=' + esc(fmt(1000 / f)) + ' ms · 세로축은 실제 순간값. V, A, W 축을 각각 표시합니다.</p></section>';
+    const path = data.map((values, i) => '<path d="' + values.map((v, n) => (n ? 'L' : 'M') + (70 + n * 490 / 360).toFixed(2) + ' ' + (140 - v / max * 90).toFixed(2)).join(' ') + '" fill="none" style="stroke:' + colors[i % colors.length] + '" stroke-width="2.5"/>').join('');
+    return '<section class="circuit-course-card"><h3>시간파형 · ' + esc(unit) + '</h3><svg viewBox="0 0 640 285" role="img" aria-label="' + esc(unit) + ' 단위 2주기 시간파형"><path d="M70 40V235 M70 140H570 M315 40V235 M560 40V235" style="stroke:var(--line)"/><text x="4" y="53" font-size="15">' + esc(fmt(max)) + '</text><text x="15" y="144" font-size="15">0</text><text x="4" y="231" font-size="15">' + esc(fmt(-max)) + '</text><text x="69" y="265" font-size="17">0</text><text x="295" y="265" font-size="17">T</text><text x="545" y="265" font-size="17">2T</text><text x="578" y="265" font-size="15">t</text>' + path + '</svg><div class="circuit-course-legend">' + list.map((t, i) => '<span style="color:' + colors[i % colors.length] + '">' + esc(t.label) + ' (' + esc(unit) + ')</span>').join('') + '</div><p class="circuit-course-note">T=' + esc(fmt(1000 / f)) + ' ms · 세로축은 실제 순간값. V, A, W 축을 각각 표시합니다.</p></section>';
   }).join('');
 }
 function triangle(p, title = '전력삼각형') {
   const m = Math.max(p.apparentVA, 1e-30), x = 230 + p.pWatts / m * 125, y = 170 - p.qVars / m * 125;
-  return '<section class="circuit-course-card"><h3>' + esc(title) + '</h3><svg viewBox="0 0 460 340" role="img" aria-label="유효 무효 피상 전력 삼각형"><path d="M25 170H435 M230 25V312" stroke="#4b607b"/><text x="395" y="193" font-size="16">P W</text><text x="242" y="32" font-size="16">+Q var</text><text x="242" y="322" font-size="16">−Q</text><path d="M230 170 L' + x + ' 170 L' + x + ' ' + y + ' Z" fill="#24587a55" stroke="#67d1f4" stroke-width="3"/><circle cx="' + x + '" cy="' + y + '" r="4" fill="#ffb965"/></svg><p>P=' + esc(fmt(p.pWatts)) + ' W · Q=' + esc(fmt(p.qVars)) + ' var · |S|=' + esc(fmt(p.apparentVA)) + ' VA</p><p class="circuit-course-note">Q 방향이 부호입니다. 삼각형 길이는 화면에 맞게 축척됩니다.</p></section>';
+  return '<section class="circuit-course-card"><h3>' + esc(title) + '</h3><svg viewBox="0 0 460 340" role="img" aria-label="유효 무효 피상 전력 삼각형"><path d="M25 170H435 M230 25V312" style="stroke:var(--zero)"/><text x="395" y="193" font-size="16">P W</text><text x="242" y="32" font-size="16">+Q var</text><text x="242" y="322" font-size="16">−Q</text><path d="M230 170 L' + x + ' 170 L' + x + ' ' + y + ' Z" style="fill:color-mix(in srgb,var(--accent) 22%,transparent);stroke:var(--accent)" stroke-width="3"/><circle cx="' + x + '" cy="' + y + '" r="4" style="fill:var(--warning)"/></svg><p>P=' + esc(fmt(p.pWatts)) + ' W · Q=' + esc(fmt(p.qVars)) + ' var · |S|=' + esc(fmt(p.apparentVA)) + ' VA</p><p class="circuit-course-note">Q 방향이 부호입니다. 삼각형 길이는 화면에 맞게 축척됩니다.</p></section>';
 }
 function metrics(p) {
   const nature = { leading: '전류 진상 · Q<0', lagging: '전류 지상 · Q>0', unity: '동상 또는 반대상 · Q≈0', undefined: '전류/전압 0 · PF 미정' }[p.nature];
@@ -79,15 +82,15 @@ function table(headers, rows) {
 }
 function circuit(r) {
   if (r.connection) {
-    if (r.connection === 'Y') return '<svg class="circuit-course-schematic" viewBox="0 0 520 230" role="img" aria-label="균형 Y 부하"><g stroke="#71d0ff" fill="none" stroke-width="3"><path d="M80 45H180L260 115 M80 115H260 M80 185H180L260 115 M260 115H410"/></g><g font-size="19"><text x="35" y="50">a</text><text x="35" y="120">b</text><text x="35" y="190">c</text><text x="174" y="48">Z</text><text x="174" y="108">Z</text><text x="174" y="202">Z</text><text x="416" y="122">n</text><text x="300" y="192">V상 = V선 / √3</text></g></svg>';
-    return '<svg class="circuit-course-schematic" viewBox="0 0 520 260" role="img" aria-label="균형 델타 부하"><path d="M130 45L380 45L255 220Z" fill="none" stroke="#71d0ff" stroke-width="3"/><g font-size="19"><text x="102" y="37">a</text><text x="387" y="37">b</text><text x="253" y="247">c</text><text x="244" y="37">Zab → Iab</text><text x="330" y="140">Zbc</text><text x="108" y="142">Zca</text></g></svg>';
+    if (r.connection === 'Y') return '<svg class="circuit-course-schematic" viewBox="0 0 520 230" role="img" aria-label="균형 Y 부하"><g style="stroke:var(--symbol)" fill="none" stroke-width="3"><path d="M80 45H180L260 115 M80 115H260 M80 185H180L260 115 M260 115H410"/></g><g font-size="19"><text x="35" y="50">a</text><text x="35" y="120">b</text><text x="35" y="190">c</text><text x="174" y="48">Z</text><text x="174" y="108">Z</text><text x="174" y="202">Z</text><text x="416" y="122">n</text><text x="300" y="192">V상 = V선 / √3</text></g></svg>';
+    return '<svg class="circuit-course-schematic" viewBox="0 0 520 260" role="img" aria-label="균형 델타 부하"><path d="M130 45L380 45L255 220Z" fill="none" style="stroke:var(--symbol)" stroke-width="3"/><g font-size="19"><text x="102" y="37">a</text><text x="387" y="37">b</text><text x="253" y="247">c</text><text x="244" y="37">Zab → Iab</text><text x="330" y="140">Zbc</text><text x="108" y="142">Zca</text></g></svg>';
   }
   const parts = r.branches ?? [];
   const boxes = parts.map((b, i) => {
     const x = r.topology === 'series' ? 170 + i * 105 : 190, y = r.topology === 'series' ? 65 : 45 + i * 55;
-    return '<path d="M' + (x - 25) + ' ' + y + 'H' + x + ' M' + (x + 65) + ' ' + y + 'H' + (x + 90) + '" stroke="#71d0ff" stroke-width="3"/><rect x="' + x + '" y="' + (y - 17) + '" width="65" height="34" fill="#18384d" stroke="#71d0ff"/><text x="' + (x + 24) + '" y="' + (y + 6) + '" font-size="18">' + esc(b.kind) + '</text>';
+    return '<path d="M' + (x - 25) + ' ' + y + 'H' + x + ' M' + (x + 65) + ' ' + y + 'H' + (x + 90) + '" style="stroke:var(--symbol)" stroke-width="3"/><rect x="' + x + '" y="' + (y - 17) + '" width="65" height="34" style="fill:var(--raised);stroke:var(--symbol)"/><text x="' + (x + 24) + '" y="' + (y + 6) + '" font-size="18">' + esc(b.kind) + '</text>';
   }).join('');
-  return '<svg class="circuit-course-schematic" viewBox="0 0 550 250" role="img" aria-label="' + (r.topology === 'series' ? '직렬' : '병렬') + ' 이상 RLC 회로 개념도"><circle cx="72" cy="140" r="25" fill="none" stroke="#ffbf76" stroke-width="3"/><text x="56" y="147" font-size="23">~</text><text x="25" y="112" font-size="16">+ V</text><text x="25" y="193" font-size="16">−</text>' + (r.topology === 'series' ? '<path d="M72 115V65H145 M' + (170 + (parts.length - 1) * 105 + 90) + ' 65H510V215H72V165" stroke="#71d0ff" stroke-width="3" fill="none"/><text x="110" y="42" font-size="17">I → + 단자로 입력</text>' : '<path d="M72 115V45H165V' + (45 + (parts.length - 1) * 55) + ' M280 45V215H72V165" stroke="#71d0ff" stroke-width="3" fill="none"/><text x="319" y="96" font-size="18">분기 V 동일</text><text x="319" y="128" font-size="18">I = Σ I분기</text>') + boxes + '</svg>';
+  return '<svg class="circuit-course-schematic" viewBox="0 0 550 250" role="img" aria-label="' + (r.topology === 'series' ? '직렬' : '병렬') + ' 이상 RLC 회로 개념도"><circle cx="72" cy="140" r="25" fill="none" style="stroke:var(--warning)" stroke-width="3"/><text x="56" y="147" font-size="23">~</text><text x="25" y="112" font-size="16">+ V</text><text x="25" y="193" font-size="16">−</text>' + (r.topology === 'series' ? '<path d="M72 115V65H145 M' + (170 + (parts.length - 1) * 105 + 90) + ' 65H510V215H72V165" style="stroke:var(--symbol)" stroke-width="3" fill="none"/><text x="110" y="42" font-size="17">I → + 단자로 입력</text>' : '<path d="M72 115V45H165V' + (45 + (parts.length - 1) * 55) + ' M280 45V215H72V165" style="stroke:var(--symbol)" stroke-width="3" fill="none"/><text x="319" y="96" font-size="18">분기 V 동일</text><text x="319" y="128" font-size="18">I = Σ I분기</text>') + boxes + '</svg>';
 }
 function worksheet(solution) {
   const asked = {current:'전원 복소전류',impedance:'등가 임피던스·어드미턴스',branch:'소자별 전압·전류',power:'유효·무효·피상전력',pf:'역률·위상차','line-current':'3상 선전류','phase-current':'부하 상전류','phase-voltage':'부하 상전압',capacitance:'각 보상 커패시터','source-current':'보상 전후 공급전류'}[solution.asked] ?? solution.asked;

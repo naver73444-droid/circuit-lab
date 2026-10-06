@@ -1,8 +1,12 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { componentDefaults, complexMagnitude, complexPhaseDegrees, deserializeCircuit, pinCount, serializeCircuit, simulateAC, simulateDC, simulateTransient, simulateACAtFrequency } from "../../../src/circuit-engine.js";
-import { cloneComponentSet, cloneSelectedComponent, deleteComponentFromCircuit } from "../../../src/circuit-edit.js";
+import { componentDefaults, deserializeCircuit, pinCount, serializeCircuit, simulateAC, simulateDC, simulateTransient, simulateACAtFrequency } from "../../../src/circuit-engine.js";
+import { cloneComponentSet, deleteComponentFromCircuit } from "../../../src/circuit-edit.js";
+
+const cloneSelectedComponent = (circuit, componentId, offset = 40) => cloneComponentSet(circuit, [componentId], offset).components[0] ?? null;
+const complexMagnitude = (value) => Math.hypot(value.re, value.im);
+const complexPhaseDegrees = (value) => (Math.atan2(value.im, value.re) * 180) / Math.PI;
 import { deserializeProject, serializeProject } from "../../../src/project-format.js";
 
 describe("VCVS and VCCS", () => {

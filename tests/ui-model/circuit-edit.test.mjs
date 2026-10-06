@@ -2,7 +2,9 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildTopology, deserializeCircuit, serializeCircuit, simulateDC } from "../../src/circuit-engine.js";
-import { cloneSelectedComponent, deleteJunctionFromCircuit, retargetWireProbes, splitWireAtJunction, deleteComponentFromCircuit } from "../../src/circuit-edit.js";
+import { cloneComponentSet, deleteJunctionFromCircuit, retargetWireProbes, splitWireAtJunction, deleteComponentFromCircuit } from "../../src/circuit-edit.js";
+
+const cloneSelectedComponent = (circuit, componentId, offset = 40) => cloneComponentSet(circuit, [componentId], offset).components[0] ?? null;
 import { cloneExample } from "../../src/examples.js";
 import { deserializeProject, serializeProject } from "../../src/project-format.js";
 import { pinPosition, projectSplitPoint, routeWirePoints } from "../../src/circuit-geometry.js";

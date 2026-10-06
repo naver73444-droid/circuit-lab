@@ -348,10 +348,6 @@ export function measureStepResponse(x, y, options = {}) {
   return { riseTime, settlingTime, initial, final: fin };
 }
 
-export function magnitudeToDb(magnitude) {
-  return magnitude > 0 ? 20 * Math.log10(magnitude) : Number.NEGATIVE_INFINITY;
-}
-
 /**
  * AC 크기(dB) 곡선의 −3 dB 주파수. 최대값 기준으로 3.0103 dB 내려간 점.
  * 저역통과/고역통과/대역통과를 구분한다. 교차점은 log10(f)–dB 선형보간.

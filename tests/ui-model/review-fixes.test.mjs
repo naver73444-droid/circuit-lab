@@ -121,7 +121,7 @@ test("배선 대기 중 그 부품(또는 접속점)을 지우면 대기 배선�
   assert.equal(state.pendingPin, null, "이미 없는 시작점");
 });
 
-test("실행 취소·다시 실행은 프로젝트 id도 함께 되돌린다 (예제 열기를 취소하면 원래 프로젝트로 붙여넣기 판정)", () => {
+test("되돌리기·다시 실행은 프로젝트 id도 함께 되돌린다 (예제 열기를 취소하면 원래 프로젝트로 붙여넣기 판정)", () => {
   const { state, session } = sessionHarness();
   const first = state.projectId;
   assert.match(first, /^[a-z0-9]+-[a-z0-9]+$/);

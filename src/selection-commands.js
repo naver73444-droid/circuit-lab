@@ -3,6 +3,7 @@ import { cloneComponentSet, deleteSelectionFromCircuit } from "./circuit-edit.js
 import { allItems, clearSelection, selectedItems, setSelectionItems, setSingleSelection } from "./selection-model.js";
 import { moveGroup, movableItems, rotateGroup } from "./group-edit.js";
 import { allocatorFor } from "./id-allocator.js";
+import { NUDGE_IDLE_MS } from "./editor-shortcuts.js";
 import { CLIPBOARD_FORMAT, additionLimitReason, buildClipboard, clipboardLimitReason, controlsNeedingTarget, parseClipboardText, pasteClipboard, pasteRejection, serializeClipboard } from "./clipboard-model.js";
 
 /**
@@ -91,7 +92,7 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
       : state.circuit.components.some((component) => component.id === item.id));
     if (!items.length) return false;
     if (!repeat) closeEditGroup();
-    mutateGrouped("nudge", () => { moveGroup(state.circuit, items, dx * steps * GRID_SIZE, dy * steps * GRID_SIZE); });
+    mutateGrouped("nudge", () => { moveGroup(state.circuit, items, dx * steps * GRID_SIZE, dy * steps * GRID_SIZE); }, { idleMs: NUDGE_IDLE_MS });
     return true;
   }
 

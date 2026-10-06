@@ -3,6 +3,8 @@
  *
  * 탭마다 자기 슬롯 하나에만 쓴다: storage["circuit-lab.autosave.v2.<tabId>"] = JSON {"v":2,"tabId","savedAt":<ms>,"project":<serializeProject 결과를 파싱한 객체>}.
  * tabId는 sessionStorage에 있어 같은 탭의 새로고침에서는 유지되고 새 탭은 새 id를 받는다. 슬롯은 최대 5개이며 쓸 때 savedAt이 가장 오래된 것부터 지운다.
+ * 프로젝트를 통째로 바꾸면(새 회로·열기·예제·복원) retire()가 이전 프로젝트의 대기 중 저장을 먼저 마무리하고, 새 프로젝트의 첫 저장 때 그 슬롯을
+ * "<tabId>.prev"로 옮긴다(탭마다 prev는 정확히 하나, 5개 한도에는 둘 다 센다). 그래서 바꾸기 직전 마지막 편집까지 남고, 다음 편집이 이전 작업을 덮어쓰지 않는다.
  * 다른 탭의 작업은 이 탭이 절대 덮어쓰지 않는다. 예전 단일 키(v1)는 처음 실행할 때 새 id의 슬롯으로 옮긴다.
  * schedule()은 호출 순간에 직렬화해 사본(스냅샷)을 보관하므로, 이후 살아 있는 객체가 바뀌어도(드래그 중 좌표 등) 저장 내용에 새지 않는다.
  * "invalid-skip": 현재 프로젝트가 복원 파서(parse)를 통과하지 못해(편집 도중 등) 저장하지 않고 이전 저장본을 그대로 둔 상태.
@@ -14,6 +16,7 @@ import { deserializeProject, serializeProject } from "./project-format.js";
 
 export const AUTOSAVE_PREFIX = "circuit-lab.autosave.v2.";
 export const LEGACY_AUTOSAVE_KEY = "circuit-lab.autosave.v1";
+export const PREV_SUFFIX = ".prev";
 export const TAB_ID_KEY = "circuit-lab.tab-id";
 export const AUTOSAVE_VERSION = 2;
 export const AUTOSAVE_MAX_SLOTS = 5;
@@ -24,6 +27,7 @@ const REASONS = {
   quota: "브라우저 저장 공간이 부족해 자동 저장하지 못했습니다. 파일로 저장하세요.",
   error: "자동 저장에 실패했습니다.",
   invalidSkip: "현재 편집 중인 내용이 아직 올바르지 않아 자동 저장을 건너뛰었습니다(이전 저장본은 그대로입니다).",
+  rotation: "이전 작업을 보관할 공간이 없어 자동 저장을 보류했습니다(이전 저장본은 그대로입니다). 파일로 저장하세요.",
   tooLarge: "프로젝트가 너무 커서 자동 저장하지 못했습니다. 파일로 저장하세요.",
 };
 
@@ -143,6 +147,10 @@ export function createAutosave({
   }
   const tabId = resolveTabId();
   const ownKey = prefix + tabId;
+  const prevKey = ownKey + PREV_SUFFIX;
+  const isOwnKey = (key) => key === ownKey || key === prevKey;
+  let rotatePending = false; // the own slot holds the replaced project: move it to prevKey before the next write
+  let protectPrev = false; // the .prev slot is the restore candidate on offer: it must not be overwritten until the offer is resolved
 
   function record(next) {
     lastStatus = next;
@@ -184,14 +192,14 @@ export function createAutosave({
     });
   }
 
-  const newestFirst = (a, b) => (b.savedAt ?? -Infinity) - (a.savedAt ?? -Infinity) || (a.key === ownKey ? -1 : b.key === ownKey ? 1 : 0) || (a.key < b.key ? -1 : 1);
+  const newestFirst = (a, b) => (b.savedAt ?? -Infinity) - (a.savedAt ?? -Infinity) || (a.key === ownKey ? -1 : b.key === ownKey ? 1 : isOwnKey(a.key) ? -1 : isOwnKey(b.key) ? 1 : 0) || (a.key < b.key ? -1 : 1);
 
   /** Keep at most maxSlots slots: the oldest (by savedAt, unreadable first) other than this tab's own are removed. */
   function prune(target) {
     const slots = readSlots(target);
     let excess = slots.length - maxSlots;
     if (excess <= 0) return;
-    for (const slot of slots.filter((item) => item.key !== ownKey).sort((a, b) => newestFirst(b, a))) {
+    for (const slot of slots.filter((item) => !isOwnKey(item.key)).sort((a, b) => newestFirst(b, a))) {
       if (excess <= 0) break;
       target.removeItem(slot.key);
       excess -= 1;
@@ -240,6 +248,19 @@ export function createAutosave({
     }
   }
 
+  function isReadableRaw(raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      return Boolean(parsed) && typeof parsed === "object" && parsed.v === AUTOSAVE_VERSION && Boolean(parsed.project) && typeof parsed.project === "object";
+    } catch { return false; }
+  }
+
+  function rotationFailure(error) {
+    return isQuotaError(error)
+      ? status("quota", { reason: REASONS.rotation })
+      : status("error", { reason: `${REASONS.rotation} (${error?.message ?? error})` });
+  }
+
   function write(object) {
     const target = getStorage();
     if (!target || typeof target.setItem !== "function") return status("unavailable", { reason: REASONS.unavailable });
@@ -247,7 +268,18 @@ export function createAutosave({
       const savedAt = now();
       const payload = JSON.stringify({ v: AUTOSAVE_VERSION, tabId, savedAt, project: object });
       if (payload.length > AUTOSAVE_MAX_CHARS) return status("error", { reason: REASONS.tooLarge });
+      if (rotatePending && !protectPrev) {
+        // The replaced project is kept in prev. If that copy cannot be made the new write is aborted: going on would overwrite the
+        // only copy of the old project. pending and rotatePending stay set, so the next flush() retries.
+        let replaced = null;
+        try { replaced = target.getItem(ownKey); } catch (error) { return rotationFailure(error); }
+        // An unreadable own slot never replaces a readable prev (it would destroy the only good copy).
+        if (replaced !== null && isReadableRaw(replaced)) {
+          try { target.setItem(prevKey, replaced); } catch (error) { return rotationFailure(error); }
+        }
+      }
       target.setItem(ownKey, payload);
+      rotatePending = false;
       try { prune(target); } catch { /* a failed prune must not turn a good save into an error */ }
       return status("saved", { savedAt });
     } catch (error) {
@@ -283,7 +315,7 @@ export function createAutosave({
     for (const slot of readable) {
       let project;
       try { project = parse(JSON.stringify(slot.entry.project), fallbackSettings); } catch (error) { failure ??= `저장된 작업이 올바르지 않습니다: ${error?.message ?? error}`; continue; }
-      const candidate = { project, savedAt: slot.savedAt, tabId: slot.tabId, own: slot.key === ownKey };
+      const candidate = { project, savedAt: slot.savedAt, tabId: slot.tabId, own: isOwnKey(slot.key), prev: slot.key === prevKey };
       if (current !== undefined && !shouldOfferRestore(candidate, current)) continue;
       return { ok: true, ...candidate };
     }
@@ -324,7 +356,24 @@ export function createAutosave({
       pending = null;
       if (lastStatus.state === "pending") record(status("empty"));
     },
-    /** 대기 중인 저장을 취소하고 이 탭의 슬롯을 지운다. */
+    /**
+     * 프로젝트를 통째로 바꾸기 직전: 이전 프로젝트의 대기 중 저장을 먼저 수행(슬롯에 마지막 상태가 남도록)하고, 새 프로젝트의 첫 저장 때
+     * 그 슬롯이 prev로 옮겨지도록 표시한다. 저장에 실패해 남은 대기 항목은 새 프로젝트 위로 쓰이지 않게 버린다.
+     * keepPrev: prev 슬롯 자체가 복원 제안 후보일 때 — 그 슬롯을 덮어쓰는 회전을 건너뛴다(releaseProtection() 또는 다음 retire()까지).
+     * 읽을 수 없는 own 슬롯은 어떤 경우에도 prev로 옮기지 않는다.
+     */
+    retire({ keepPrev = false } = {}) {
+      flush();
+      protectPrev = Boolean(keepPrev);
+      cancelTimer();
+      hasPending = false;
+      pending = null;
+      if (lastStatus.state === "pending") record(status("empty"));
+      rotatePending = true;
+    },
+    /** 복원 제안이 끝났다(무시): prev 보호를 풀어, 다음 교체에서 prev가 다시 갈아 끼워질 수 있게 한다. */
+    releaseProtection() { protectPrev = false; },
+    /** 대기 중인 저장을 취소하고 이 탭의 슬롯(과 prev)을 지운다. */
     clear() {
       cancelTimer();
       hasPending = false;
@@ -333,6 +382,8 @@ export function createAutosave({
       if (!target || typeof target.removeItem !== "function") return record(status("unavailable", { reason: REASONS.unavailable }));
       try {
         target.removeItem(ownKey);
+        target.removeItem(prevKey);
+        rotatePending = false;
         return record(status("cleared"));
       } catch (error) {
         return record(status("error", { reason: `${REASONS.error} (${error?.message ?? error})` }));
@@ -344,11 +395,12 @@ export function createAutosave({
     listSlots() {
       const target = getStorage();
       if (!target || typeof target.key !== "function") return [];
-      try { return readSlots(target).filter((slot) => slot.entry).sort(newestFirst).map((slot) => ({ tabId: slot.tabId, savedAt: slot.savedAt, own: slot.key === ownKey })); } catch { return []; }
+      try { return readSlots(target).filter((slot) => slot.entry).sort(newestFirst).map((slot) => ({ tabId: slot.tabId, savedAt: slot.savedAt, own: isOwnKey(slot.key), prev: slot.key === prevKey })); } catch { return []; }
     },
     getStatus() { return lastStatus; },
     hasPending() { return hasPending; },
     tabId,
     key: ownKey,
+    prevKey,
   };
 }

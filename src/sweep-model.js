@@ -6,7 +6,7 @@
  * 해석 실행(simulate)은 이 모듈이 하지 않는다 — 호출 측이 buildSweepCircuits 결과로 실행한다.
  */
 import { parseValue } from "./circuit-engine.js";
-import { acMagnitudeLevel, acPhaseDegrees } from "./measurement-format.js";
+import { acMagnitudeLevel, acPhaseDegrees } from "./plot-format.js";
 import { engineering } from "./scope-model.js";
 
 export const SWEEP_MAX_COUNT = 10;

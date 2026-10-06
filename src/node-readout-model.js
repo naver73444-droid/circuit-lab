@@ -10,7 +10,7 @@
  */
 import { buildTopology, pinCount } from "./circuit-engine.js";
 import { currentDirectionDescriptor } from "./current-direction.js";
-import { acMagnitudeLevel, acPhaseDegrees } from "./measurement-format.js";
+import { acMagnitudeLevel, acPhaseDegrees } from "./plot-format.js";
 import { engineering, nearestSampleIndex } from "./scope-model.js";
 
 const TYPE_NAMES = {

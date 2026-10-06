@@ -47,16 +47,17 @@ export function displayAxes(series, visibleIndexes) {
     });
 }
 
-export function dcOperatingPointModel(series) {
-  const axes = displayAxes(series, [0]);
+// ---- AC level/phase of a complex sample (formerly measurement-format.js)
+export function acMagnitudeLevel(value, baseUnit) {
+  if (baseUnit !== "V" && baseUnit !== "A") throw new Error(`지원하지 않는 AC 단위입니다: ${baseUnit}`);
+  const magnitude = Math.hypot(value.re, value.im);
   return {
-    xLabel: "DC operating point · 시간축 없음",
-    axes,
-    levels: series.map((item) => ({
-      label: item.probe.label,
-      color: item.probe.color,
-      unit: item.unit,
-      value: item.values[0],
-    })),
+    value: 20 * Math.log10(magnitude),
+    unit: baseUnit === "V" ? "dBV" : "dBA",
   };
+}
+
+export function acPhaseDegrees(value) {
+  if (value.re === 0 && value.im === 0) return null;
+  return (Math.atan2(value.im, value.re) * 180) / Math.PI;
 }

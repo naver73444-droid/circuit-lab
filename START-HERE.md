@@ -45,6 +45,6 @@ npm run test:all               # 위 둘
 
 ## 알아 둘 점
 
-- 편집은 반드시 `session.mutate()`를 거칩니다(이력·세대·재렌더·자동저장 연동). 결과 채택은 `runSerial`+`generation` 검사를 통과해야 합니다.
+- 회로·설정 편집은 `session.mutate()`/`mutateGrouped()`/`commitMove()`를, 프로브 편집은 `addVoltageProbe` 등을 거칩니다(이력·세대·재렌더·자동저장 연동). 결과 채택은 `runSerial`+`generation` 검사를 통과해야 합니다.
 - `scripts/check-boundaries.mjs`의 순수 모델 목록은 오래돼 최근에 추가된 순수 모듈(자동저장·공유·측정 등)을 검사하지 않습니다. 새 순수 모듈은 목록에 넣는 것이 좋습니다.
 - Node는 앱 실행에 20 이상, 시험에 22 이상(전역 `WebSocket`, `node --test` glob)이 필요합니다.

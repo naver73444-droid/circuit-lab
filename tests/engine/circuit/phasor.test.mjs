@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { simulateACAtFrequency } from "../../../src/circuit-engine.js";
 import { cloneExample } from "../../../src/examples.js";
-import { peakToRms, phasorFromPolar, phasorPolar, phasorTimeValue, wrapPhaseDifference } from "../../../src/phasor-format.js";
-import { parsePracticeNumber, practiceOperations, relativePhase, polarToRectangular } from "../../../src/phasor-practice-model.js";
+import { peakToRms, phasorPolar, phasorTimeValue, wrapPhaseDifference } from "../../../src/phasor-format.js";
+import { phasorFromPolar } from "../../helpers/complex.mjs";
+import { parsePracticeNumber, practiceOperations, relativePhase, polarToRectangular } from "../../../src/phasor-practice.js";
 
 test("페이저 직교·극형, peak/RMS와 cos 시간 재구성이 일치한다", () => {
   const value = phasorFromPolar(3.5, 42);

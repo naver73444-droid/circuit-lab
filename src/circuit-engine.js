@@ -194,7 +194,7 @@ function validateBranchControl(component, componentsById) {
 }
 
 
-function pinKey(componentId, pin) {
+export function pinKey(componentId, pin) {
   return `pin:${componentId}:${pin}`;
 }
 
@@ -202,12 +202,13 @@ function publicPinKey(componentId, pin) {
   return `${componentId}:${pin}`;
 }
 
-function junctionKey(junctionId) {
+export function junctionKey(junctionId) {
   return `junction:${junctionId}`;
 }
 
-function endpointKey(endpoint) {
-  return endpoint.junctionId !== undefined ? junctionKey(endpoint.junctionId) : pinKey(endpoint.componentId, endpoint.pin);
+/** The one union-find key of a wire endpoint (pin or junction); every net resolver in the app uses it. */
+export function endpointKey(endpoint) {
+  return endpoint?.junctionId !== undefined ? junctionKey(endpoint.junctionId) : pinKey(endpoint?.componentId, endpoint?.pin);
 }
 
 function validateComponent(component) {
@@ -302,6 +303,7 @@ export function validateCircuitStructure(circuit) {
     if (!wire || typeof wire !== "object" || typeof wire.id !== "string" || wire.id.length === 0 || wireIds.has(wire.id)) {
       throw new CircuitError("BAD_WIRE", `배선 ID가 없거나 중복됩니다: ${wire?.id ?? "(없음)"}`);
     }
+    if (["__proto__", "prototype", "constructor"].includes(wire.id) || wire.id.length > 128) throw new CircuitError("BAD_WIRE", "배선 ID가 예약어이거나 너무 깁니다.");
     wireIds.add(wire.id);
     if (wire.waypoints !== undefined) {
       if (!Array.isArray(wire.waypoints) || wire.waypoints.some((point) => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
@@ -616,11 +618,27 @@ function assertMatrixSize(size) {
   if (size > 128) throw new CircuitError("ANALYSIS_BUDGET", "동시 미지수 128개를 초과했습니다.", "현재의 동기식 교육용 해석기는 작은 회로용입니다. 회로를 나누어 계산하세요.");
 }
 
+// Work model (flops-ish units). Linear transients factor once per distinct dt (the LU cache holds
+// at most LU_CACHE_LIMIT of them) and then only substitute (n^2) per step; diode circuits run a
+// Newton loop that refactors every iteration (typically ~10, hard-capped at 120 by the solver).
+const BUDGET_LIMIT = 200_000_000;
+const BUDGET_NEWTON_TYPICAL = 10;
+const BUDGET_NEWTON_WORST = 120;
+const BUDGET_NEWTON_HARD_CAP = 1_500_000_000;
+
 function assertAnalysisBudget(circuit, topology, mode, points = 1) {
   const size = makeBranchMap(circuit, mode, topology.nodeCount).size;
   assertMatrixSize(size);
-  const iterations = circuit.components.some((component) => component.type === "D") ? 120 : 1;
-  if (size ** 3 * points * iterations > 200_000_000) {
+  const cube = size ** 3;
+  const hasDiode = circuit.components.some((component) => component.type === "D");
+  let cost;
+  let hardCost = 0;
+  if (mode === "transient" && !hasDiode) cost = cube * LU_CACHE_LIMIT + size ** 2 * points;
+  else if (mode === "transient" || mode === "dc") {
+    cost = cube * points * (hasDiode ? BUDGET_NEWTON_TYPICAL : 1);
+    if (hasDiode) hardCost = cube * points * BUDGET_NEWTON_WORST;
+  } else cost = cube * points;
+  if (cost > BUDGET_LIMIT || hardCost > BUDGET_NEWTON_HARD_CAP) {
     throw new CircuitError("ANALYSIS_BUDGET", "요청한 계산량이 현재 해석기의 안전 한도를 초과했습니다.", "시간/주파수 범위를 줄이거나 표본 수를 줄이세요. 정확도와 dt 수렴을 별도로 확인하세요.");
   }
 }
@@ -931,7 +949,7 @@ function diodeSmallSignalConductance(component, voltage) {
 
 function diodeLinearization(component, voltage) {
   const { saturation, thermal } = diodeParameters(component);
-  const limitedVoltage = Math.max(-5, Math.min(DIODE_MAX_FORWARD_VOLTAGE, voltage));
+  const limitedVoltage = Math.min(DIODE_MAX_FORWARD_VOLTAGE, voltage);
   const exponential = Math.exp(limitedVoltage / thermal);
   const current = saturation * (exponential - 1);
   const conductance = Math.max(saturation / thermal, (saturation * exponential) / thermal);
@@ -1052,7 +1070,7 @@ function solveRealPoint(circuit, topology, mode, context) {
           "직렬 저항과 소스 값을 확인하거나 더 완전한 다이오드 모델을 사용하세요.",
         );
       }
-      throw new CircuitError("NO_CONVERGENCE", "다이오드 Newton 반복이 원 모델 잔차 기준으로 수렴하지 않았습니다.", "시간 간격을 줄이거나 회로·소스 값을 확인하세요.");
+      throw new CircuitError("NO_CONVERGENCE", "다이오드 Newton 반복이 원 모델 잔차 기준으로 수렴하지 않았습니다.", "해석기의 수치 한계일 수 있어 입력값이 틀렸다는 뜻은 아닙니다. 시간 간격을 줄이거나, 소스 진폭을 낮추거나, 다이오드에 직렬 저항을 추가해 보세요.");
     }
   }
   return { solution, branchMap };
@@ -1602,14 +1620,6 @@ export function simulate(circuit, settings = {}) {
   if (analysis === "transient") return simulateTransient(circuit, settings);
   if (analysis === "ac") return simulateAC(circuit, settings);
   throw new CircuitError("INVALID_ANALYSIS", `지원하지 않는 해석입니다: ${analysis}`);
-}
-
-export function complexMagnitude(value) {
-  return cabs(value);
-}
-
-export function complexPhaseDegrees(value) {
-  return (Math.atan2(value.im, value.re) * 180) / Math.PI;
 }
 
 export function serializeCircuit(circuit) {

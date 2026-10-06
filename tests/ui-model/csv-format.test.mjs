@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { simulateDC } from "../../src/circuit-engine.js";
 import { cloneExample } from "../../src/examples.js";
-import { buildResultsCSV, parseCSV, stringifyCSV } from "../../src/csv-format.js";
+import { buildResultsCSV, stringifyCSV } from "../../src/csv-format.js";
+import { parseCSV } from "../helpers/csv.mjs";
 
 function nodeFor(result, componentId, pin) {
   return result.topology.nodeIdByPin[`${componentId}:${pin}`];

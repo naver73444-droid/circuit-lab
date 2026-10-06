@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { currentArrowGeometry, currentDirectionDescriptor, currentDirectionGuide, currentProbeLabel, directionWorldEndpoints } from "../../src/current-direction.js";
+import { currentArrowGeometry, currentDirectionDescriptor, currentDirectionGuide, currentProbeLabel } from "../../src/current-direction.js";
 
 const component = (type, extra = {}) => ({ id: 'X1', type, x: 100, y: 200, rotation: 0, props: { ref: 'X1' }, ...extra });
 
@@ -10,14 +10,6 @@ test('ordinary two-pin current uses pin 1 to pin 2', () => {
   assert.deepEqual(direction.from, { x: -40, y: 0 });
   assert.deepEqual(direction.to, { x: 40, y: 0 });
   assert.equal(currentProbeLabel(component('R')), 'I(X1, pin 1→2)');
-});
-
-test('rotation maps the reference arrow onto the actual rotated pins', () => {
-  const endpoints = directionWorldEndpoints(component('R', { rotation: 90 }));
-  assert.ok(Math.abs(endpoints.from.x - 100) < 1e-12);
-  assert.ok(Math.abs(endpoints.from.y - 160) < 1e-12);
-  assert.ok(Math.abs(endpoints.to.x - 100) < 1e-12);
-  assert.ok(Math.abs(endpoints.to.y - 240) < 1e-12);
 });
 
 test('controlled outputs and sensors keep their p to n contract', () => {

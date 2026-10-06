@@ -6,6 +6,8 @@ import { nextAvailableProbeColor, removeProbeByKey } from "./ui-model.js";
 import { allocatorFor } from "./id-allocator.js";
 
 const HISTORY_LIMIT = 100;
+/** Default idle window of a coalescing group (wheel ticks). */
+export const GROUP_IDLE_MS = 400;
 export const PROBE_COLORS = ["#80bfff", "#f5bc79", "#c5a2f2", "#8ed4ad", "#ff969e", "#d7d783", "#83d2db", "#eea7d0"];
 
 const pageToken = Math.random().toString(36).slice(2, 10);
@@ -13,12 +15,15 @@ let projectCounter = 0;
 /** An id for "this project in this page": clipboard fragments carry it so a paste can tell a different project (or tab) from the same one. */
 export const newProjectId = () => `${pageToken}-${(projectCounter += 1).toString(36)}`;
 
+/** The analysis settings of an empty project; every project replacement starts from these, never from the previous project. */
+export const defaultSettings = () => ({ analysis: "dc", start: "0", end: "5m", step: "10u", startFrequency: "10", endFrequency: "100k", pointsPerDecade: "30", phasorFrequency: "159.155" });
+
 /** Editable project state. The shared state object also carries run results and pointer state owned by other modules. */
 export function createEditorState() {
   return {
     projectId: newProjectId(),
     circuit: { version: 1, geometryVersion: CURRENT_GEOMETRY_VERSION, components: [], wires: [], junctions: [] },
-    settings: { analysis: "dc", start: "0", end: "5m", step: "10u", startFrequency: "10", endFrequency: "100k", pointsPerDecade: "30", phasorFrequency: "159.155" },
+    settings: defaultSettings(),
     title: "새 회로",
     subtitle: "빈 캔버스에서 시작하세요",
     selected: null,
@@ -29,7 +34,6 @@ export function createEditorState() {
     learningId: null,
     generation: 0,
     intent: "auto",
-    manualSettingKeys: new Set(),
   };
 }
 
@@ -38,7 +42,7 @@ export function createEditorState() {
  * re-renders; restore()/undo()/redo() replay snapshots. Everything that reacts to a change is injected.
  */
 export function createEditorSession(deps) {
-  const { state, inputDrafts, synchronizeIntent, markStale, scheduleAutoRun, renderAll, resetProjectSession, refreshProbeViews, closeProbeContextMenu, confirmDiscardDrafts, onCommitted, onPendingWireDropped } = deps;
+  const { state, inputDrafts, synchronizeIntent, markStale, scheduleAutoRun, renderAll, resetProjectSession, beforeHistoryRestore, afterHistoryRestore, beforeProjectBoundary, refreshProbeViews, closeProbeContextMenu, confirmDiscardDrafts, onCommitted, onPendingWireDropped } = deps;
   let connectionCache = null;
   // Open coalescing group (wheel ticks, held arrow keys): { key, generation, timer }.
   let editGroup = null;
@@ -82,13 +86,22 @@ export function createEditorSession(deps) {
   }
 
   function snapshot() {
-    return JSON.stringify({ projectId: state.projectId, circuit: state.circuit, settings: state.settings, title: state.title, subtitle: state.subtitle, probes: state.probes, learningId: state.learningId, intent: state.intent, manualSettingKeys: [...state.manualSettingKeys] });
+    return JSON.stringify({ projectId: state.projectId, circuit: state.circuit, settings: state.settings, title: state.title, subtitle: state.subtitle, probes: state.probes, learningId: state.learningId, intent: state.intent });
   }
 
+  /**
+   * Replay a snapshot (undo/redo). Within one project only the in-flight run is cancelled and the result turns stale: scope zoom/cursors,
+   * the port selection and the sweep form stay. A snapshot that belongs to another project (undoing a new/open/example) resets the session.
+   */
   function restore(serialized) {
     const saved = JSON.parse(serialized);
     closeEditGroup();
-    resetProjectSession();
+    if (saved.projectId && saved.projectId !== state.projectId) {
+      // Undo/redo into another project is a replacement like new/open/example: the leaving project is flushed and its slot rotated to prev
+      // before the restored one is saved, otherwise the next save would overwrite it (own=B, prev=A -> undo -> own=A, prev=A, B lost).
+      try { beforeProjectBoundary?.(); } catch { /* the autosave bookkeeping must not break undo */ }
+      resetProjectSession();
+    } else beforeHistoryRestore?.();
     if (saved.projectId) state.projectId = saved.projectId;
     rememberIds(); // what the state being left behind used
     state.circuit = { ...saved.circuit, junctions: saved.circuit.junctions ?? [] };
@@ -99,12 +112,12 @@ export function createEditorSession(deps) {
     state.probes = saved.probes ?? [];
     state.learningId = saved.learningId ?? null;
     state.intent = saved.intent ?? "manual";
-    state.manualSettingKeys = new Set(saved.manualSettingKeys ?? []);
     synchronizeIntent();
     state.selected = null;
     state.selection = new Set();
     state.pendingPin = null;
     state.pendingWaypoints = [];
+    afterHistoryRestore?.();
     bumpGeneration();
     markStale();
     renderAll();
@@ -139,7 +152,7 @@ export function createEditorSession(deps) {
    * mutate() that folds repeated calls with the same key into ONE history entry: the first call records history, later calls
    * made within idleMs (and with no other edit in between) replay on top of it. Used for wheel value steps and held arrow keys.
    */
-  function mutateGrouped(key, change, { idleMs = 400 } = {}) {
+  function mutateGrouped(key, change, { idleMs = GROUP_IDLE_MS } = {}) {
     const open = editGroup !== null && editGroup.key === key && editGroup.generation === state.generation;
     if (editGroup) clearTimeout(editGroup.timer);
     mutate(change, { history: !open });
@@ -148,9 +161,10 @@ export function createEditorSession(deps) {
     editGroup = group;
   }
 
-  /** End the open coalescing group so the next grouped edit starts a new history entry. */
-  function closeEditGroup() {
-    if (editGroup) clearTimeout(editGroup.timer);
+  /** End the open coalescing group (only the one named by `key`, when given) so the next grouped edit starts a new history entry. */
+  function closeEditGroup(key) {
+    if (!editGroup || (key !== undefined && editGroup.key !== key)) return;
+    clearTimeout(editGroup.timer);
     editGroup = null;
   }
 

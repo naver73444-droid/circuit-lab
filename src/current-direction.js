@@ -56,17 +56,6 @@ export function currentArrowGeometry(direction) {
   };
 }
 
-export function directionWorldEndpoints(component, geometryVersion = CURRENT_GEOMETRY_VERSION) {
-  const direction = currentDirectionDescriptor(component, geometryVersion);
-  if (!direction) return null;
-  const angle = Number(component.rotation ?? 0) * Math.PI / 180;
-  const transform = point => ({
-    x: component.x + point.x * Math.cos(angle) - point.y * Math.sin(angle),
-    y: component.y + point.x * Math.sin(angle) + point.y * Math.cos(angle),
-  });
-  return { from: transform(direction.from), to: transform(direction.to) };
-}
-
 export function currentDirectionGuide(analysis) {
   const base = "화살표는 양의 전류 기준 · 음수는 반대 방향 · 0 A는 방향 미확정";
   return analysis === "ac" ? `${base} · AC는 페이저 기준 방향` : base;

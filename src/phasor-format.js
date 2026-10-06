@@ -1,10 +1,5 @@
 const DEG_PER_RADIAN = 180 / Math.PI;
 
-export function phasorFromPolar(magnitude, angleDegrees) {
-  const angle = (angleDegrees * Math.PI) / 180;
-  return { re: magnitude * Math.cos(angle), im: magnitude * Math.sin(angle) };
-}
-
 export function phasorPolar(value, zeroTolerance = 0) {
   const magnitude = Math.hypot(value.re, value.im);
   return {

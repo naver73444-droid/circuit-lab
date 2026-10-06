@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseValue, simulateTransient } from "../../src/circuit-engine.js";
-import { acceptsRunGeneration, classifyNumericInput, cloneSelectedComponent } from "../../src/circuit-edit.js";
+import { acceptsRunGeneration, classifyNumericInput, cloneComponentSet } from "../../src/circuit-edit.js";
+
+const cloneSelectedComponent = (circuit, componentId, offset = 40) => cloneComponentSet(circuit, [componentId], offset).components[0] ?? null;
 import { cloneExample } from "../../src/examples.js";
 import { classifyCircuitConnections } from "../../src/circuit-status.js";
 import { nextAvailableProbeColor, passiveSliderModel, probeKeysForTarget, removeProbeByKey, sourceInlineDescriptor, controlledSourceInputModel, controlReferenceModel } from "../../src/ui-model.js";

@@ -17,6 +17,9 @@ import { escapeHtml } from "./safe-dom.js";
 const STORAGE_KEY = "circuit-lab.flow-view";
 const MIN_ARROW_LENGTH = 30;
 const AC_HINT = "AC는 페이저로 확인하세요";
+/** Nothing flows at the shown sample (e.g. a steady state at the last sample): say where to look instead of showing an empty picture. */
+const NONE_HINT_TRANSIENT = "그래프 커서로 시점을 고르세요 · 현재 시점 전류 ≈ 0";
+const NONE_HINT_DC = "이 동작점에서는 배선 전류 ≈ 0";
 
 export function createFlowLayer({ state, elements, scopeView, wireRoutes }) {
   const layer = elements["flow-layer"];
@@ -107,9 +110,9 @@ export function createFlowLayer({ state, elements, scopeView, wireRoutes }) {
 
     const { nets, routes } = geometryOf();
     // Nothing the picture depends on changed (same result, sample and geometry): keep it, and do not restart its animation.
-    if (lastKey && lastKey.result === result && lastKey.index === index && lastKey.geometry === geometry) { stats.skipped += 1; return; }
+    if (lastKey && lastKey.result === result && lastKey.index === index && lastKey.geometry === geometry) { stats.skipped += 1; setHint(lastKey.hint); return; }
     stats.builds += 1;
-    lastKey = { result, index, geometry };
+    lastKey = { result, index, geometry, hint: "" };
     const { byWire, maxAbs } = wireCurrents({ circuit: state.circuit, componentCurrents: point.componentCurrents, nets });
     const scale = Math.max(maxAbs, peakComponentCurrent(result));
     const groups = new Map(); // speed class -> { d: [], ids: [] }
@@ -132,6 +135,8 @@ export function createFlowLayer({ state, elements, scopeView, wireRoutes }) {
     }
     const dashes = [...groups.keys()].sort().map((speed) => `<path class="flow-dash flow-s${speed}" data-wires="${escapeHtml(groups.get(speed).ids.join(" "))}" d="${groups.get(speed).d.join("")}"/>`).join("");
     write(dashes ? `${dashes}<path class="flow-arrows" d="${arrows.join("")}"/>` : "");
+    lastKey.hint = dashes ? "" : result.xValues.length > 1 ? NONE_HINT_TRANSIENT : NONE_HINT_DC;
+    setHint(lastKey.hint);
     lastInfo = { enabled, status: dashes ? "flow" : "none", sample: index, wires };
   }
 
@@ -143,6 +148,7 @@ export function createFlowLayer({ state, elements, scopeView, wireRoutes }) {
 
   /** A part is being dragged: the wires move under the dots, so hide the overlay until the next canvas render. */
   function suspend() {
+    if (!isMoveDragging()) return; // a late frame of a drag that has already ended must not hide the overlay again
     if (layer.firstChild) layer.classList.add("flow-suspended");
   }
 
@@ -153,10 +159,7 @@ export function createFlowLayer({ state, elements, scopeView, wireRoutes }) {
   }
 
   toggle?.addEventListener("change", () => setEnabled(toggle.checked));
-  if (scopeView) {
-    const previous = scopeView.onCursor;
-    scopeView.onCursor = (index) => { previous?.(index); if (enabled) schedule(); };
-  }
+  scopeView?.subscribe((type) => { if (type === "cursor" && enabled) schedule(); });
   if (toggle) toggle.checked = enabled;
 
   return { refresh: build, schedule, suspend, setEnabled, isEnabled: () => enabled, inspect: () => ({ ...lastInfo, suspended: layer.classList.contains("flow-suspended"), stats: { ...stats } }) };

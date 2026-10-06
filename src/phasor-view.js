@@ -2,7 +2,7 @@ import { divideComplex, peakToRms, phasorAxis, phasorPolar, phasorTimeValue, the
 import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
-import { relativePhase } from "./phasor-practice-model.js";
+import { relativePhase } from "./phasor-practice.js";
 
 /** Reads solved phasors. Does not run a solver, change probes, or write to state. */
 export function createPhasorView(elements, state, parseNumeric, hasPendingInputs = () => false) {

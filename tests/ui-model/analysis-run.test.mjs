@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CircuitError, simulateDC } from "../../src/circuit-engine.js";
-import { describeCircuitFailure, resultAvailabilityText, runStateLabel } from "../../src/analysis-diagnostics.js";
+import { describeCircuitFailure, failureRecord, resultAvailabilityText } from "../../src/analysis-diagnostics.js";
 import { formatPortResult } from "../../src/ui-model.js";
 import { AnalysisCancelledError, AnalysisWorkerClient, AnalysisWorkerError } from "../../src/analysis-worker-client.js";
-import { refreshInvalidatedPortPanel } from "../../src/port-ui-state.js";
+import { refreshInvalidatedPortPanel } from "../../src/analysis-runner.js";
 
 function parallelIdealCircuit({ source = {}, capacitor = null, inductor = null, duplicateSource = null, reverseSource = false } = {}) {
   const components = [
@@ -29,10 +29,6 @@ function parallelIdealCircuit({ source = {}, capacitor = null, inductor = null, 
 }
 
 test("run 상태와 오류 빈결과 안내는 연결 사실과 probe 보존을 분리한다", () => {
-  const generation = 7;
-  assert.equal(runStateLabel({ status: "not-run" }, "dc", generation), "DC 동작점 미실행");
-  assert.equal(runStateLabel({ status: "success", analysis: "dc", generation }, "dc", generation), "DC 동작점 해석 성공");
-  assert.match(runStateLabel({ status: "success", analysis: "dc", generation: 6 }, "dc", generation), /현재 회로\/설정과 다름/);
   assert.equal(resultAvailabilityText({ status: "error" }, "transient", 2), "시간응답 실패 · 프로브 2개 보존 · 유효 결과 없음");
   assert.equal(resultAvailabilityText({ status: "error" }, "transient", 0), "시간응답 실패 · 프로브 없음 · 유효 결과 없음");
 
@@ -156,7 +152,7 @@ test("Worker creation, clone, module, and analysis errors are explicit", async (
 
 function exercise(result) {
   const port = { result, stale: false, error: { code: "OLD", message: "old error" } };
-  const dom = { status: "DC 포트 계산 중…", result: result ? "기존 결과" : "결과 없음" };
+  const dom = { status: "DC 포트 해석 중…", result: result ? "기존 결과" : "결과 없음" };
   const unrelated = { inspector: 0, drafts: 0, focus: 0 };
   let renders = 0;
   const renderPanel = () => {
@@ -191,4 +187,21 @@ test("port draft cancellation without a previous result immediately leaves ready
   assert.equal(outcome.dom.result, "결과 없음");
   assert.equal(outcome.renders, 1);
   assert.deepEqual(outcome.unrelated, { inspector: 0, drafts: 0, focus: 0 });
+});
+
+test("저장된 실패 기록(failureRecord)으로 다시 그려도 힌트·상세·관련 부품이 처음과 같다", () => {
+  const circuit = parallelIdealCircuit({ inductor: {} });
+  let failure;
+  try { simulateDC(circuit); } catch (error) { failure = error; }
+  const first = describeCircuitFailure(circuit, { analysis: "dc" }, failure);
+  const stored = structuredClone(failureRecord(failure)); // runState.error는 구조 복제(getState)와 재렌더를 견뎌야 한다
+  assert.deepEqual(Object.keys(stored).sort(), ["code", "details", "hint", "message"]);
+  const again = describeCircuitFailure(circuit, { analysis: "dc" }, stored);
+  assert.deepEqual(again, first);
+  assert.ok(first.hint.length > 0 && first.constraints.length > 0 && first.relatedComponentIds.length > 0);
+  // 힌트가 있는 단순 오류도 잃지 않는다.
+  const tooMany = new CircuitError("TOO_MANY_POINTS", "점이 너무 많습니다.", "시간 간격을 늘리세요.");
+  assert.equal(describeCircuitFailure(circuit, { analysis: "transient" }, failureRecord(tooMany)).hint, "시간 간격을 늘리세요.");
+  // 알 수 없는 예외는 UNKNOWN으로 남는다.
+  assert.equal(failureRecord(new TypeError("x")).code, "UNKNOWN");
 });

@@ -9,13 +9,11 @@ import { createSelectionCommands } from "./selection-commands.js";
 import { createCanvasNotices } from "./canvas-notices.js";
 import { stepSeriesText } from "./value-series.js";
 import { probeKeysForTarget } from "./ui-model.js";
-import { beginPointerSession, finishPointerSession, ownsPointer } from "./pointer-session.js";
 import { advanceCursorPointerSession, isTapGesture } from "./cursor-label-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
-import { passedDragSlop, nearestScreenTarget, CANVAS_VIEW_MIN_WIDTH, CANVAS_VIEW_MAX_WIDTH } from "./interaction-math.js";
+import { beginPointerSession, finishPointerSession, ownsPointer, passedDragSlop, nearestScreenTarget, distanceToSegment, CANVAS_VIEW_MIN_WIDTH, CANVAS_VIEW_MAX_WIDTH } from "./interaction-math.js";
 import { installCanvasTouch } from "./canvas-touch.js";
-import { distanceToSegment } from "./touch-targets.js";
 
 // [type, symbol, label, basic]: non-basic parts (dependent sources, sensors) sit under "더보기".
 const PALETTE = [
@@ -43,7 +41,7 @@ export function createInputState() {
 export function createEditorInput(deps) {
   const { state, elements, workspace, scopeView, mutate, mutateGrouped, closeEditGroup, snapshot, commitMove, undo, redo, runAnalysis, saveProject, hover, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe,
     renderCanvas, renderOverlay, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
-    renderAll, renderSelection, applySelection, setMarquee, scheduleDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
+    renderAll, renderSelection, applySelection, setMarquee, scheduleDragUpdate, cancelDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
   let canvasTouch = null;
   const notices = createCanvasNotices(elements["canvas-notices"]);
 
@@ -194,7 +192,7 @@ export function createEditorInput(deps) {
       state.pendingWaypoints = [];
       state.pointer = null;
       restoreToolHint();
-      if (!duplicate) mutate(() => state.circuit.wires.push({ id: `W${Date.now().toString(36)}${state.circuit.wires.length}`, a: start, b: target, waypoints }));
+      if (!duplicate) mutate(() => state.circuit.wires.push({ id: allocatorFor(state).next("W", state.circuit.wires), a: start, b: target, waypoints }));
       else renderCanvas();
       return;
     }
@@ -374,7 +372,7 @@ export function createEditorInput(deps) {
       state.circuit = split.circuit;
       state.probes = retargetWireProbes(state.probes, wireId, split.replacementWireId, split);
       const duplicate = state.circuit.wires.some((wire) => (endpointsEqual(wire.a, start) && endpointsEqual(wire.b, split.endpoint)) || (endpointsEqual(wire.b, start) && endpointsEqual(wire.a, split.endpoint)));
-      if (!endpointsEqual(start, split.endpoint) && !duplicate) state.circuit.wires.push({ id: `W${Date.now().toString(36)}${state.circuit.wires.length}`, a: start, b: split.endpoint, waypoints });
+      if (!endpointsEqual(start, split.endpoint) && !duplicate) state.circuit.wires.push({ id: allocatorFor(state).next("W", state.circuit.wires), a: start, b: split.endpoint, waypoints });
       setSingleSelection(state, split.endpoint.junctionId ? { kind: "junction", id: split.endpoint.junctionId } : { kind: "component", id: split.endpoint.componentId });
     });
   }
@@ -428,6 +426,7 @@ export function createEditorInput(deps) {
    * Arrow keys move the selection only while focus is on the page itself, the canvas or an editor tool button (tools, edit actions,
    * zoom, palette). Scope controls, the B-cursor button, menus, notices, the inspector and tabs keep their own arrow-key behaviour.
    */
+  const ARROW_KEYS = { ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1 };
   const ARROW_OWNERS = "#probe-context-menu, #canvas-notices, #scope-controls, #cursor-b-button, #inspector-content, #side-panel, #wave-panel, .file-menu, [role=tablist], [role=tab], [role=menu], [role=menuitem]";
   function arrowKeysBelongToCanvas() {
     const active = document.activeElement;
@@ -591,6 +590,7 @@ export function createEditorInput(deps) {
     if (!completed.finished) return false;
     const drag = completed.finished;
     state.drag = null;
+    cancelDragUpdate?.(); // a queued drag frame must not fire after the gesture (it would hide the flow overlay again)
     state.pointerOwnerId = null;
     elements["circuit-canvas"].classList.remove("dragging");
     releasePointer(elements["circuit-canvas"], pointerId);
@@ -637,7 +637,10 @@ export function createEditorInput(deps) {
     }
     if (drag.moved) {
       state.ignoreClickUntil = performance.now() + 180;
-      if (drag.kind !== "pan") commitMove(drag.before);
+      if (drag.kind === "pan") return true;
+      // Dropped back exactly where it started: no history entry, no stale result.
+      if (snapshot() === drag.before) renderAll();
+      else commitMove(drag.before);
     }
     return true;
   }
@@ -996,6 +999,8 @@ export function createEditorInput(deps) {
       }[shortcut.action]();
       if (handled && (shortcut.preventDefault || shortcut.action === "nudge")) event.preventDefault();
     });
+    // Releasing an arrow ends the nudge group, so a held key is ONE undo step however long the OS key-repeat delay is.
+    window.addEventListener("keyup", (event) => { if (event.key in ARROW_KEYS) closeEditGroup("nudge"); });
     setupCanvasTouch();
     for (const kind of ["copy", "cut", "paste"]) document.addEventListener(kind, (event) => nativeClipboardEvent(event, kind));
   }

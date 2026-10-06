@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  allItems, clearSelection, componentBounds, describeSelection, isSelected, marqueeHits, normalizeRect, pruneSelection, segmentIntersectsRect,
+  allItems, clearSelection, componentBounds, describeSelection, isSelected, marqueeHits, normalizeRect, segmentIntersectsRect,
   selectedItems, selectedKeys, selectionKey, setSelectionItems, setSingleSelection, toggleSelection,
 } from "../../src/selection-model.js";
 import { cloneExample } from "../../src/examples.js";
@@ -53,15 +53,6 @@ test("setSelectionItems: 중복은 합쳐지고 primary 지정이 집합 밖이�
   assert.deepEqual(state.selected, comp("B"));
   setSelectionItems(state, []);
   assert.equal(state.selected, null);
-});
-
-test("pruneSelection은 사라진 항목을 선택에서 뺀다 (삭제·되돌리기 뒤)", () => {
-  const { circuit } = cloneExample("divider");
-  const state = fresh();
-  setSelectionItems(state, [comp("R1"), comp("R9"), { kind: "wire", id: "W1" }, { kind: "wire", id: "W99" }], comp("R9"));
-  pruneSelection(state, circuit);
-  assert.deepEqual([...selectedKeys(state)].sort(), ["component:R1", "wire:W1"]);
-  assert.ok(state.selected && selectedKeys(state).has(selectionKey(state.selected.kind, state.selected.id)));
 });
 
 test("allItems는 부품·배선·접속점을 모두 담고 describeSelection이 종류별로 센다", () => {

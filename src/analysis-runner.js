@@ -1,19 +1,26 @@
-import { CircuitError, pinCount } from "./circuit-engine.js";
-import { acceptsRunGeneration } from "./circuit-edit.js";
-import { acMagnitudeLevel, acPhaseDegrees } from "./measurement-format.js";
-import { currentDisplayScale } from "./plot-format.js";
+import { pinCount } from "./circuit-engine.js";
+import { acceptsRunGeneration, endpointExists } from "./circuit-edit.js";
+import { acMagnitudeLevel, acPhaseDegrees, currentDisplayScale } from "./plot-format.js";
 import { suggestAnalysis } from "./analysis-policy.js";
 import { AnalysisCancelledError, AnalysisWorkerClient } from "./analysis-worker-client.js";
-import { describeCircuitFailure, resultAvailabilityText } from "./analysis-diagnostics.js";
+import { describeCircuitFailure, failureRecord, resultAvailabilityText } from "./analysis-diagnostics.js";
 import { currentDirectionGuide, currentProbeLabel } from "./current-direction.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
-import { refreshInvalidatedPortPanel } from "./port-ui-state.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { formatPortResult, probeKeysForTarget } from "./ui-model.js";
 import { createSweepRunner, createSweepState } from "./sweep-runner.js";
 import { sweepLegendMarkup, syncSweepStatus } from "./sweep-panel.js";
 import { setSingleSelection } from "./selection-model.js";
+
+/** Isolated port result invalidation; no DOM, worker or solver dependency. */
+export function refreshInvalidatedPortPanel(job, portState, renderPanel) {
+  if (job?.kind !== "port") return false;
+  portState.error = null;
+  if (portState.result) portState.stale = true;
+  renderPanel();
+  return true;
+}
 
 /** Run/result slice of the shared state: results, run status, auto-update and the DC port analysis. */
 export function createRunState() {
@@ -22,15 +29,11 @@ export function createRunState() {
     phasorResult: null,
     stale: false,
     acView: "magnitude",
-    view: { min: 0, max: 1 },
-    cursorIndex: null,
     autoTimer: null,
-    autoRequestedAt: null,
     lastRunMs: null,
     runState: { status: "not-run", analysis: null, generation: null, error: null },
     autoUpdate: true,
     runSerial: 0,
-    recommendation: "",
     port: { mode: null, p: null, n: null, loadIds: [], result: null, stale: false, error: null },
     sweep: createSweepState(),
   };
@@ -94,7 +97,7 @@ export function createAnalysisRunner(deps) {
     }
     refreshInvalidatedPortPanel(job, state.port, renderPortPanel);
     updateAnalysisControls();
-    if (announce) setStatus("계산 취소됨 · 즉시 다시 실행할 수 있습니다.", "ready");
+    if (announce) setStatus("해석 중지됨 · 즉시 다시 실행할 수 있습니다.", "ready");
     return true;
   }
 
@@ -106,7 +109,6 @@ export function createAnalysisRunner(deps) {
   function synchronizeIntent() {
     const plan = suggestAnalysis(state.circuit, state.settings, state.intent);
     state.settings = plan.settings;
-    state.recommendation = plan.reason;
     // Manual (edited parameters) keeps the chosen analysis type visible in the single selector.
     elements["analysis-intent"].value = state.intent === "manual" ? state.settings.analysis : state.intent;
     elements["auto-update"].checked = state.autoUpdate;
@@ -116,7 +118,6 @@ export function createAnalysisRunner(deps) {
   function cancelScheduledRun() {
     clearTimeout(state.autoTimer);
     state.autoTimer = null;
-    state.autoRequestedAt = null;
   }
 
   function markStale() {
@@ -170,8 +171,7 @@ export function createAnalysisRunner(deps) {
       }
     } catch { return; }
     const generation = state.generation;
-    state.autoRequestedAt = performance.now();
-    const requestedAt = state.autoRequestedAt;
+    const requestedAt = performance.now();
     setAutoHint("자동 갱신 대기");
     state.autoTimer = setTimeout(() => runAnalysis({ automatic: true, generation, requestedAt }), 250);
   }
@@ -205,7 +205,7 @@ export function createAnalysisRunner(deps) {
     const settings = structuredClone(state.settings);
     const startedAt = requestedAt;
     state.runState = { status: "running", analysis: state.settings.analysis, generation, error: null };
-    setStatus(automatic ? "자동 계산 중…" : "계산 중…", "running");
+    setStatus(automatic ? "자동 해석 중…" : "해석 중…", "running");
     elements["error-box"].classList.add("hidden");
     await new Promise((resolve) => { requestAnimationFrame(resolve); setTimeout(resolve, 50); });
     if (serial !== state.runSerial || !acceptsRunGeneration(generation, state.generation)) return;
@@ -219,8 +219,6 @@ export function createAnalysisRunner(deps) {
       state.phasorResult = phasorResult;
       state.stale = false;
       sweepRunner.clear({ quiet: true });
-      state.view = { min: 0, max: 1 };
-      state.cursorIndex = state.result.xValues.length > 1 ? state.result.xValues.length - 1 : 0;
       state.runState = { status: "success", analysis: state.settings.analysis, generation: state.generation, error: null };
       const points = state.result.points.length;
       elements["result-summary"].textContent = `${state.settings.analysis === "dc" ? "DC 동작점" : state.settings.analysis === "transient" ? "시간응답" : "AC 주파수"} · ${points.toLocaleString()}개 점 · 현재 회로 결과`;
@@ -231,14 +229,12 @@ export function createAnalysisRunner(deps) {
     } catch (error) {
       if (error instanceof AnalysisCancelledError) return;
       if (serial !== state.runSerial || !acceptsRunGeneration(generation, state.generation)) return;
-      const known = error instanceof CircuitError || Boolean(error?.code);
       state.result = null;
       state.phasorResult = null;
       state.stale = false;
-      state.cursorIndex = null;
       state.lastRunMs = null;
-      state.runState = { status: "error", analysis: state.settings.analysis, generation: state.generation, error: known ? { code: error.code, message: error.message } : { code: "UNKNOWN", message: String(error) } };
-      renderFailureDiagnostic(error);
+      state.runState = { status: "error", analysis: state.settings.analysis, generation: state.generation, error: failureRecord(error) };
+      renderFailureDiagnostic(state.runState.error);
       elements["result-summary"].textContent = resultAvailabilityText(state.runState, state.settings.analysis, state.probes.length);
       setStatus("해석 실패", "error");
       renderAll();
@@ -308,10 +304,19 @@ export function createAnalysisRunner(deps) {
     return { probe, raw, baseUnit: "A" };
   }
 
+  /** Labels follow the parts: renaming R2 to Rload relabels its probes (the label stored with the probe is only a cache). */
   function presentProbe(probe) {
-    if (!probe || probe.kind !== "current") return probe;
-    const component = state.circuit.components.find((item) => item.id === probe.componentId);
-    if (component) probe.label = currentProbeLabel(component, circuitGeometryVersion(state.circuit));
+    if (!probe) return probe;
+    if (probe.kind === "current") {
+      const component = state.circuit.components.find((item) => item.id === probe.componentId);
+      if (component) probe.label = currentProbeLabel(component, circuitGeometryVersion(state.circuit));
+    } else if (probe.kind === "voltage") {
+      if (probe.junctionId !== undefined) probe.label = `V(${probe.junctionId})`;
+      else {
+        const component = state.circuit.components.find((item) => item.id === probe.componentId);
+        if (component) probe.label = `V(${component.props?.ref ?? component.id}.${probe.pin + 1})`;
+      }
+    }
     return probe;
   }
 
@@ -430,7 +435,7 @@ export function createAnalysisRunner(deps) {
       ? `제외 부하: ${state.port.loadIds.map((id) => state.circuit.components.find((item) => item.id === id)?.props?.ref ?? id).join(", ")}`
       : "제외 부하 없음";
     elements["port-run-button"].disabled = Boolean(activeAnalysisJob) || !state.port.p || !state.port.n;
-    elements["port-status"].textContent = activeAnalysisJob?.kind === "port" ? "DC 포트 계산 중…" : state.port.stale ? "회로가 변경되어 이전 포트 결과가 오래되었습니다." : state.port.error ? "포트 분석 오류" : state.port.result ? "현재 회로 snapshot 결과" : "DC 선형 회로 전용";
+    elements["port-status"].textContent = activeAnalysisJob?.kind === "port" ? "DC 포트 해석 중…" : state.port.stale ? "회로가 변경되어 이전 포트 결과가 오래되었습니다." : state.port.error ? "포트 분석 오류" : state.port.result ? "현재 회로 스냅샷 결과" : "DC 선형 회로 전용";
     elements["port-status"].className = state.port.stale ? "port-status stale" : state.port.error ? "port-status error" : "port-status";
     if (state.port.error) {
       elements["port-result"].innerHTML = `<strong>${escapeHtml(state.port.error.code ?? "PORT_ERROR")}</strong><span>${escapeHtml(state.port.error.message)}</span><small>${escapeHtml(state.port.error.hint ?? "")}</small>`;
@@ -442,7 +447,7 @@ export function createAnalysisRunner(deps) {
       return;
     }
     const details = formatted.details.length ? `<ul class="port-details">${formatted.details.map((detail) => `<li>${escapeHtml(detail)}</li>`).join("")}</ul>` : "";
-    elements["port-result"].innerHTML = `<div><small>Vth</small><strong>${escapeHtml(formatted.vth.text)}</strong></div><div><small>Rth</small><strong>${escapeHtml(formatted.rth.text)}</strong></div><div><small>In</small><strong>${escapeHtml(formatted.in.text)}</strong></div>${details}<p>${escapeHtml(formatted.equation)} · Norton 내부원 n→p, 단락전류 p→n</p>`;
+    elements["port-result"].innerHTML = `<div><small>Vth</small><strong>${escapeHtml(formatted.vth.text)}</strong></div><div><small>Rth</small><strong>${escapeHtml(formatted.rth.text)}</strong></div><div><small>In</small><strong>${escapeHtml(formatted.in.text)}</strong></div>${details}<p>${escapeHtml(formatted.equation)} · 노턴 내부원 n→p, 단락전류 p→n</p>`;
   }
 
   function portSelectionSnapshot() {
@@ -463,7 +468,7 @@ export function createAnalysisRunner(deps) {
     activeAnalysisJob = { kind: "port", serial, requestId: workerRequest.requestId, generation, selectionSnapshot };
     updateAnalysisControls();
     renderPortPanel();
-    setStatus("DC 포트 계산 중…", "running");
+    setStatus("DC 포트 해석 중…", "running");
     try {
       const result = await workerRequest.promise;
       if (serial !== state.runSerial || generation !== state.generation || selectionSnapshot !== portSelectionSnapshot()) return;
@@ -502,6 +507,22 @@ export function createAnalysisRunner(deps) {
     state.port = { mode: null, p: null, n: null, loadIds: [], result: null, stale: false, error: null };
     renderPortPanel();
     renderCanvas();
+  }
+
+  /**
+   * After an undo/redo inside one project: keep the port selection and the sweep form, minus whatever points at parts or pins the replayed
+   * circuit no longer has. A port result that depended on a dropped endpoint goes; one that is merely older is marked stale by markStale().
+   */
+  function reconcileWithCircuit() {
+    const exists = (endpoint) => Boolean(endpoint) && endpointExists(state.circuit, endpoint);
+    const port = state.port;
+    const loadIds = port.loadIds.filter((id) => state.circuit.components.some((item) => item.id === id));
+    const dropped = (port.p && !exists(port.p)) || (port.n && !exists(port.n)) || loadIds.length !== port.loadIds.length;
+    if (dropped) {
+      state.port = { mode: null, p: exists(port.p) ? port.p : null, n: exists(port.n) ? port.n : null, loadIds, result: null, stale: false, error: null };
+    }
+    const form = state.sweep.form;
+    if (form.componentId && !state.circuit.components.some((item) => item.id === form.componentId)) form.componentId = null;
   }
 
   function clearSweep() {
@@ -545,7 +566,7 @@ export function createAnalysisRunner(deps) {
 
   return {
     updateAnalysisControls, invalidateActiveAnalysis, cancelScheduledRun, synchronizeIntent, markStale, markInputDirty, setAutoHint, scheduleAutoRun, runAnalysis, runPortAnalysis,
-    renderProbes, renderPlot, renderPhasorLearning, renderPortPanel, renderFailureDiagnostic, seriesForProbes, presentProbe, assignPortEndpoint, attach,
+    renderProbes, renderPlot, renderPhasorLearning, renderPortPanel, renderFailureDiagnostic, seriesForProbes, presentProbe, assignPortEndpoint, reconcileWithCircuit, attach,
     runSweep: (componentId) => sweepRunner.run(componentId), clearSweep, resetSweep, sweepView: () => sweepRunner.view(state.acView),
   };
 }

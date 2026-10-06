@@ -1,4 +1,4 @@
-/** Screen-space gesture math. Values are CSS pixels, never device pixels. */
+/** Screen-space gesture math, pointer sessions and hit-test distances. Values are CSS pixels, never device pixels. */
 /** Shared canvas zoom limits (viewBox width): wheel/button zoom and pinch must agree. */
 export const CANVAS_VIEW_MIN_WIDTH = 220;
 export const CANVAS_VIEW_MAX_WIDTH = 3040;
@@ -32,4 +32,30 @@ export function viewForPinch(start, midpoint, distance) {
   return { width, height,
     x: start.anchor.x - (midpoint.x - start.center.x) / scale - width / 2,
     y: start.anchor.y - (midpoint.y - start.center.y) / scale - height / 2 };
+}
+
+// ---- pointer sessions: one pointer owns a gesture from press to commit/cancel
+export function beginPointerSession(active, pointerId, payload) {
+  if (active || !Number.isInteger(pointerId)) return active;
+  return { ...payload, pointerId, finished: false };
+}
+
+export function ownsPointer(session, pointerId) {
+  return Boolean(session && !session.finished && session.pointerId === pointerId);
+}
+
+export function finishPointerSession(session, pointerId, reason = "commit") {
+  if (!ownsPointer(session, pointerId)) return { session, finished: null };
+  return { session: null, finished: { ...session, finished: true, reason } };
+}
+
+// ---- hit testing
+/** Hit-test distances in CSS pixels, independent of devicePixelRatio/zoom. */
+export function distanceToSegment(point, a, b) {
+  if (![point?.x, point?.y, a?.x, a?.y, b?.x, b?.y].every(Number.isFinite)) return Infinity;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const length2 = dx*dx + dy*dy;
+  if (length2 === 0) return Math.hypot(point.x-a.x, point.y-a.y);
+  const t = Math.max(0, Math.min(1, ((point.x-a.x)*dx + (point.y-a.y)*dy) / length2));
+  return Math.hypot(point.x-a.x-t*dx, point.y-a.y-t*dy);
 }

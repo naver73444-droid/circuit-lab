@@ -5,7 +5,8 @@ import { axisSide, cursorIndexAfterKey, isTapGesture, layoutCursorLabels, advanc
 import { extremaIndices, nearestSampleIndex } from "../../src/scope-model.js";
 import { simulateTransient } from "../../src/circuit-engine.js";
 import { deserializeProject } from "../../src/project-format.js";
-import { buildResultsCSV, parseCSV } from "../../src/csv-format.js";
+import { buildResultsCSV } from "../../src/csv-format.js";
+import { parseCSV } from "../helpers/csv.mjs";
 
 describe("cursor labels", () => {
   const fixture = JSON.parse(readFileSync(new URL("../fixtures/scope-sine.json", import.meta.url), "utf8"));

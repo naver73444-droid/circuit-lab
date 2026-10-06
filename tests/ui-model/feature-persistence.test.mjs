@@ -443,3 +443,158 @@ test("onResult: 타이머로 실행된 저장 결과(성공·용량 초과)를 �
   assert.doesNotThrow(() => noisy.timers.advance(800));
   assert.equal(noisy.autosave.getStatus().state, "saved");
 });
+
+// ---- 교체 시 마감 저장 + prev 슬롯 ----
+const projectWithTitle = (id, title) => ({ ...projectOf(id), title });
+const titleIn = (storage, key) => JSON.parse(storage.data.get(key)).project.title;
+
+test("retire: 바꾸기 직전 대기 중 저장을 먼저 마무리하고, 새 프로젝트의 첫 저장 때 그 슬롯이 prev로 옮겨진다", () => {
+  const { autosave, timers, storage, ownKey } = make();
+  const prevKey = autosave.prevKey;
+  assert.equal(prevKey, `${ownKey}.prev`);
+  autosave.schedule(projectWithTitle("divider", "옛 프로젝트 v1"));
+  timers.advance(800);
+  autosave.schedule(projectWithTitle("divider", "옛 프로젝트 마지막 편집")); // 0.8초 안에 교체가 일어난다
+  assert.equal(autosave.hasPending(), true);
+  autosave.retire();
+  assert.equal(autosave.hasPending(), false, "대기 항목은 새 프로젝트 위로 쓰이지 않는다");
+  assert.equal(titleIn(storage, ownKey), "옛 프로젝트 마지막 편집", "마지막 편집까지 슬롯에 남는다");
+  assert.equal(storage.data.has(prevKey), false, "새 프로젝트가 저장되기 전에는 슬롯을 옮기지 않는다");
+  timers.advance(5000);
+  assert.equal(titleIn(storage, ownKey), "옛 프로젝트 마지막 편집", "새 프로젝트가 저장되지 않으면 그대로");
+
+  autosave.schedule(projectWithTitle("rc-charge", "새 프로젝트"));
+  timers.advance(800);
+  assert.equal(titleIn(storage, ownKey), "새 프로젝트");
+  assert.equal(titleIn(storage, prevKey), "옛 프로젝트 마지막 편집", "이전 프로젝트는 prev에 남는다");
+  autosave.schedule(projectWithTitle("rc-charge", "새 프로젝트 편집"));
+  timers.advance(800);
+  assert.equal(titleIn(storage, prevKey), "옛 프로젝트 마지막 편집", "같은 프로젝트의 다음 편집은 prev를 건드리지 않는다");
+});
+
+test("prev는 탭마다 정확히 하나: 두 번째 교체는 prev를 갈아 끼우고, 5개 한도에는 둘 다 센다", () => {
+  const storage = fakeStorage();
+  const timers = fakeTimers();
+  const { autosave } = make(storage, { timers });
+  const prevKey = autosave.prevKey;
+  autosave.schedule(projectWithTitle("divider", "A"));
+  timers.advance(800);
+  autosave.retire();
+  autosave.schedule(projectWithTitle("rc-charge", "B"));
+  timers.advance(800);
+  autosave.retire();
+  autosave.schedule(projectWithTitle("rlc", "C"));
+  timers.advance(800);
+  assert.equal(titleIn(storage, autosave.key), "C");
+  assert.equal(titleIn(storage, prevKey), "B", "A는 밀려났고 prev는 하나뿐");
+  assert.equal(slotKeys(storage).filter((key) => key.endsWith(".prev")).length, 1);
+
+  // 다른 탭 슬롯 5개를 채우면 오래된 다른 탭부터 지워지고 이 탭의 own/prev는 남는다.
+  for (let index = 0; index < 5; index += 1) {
+    storage.data.set(`${AUTOSAVE_PREFIX}other-tab-${index}`, JSON.stringify({ v: 2, tabId: `other-tab-${index}`, savedAt: 1 + index, project: serializedOf(projectWithTitle("divider", `다른 탭 ${index}`)) }));
+  }
+  autosave.schedule(projectWithTitle("rlc", "C2"));
+  timers.advance(800);
+  const keys = slotKeys(storage);
+  assert.equal(keys.length, AUTOSAVE_MAX_SLOTS, "own + prev가 5개 한도에 포함된다");
+  assert.ok(keys.includes(autosave.key) && keys.includes(prevKey));
+  assert.equal(keys.includes(`${AUTOSAVE_PREFIX}other-tab-0`), false, "가장 오래된 다른 탭이 먼저 지워진다");
+});
+
+test("복원 제안은 own·prev·다른 탭 중 가장 최근이면서 불러온 내용과 다른 것을 고른다", () => {
+  const storage = fakeStorage();
+  const timers = fakeTimers();
+  const { autosave } = make(storage, { timers });
+  autosave.schedule(projectWithTitle("divider", "옛 작업"));
+  timers.advance(800);
+  autosave.retire();
+  timers.advance(1000);
+  autosave.schedule(projectWithTitle("rc-charge", "새 작업"));
+  timers.advance(800);
+  const own = autosave.loadDetailed({}, { current: projectOf("opamp") });
+  assert.equal(own.ok, true);
+  assert.equal(own.project.title, "새 작업");
+  assert.equal(own.own, true);
+  // 화면에 새 작업이 이미 있으면 prev(옛 작업)가 제안된다.
+  const current = { ...projectWithTitle("rc-charge", "새 작업"), circuit: own.project.circuit, probes: own.project.probes, subtitle: own.project.subtitle };
+  const older = autosave.loadDetailed({}, { current });
+  assert.equal(older.ok, true);
+  assert.equal(older.project.title, "옛 작업");
+  assert.equal(older.prev, true);
+  assert.equal(autosave.listSlots().filter((slot) => slot.prev).length, 1);
+  // clear는 prev도 지운다.
+  autosave.clear();
+  assert.equal(slotKeys(storage).length, 0);
+});
+
+// ---- 리뷰 수정: prev 회전 실패, 읽을 수 없는 own, 복원 후보 prev 보호 ----
+
+function quotaError() {
+  const error = new Error("quota");
+  error.name = "QuotaExceededError";
+  return error;
+}
+
+test("prev 회전이 실패하면(용량 초과) 새 프로젝트 쓰기를 중단하고 옛 프로젝트를 지키며, 대기 항목은 재시도용으로 남는다", () => {
+  let failPrev = false;
+  const storage = fakeStorage();
+  const realSet = storage.setItem;
+  storage.setItem = (key, value) => { if (failPrev && key.endsWith(".prev")) throw quotaError(); realSet(key, value); };
+  const results = [];
+  const timers = fakeTimers();
+  const { autosave, ownKey } = make(storage, { timers, onResult: (outcome) => results.push(outcome) });
+  autosave.schedule(projectWithTitle("divider", "옛 프로젝트"));
+  timers.advance(800);
+  autosave.retire();
+  failPrev = true;
+  autosave.schedule(projectWithTitle("rc-charge", "새 프로젝트"));
+  timers.advance(800);
+  assert.equal(results.at(-1).state, "quota", "실패가 보고된다(saved가 아니다)");
+  assert.equal(results.at(-1).ok, false);
+  assert.equal(titleIn(storage, ownKey), "옛 프로젝트", "옛 프로젝트의 유일한 사본이 그대로다");
+  assert.equal(storage.data.has(autosave.prevKey), false);
+  assert.equal(autosave.hasPending(), true, "새 프로젝트는 대기 상태로 남는다");
+  failPrev = false;
+  assert.equal(autosave.flush().state, "saved", "공간이 생기면 재시도로 저장된다");
+  assert.equal(titleIn(storage, ownKey), "새 프로젝트");
+  assert.equal(titleIn(storage, autosave.prevKey), "옛 프로젝트", "재시도에서도 회전이 일어난다(rotatePending 유지)");
+  assert.equal(autosave.hasPending(), false);
+});
+
+test("읽을 수 없는 own 슬롯은 prev를 덮어쓰지 않는다", () => {
+  const storage = fakeStorage();
+  const timers = fakeTimers();
+  const { autosave, ownKey } = make(storage, { timers });
+  storage.data.set(autosave.prevKey, JSON.stringify({ v: 2, tabId: "x", savedAt: 5, project: serializedOf(projectWithTitle("divider", "좋은 prev")) }));
+  storage.data.set(ownKey, "{깨진 json");
+  autosave.retire();
+  autosave.schedule(projectWithTitle("rc-charge", "새 프로젝트"));
+  timers.advance(800);
+  assert.equal(autosave.getStatus().state, "saved");
+  assert.equal(titleIn(storage, autosave.prevKey), "좋은 prev", "좋은 prev가 깨진 own으로 바뀌지 않는다");
+  assert.equal(titleIn(storage, ownKey), "새 프로젝트");
+});
+
+test("복원 후보가 prev 자체이면 retire({keepPrev})가 그 슬롯을 보호하고, 보호가 풀리면 다시 회전한다", () => {
+  const storage = fakeStorage();
+  const timers = fakeTimers();
+  const { autosave, ownKey } = make(storage, { timers });
+  autosave.schedule(projectWithTitle("divider", "A"));
+  timers.advance(800);
+  autosave.retire();
+  autosave.schedule(projectWithTitle("rc-charge", "B"));
+  timers.advance(800); // own=B, prev=A
+  // 새 로드: B와 같은 내용이 화면에 있으므로 제안 후보는 prev(A)다.
+  const offer = autosave.loadDetailed({}, { current: { ...projectWithTitle("rc-charge", "B"), circuit: JSON.parse(storage.data.get(ownKey)).project.circuit, probes: JSON.parse(storage.data.get(ownKey)).project.probes, subtitle: JSON.parse(storage.data.get(ownKey)).project.subtitle } });
+  assert.equal(offer.prev, true);
+  autosave.retire({ keepPrev: offer.prev });
+  autosave.schedule(projectWithTitle("rc-charge", "B 편집"));
+  timers.advance(800);
+  assert.equal(titleIn(storage, autosave.prevKey), "A", "제안 중인 prev는 첫 저장에도 그대로");
+  assert.equal(titleIn(storage, ownKey), "B 편집");
+  autosave.releaseProtection(); // 무시
+  autosave.retire();
+  autosave.schedule(projectWithTitle("rlc", "C"));
+  timers.advance(800);
+  assert.equal(titleIn(storage, autosave.prevKey), "B 편집", "보호가 풀린 뒤의 교체는 평소처럼 prev를 갈아 끼운다");
+});

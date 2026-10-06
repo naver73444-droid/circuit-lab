@@ -7,7 +7,7 @@
  * 계산은 measure-model.measureAll에 맡기고, 여기서는 어떤 항목을 어떤 모양으로 보일지만 정한다.
  */
 import { measureAll, MEASURE_BASIS } from "./measure-model.js";
-import { acMagnitudeLevel } from "./measurement-format.js";
+import { acMagnitudeLevel } from "./plot-format.js";
 
 export const MEASURE_MAX_ROWS = 3;
 

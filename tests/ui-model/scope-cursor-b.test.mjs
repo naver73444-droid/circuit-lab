@@ -30,7 +30,7 @@ function makeView() {
   const svg = new FakeElement({ svg: true });
   const view = new ScopeView(svg, new FakeElement(), new FakeElement());
   const changes = [];
-  view.onChange = () => changes.push({ b: view.cursorB, armed: view.bArmed, active: view.activeTraceKey });
+  view.subscribe((type) => { if (type === "change") changes.push({ b: view.cursorB, armed: view.bArmed, active: view.activeTraceKey }); });
   return { view, svg, readout: view.readout, changes };
 }
 const transient = () => {
@@ -149,4 +149,25 @@ test("AC에서도 클릭 고정(A)과 Δf·dB 차이가 동작한다", () => {
   assert.match(view.readout.textContent, /Δf/);
   assert.match(view.readout.textContent, /Δ레벨/);
   assert.equal(readout.textContent.includes("dB/dec"), true);
+});
+
+test("subscribe: 여러 관찰자가 서로를 덮어쓰지 않고, 해제 함수로 빠지며, 예외는 그래프를 깨지 않는다", () => {
+  const { view } = makeView();
+  const data = transient();
+  view.setData(data.result, data.series);
+  const first = [];
+  const second = [];
+  const stopFirst = view.subscribe((type, detail) => first.push([type, detail]));
+  view.subscribe((type) => second.push(type));
+  view.subscribe(() => { throw new Error("broken observer"); });
+  assert.equal(view.armB(true), true);
+  assert.ok(first.some(([type]) => type === "change") && second.includes("change"), "두 관찰자 모두 변경을 받는다");
+  const before = first.length;
+  view.keyCursor("ArrowRight", false);
+  assert.ok(first.slice(before).some(([type, detail]) => type === "cursor" && Number.isInteger(detail)), "커서 A 이동은 cursor 이벤트로 온다");
+  stopFirst();
+  const frozen = first.length;
+  view.armB(false);
+  assert.equal(first.length, frozen, "해제한 관찰자는 더 받지 않는다");
+  assert.ok(second.length > 0);
 });

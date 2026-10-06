@@ -19,11 +19,10 @@ import { isSelected, selectedKeys } from "./selection-model.js";
 /**
  * SVG drawing of the circuit canvas. Reads the editor state and never changes it. Pointer/keyboard handling is delegated
  * on the layer roots by editor-input (bound once), so a render only writes markup and never re-binds listeners.
- * A component drag takes a cheaper path (updateDragged): move that part's <g transform> and the `d` of the wires attached to it.
+ * A component drag takes a cheaper path (updateMoved): move that part's <g transform> and the `d` of the wires attached to it.
  */
 export function createCanvasRenderer(deps) {
   const { state, elements, workspace, currentConnections, afterCanvasRender, onDragFrame } = deps;
-  let canvasFrame = null;
   let overlayFrame = null;
   let dragFrame = null;
   let pendingDrag = null;
@@ -63,10 +62,6 @@ export function createCanvasRenderer(deps) {
     if (overlayFrame === null) overlayFrame = requestAnimationFrame(() => { overlayFrame = null; if (workspace.circuitActive) renderOverlay(); });
   }
 
-  function scheduleCanvasRender() {
-    if (canvasFrame === null) canvasFrame = requestAnimationFrame(() => { canvasFrame = null; renderCanvas(); });
-  }
-
   /**
    * Frame-batched drag update: only the moved items' groups and the wires attached to them change. Falls back to a full render if the
    * DOM is not there. `id` is one id, or for kind "group" an object {components: [...], junctions: [...]}.
@@ -78,9 +73,19 @@ export function createCanvasRenderer(deps) {
       dragFrame = null;
       const job = pendingDrag;
       pendingDrag = null;
-      if (!job || !workspace.circuitActive) return;
+      // The gesture may have ended since this frame was requested (drop, cancel, project change): its final render already drew everything.
+      if (!job || !workspace.circuitActive || !isMoveDrag()) return;
       if (!updateMoved(job)) { stats.dragFallback += 1; renderCanvas(); }
     });
+  }
+
+  /** A part, junction or group is being carried (the only gesture the cheap drag path serves). */
+  const isMoveDrag = () => Boolean(state.drag && state.drag.moved && (state.drag.kind === "component" || state.drag.kind === "junction"));
+
+  /** Drop any drag update still waiting for its frame (the gesture ended, or a full render has just redrawn everything). */
+  function cancelDragUpdate() {
+    if (dragFrame !== null) { try { cancelAnimationFrame(dragFrame); } catch { /* the frame is guarded anyway */ } dragFrame = null; }
+    pendingDrag = null;
   }
 
   function localPin(type, pin) {
@@ -196,8 +201,9 @@ export function createCanvasRenderer(deps) {
     }
     const junctions = [];
     for (const [key, count] of endpointCounts) {
-      if (count < 2 || !key.startsWith("P:")) continue;
-      const { componentId, pin } = endpointByKey.get(key);
+      const end = endpointByKey.get(key);
+      if (count < 2 || end.junctionId !== undefined) continue;
+      const { componentId, pin } = end;
       const component = componentById.get(componentId);
       if (!component) continue;
       const position = pinPosition(component, Number(pin));
@@ -226,7 +232,7 @@ export function createCanvasRenderer(deps) {
 
   function renderCanvas() {
     if (!workspace.circuitActive) { workspace.renderDeferred = true; return; }
-    if (canvasFrame !== null) { cancelAnimationFrame(canvasFrame); canvasFrame = null; }
+    cancelDragUpdate(); // a full render supersedes a queued cheap update
     const componentById = new Map(state.circuit.components.map((component) => [component.id, component]));
     let connection, connectionError = false;
     try { connection = currentConnections(); }
@@ -313,10 +319,6 @@ export function createCanvasRenderer(deps) {
     return true;
   }
 
-  function updateDragged(kind, id) {
-    return updateMoved(kind === "junction" ? { junctions: [id] } : { components: [id] });
-  }
-
   /** Marquee rectangle while a Shift+drag box selection is in progress (rect in world coordinates); null hides it. */
   function setMarquee(rect) {
     const node = elements["marquee-rect"];
@@ -374,5 +376,5 @@ export function createCanvasRenderer(deps) {
     return routes;
   }
 
-  return { updateCanvasView, scheduleCanvasRender, scheduleOverlayRender, scheduleDragUpdate, updateDragged, updateMoved, setMarquee, applySelection, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId, wireRoutes, stats };
+  return { updateCanvasView, scheduleOverlayRender, scheduleDragUpdate, cancelDragUpdate, setMarquee, applySelection, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId, wireRoutes, stats };
 }

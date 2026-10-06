@@ -26,7 +26,8 @@ function setup({ id = "divider", analysis = "dc", rename = (text) => text } = {}
     calls.routes += 1;
     return new Map(circuit.wires.map((wire, index) => [wire.id, [{ x: 0, y: index * 40 }, { x: 120, y: index * 40 }]]));
   };
-  const scopeView = { cursorIndex: null, onCursor: null };
+  const listeners = new Set();
+  const scopeView = { cursorIndex: null, listeners, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
   const elements = fakeElements();
   const flow = createFlowLayer({ state, elements, scopeView, wireRoutes });
   flow.setEnabled(true);
@@ -113,4 +114,19 @@ test("net graph and routes are cached per geometry; a cursor move only redoes th
   state.result = { ...result }; // a new run
   flow.refresh();
   assert.equal(flow.inspect().stats.graphs, 3, "a new result reuses the geometry");
+});
+
+test("status none: a steady-state sample with ~0 current says where to look, and the hint survives an identical rebuild", () => {
+  const { state, flow, elements } = setup({ id: "rc-charge", analysis: "transient" });
+  const hint = elements["flow-hint"];
+  state.result = simulate(state.circuit, { analysis: "transient", start: "0", end: "100m", step: "100u" });
+  flow.refresh();
+  assert.equal(flow.inspect().status, "none");
+  assert.equal(hint.textContent, "그래프 커서로 시점을 고르세요 · 현재 시점 전류 ≈ 0");
+  flow.refresh(); // nothing changed: the picture is skipped, the hint stays
+  assert.equal(flow.inspect().stats.skipped >= 1, true);
+  assert.equal(hint.textContent, "그래프 커서로 시점을 고르세요 · 현재 시점 전류 ≈ 0");
+  state.stale = true;
+  flow.refresh();
+  assert.equal(hint.textContent, "", "no hint once the result is stale");
 });

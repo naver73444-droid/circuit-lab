@@ -108,3 +108,10 @@ test("isTypingTarget: 글자를 받는 칸만 일반 키를 가져간다 (체크
   assert.equal(isTypingTarget(null, "r"), false);
   assert.equal(isTypingTarget(undefined, "ArrowLeft"), false);
 });
+
+test("Backspace는 Delete처럼 삭제하고, 글자를 입력하는 칸이나 수식키 조합에서는 동작하지 않는다", () => {
+  assert.equal(action(key("Backspace")), "delete");
+  assert.equal(action(key("Backspace"), { typing: true }), null);
+  assert.equal(shortcutFor(key("Backspace", { ctrlKey: true })), null);
+  assert.equal(shortcutFor(key("Backspace", { altKey: true })), null, "Alt+Backspace는 브라우저 몫");
+});

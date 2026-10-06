@@ -1,8 +1,8 @@
 /**
  * 편집기 키보드 단축키 → 동작 매핑 (DOM 없음). Esc는 상황(메뉴·인라인 편집)에 따라 달라 호출한 쪽이 직접 처리한다.
  *
- *   R / Shift+R        시계·반시계 회전          Delete          삭제
- *   Ctrl+D             복제                      Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y   취소·다시
+ *   R / Shift+R        시계·반시계 회전          Delete / Backspace  삭제
+ *   Ctrl+D             복제                      Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y   되돌리기·다시 하기
  *   Ctrl+C / X / V     복사 / 잘라내기 / 붙여넣기   Ctrl+A         모두 선택
  *   W / V              배선 / 선택 도구          방향키 (Shift = 5칸)   선택 항목 이동
  *   Ctrl+S             JSON 저장                 Ctrl+Enter     해석 실행
@@ -16,6 +16,8 @@
  */
 export const NUDGE_STEPS = 1;
 export const NUDGE_STEPS_SHIFT = 5;
+/** Idle fallback of a held-arrow history group: longer than the usual OS key-repeat delay (~500 ms on Windows), so holding a key stays ONE undo step. Releasing the key closes the group earlier. */
+export const NUDGE_IDLE_MS = 700;
 
 function letterOf(event) {
   const key = String(event.key ?? "");
@@ -109,7 +111,7 @@ export function shortcutFor(event, { typing = false, textSelection = false } = {
     return null;
   }
   if (mod || event.altKey) return null;
-  if (event.key === "Delete") return { action: "delete" };
+  if (event.key === "Delete" || event.key === "Backspace") return { action: "delete" };
   if (Object.hasOwn(ARROWS, event.key)) {
     const [dx, dy] = ARROWS[event.key];
     return { action: "nudge", dx, dy, steps: event.shiftKey ? NUDGE_STEPS_SHIFT : NUDGE_STEPS, repeat: Boolean(event.repeat) };

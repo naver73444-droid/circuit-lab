@@ -9,7 +9,6 @@ import { circuitGeometryVersion, localPin, pinPosition, routeWirePoints } from "
  *
  * 외부 모듈이 selected만 직접 바꿔도 깨지지 않도록 읽는 쪽은 selectedKeys()를 쓴다: selected가 selection에 없으면 selected 하나만 선택된 것으로 본다.
  */
-export const KINDS = Object.freeze(["component", "wire", "junction"]);
 export const selectionKey = (kind, id) => `${kind}:${id}`;
 export function parseSelectionKey(key) {
   const at = String(key).indexOf(":");
@@ -26,7 +25,6 @@ export function selectedKeys(state) {
 
 export const selectedItems = (state) => [...selectedKeys(state)].map(parseSelectionKey);
 export const isSelected = (state, kind, id) => selectedKeys(state).has(selectionKey(kind, id));
-export const selectionSize = (state) => selectedKeys(state).size;
 
 export function clearSelection(state) {
   state.selected = null;
@@ -71,17 +69,6 @@ export function allItems(circuit) {
     ...circuit.wires.map((wire) => ({ kind: "wire", id: wire.id })),
     ...(circuit.junctions ?? []).map((junction) => ({ kind: "junction", id: junction.id })),
   ];
-}
-
-/** Drop items whose entity no longer exists (after a delete, an undo or a project replacement). */
-export function pruneSelection(state, circuit) {
-  const exists = {
-    component: new Set(circuit.components.map((item) => item.id)),
-    wire: new Set(circuit.wires.map((item) => item.id)),
-    junction: new Set((circuit.junctions ?? []).map((item) => item.id)),
-  };
-  const items = selectedItems(state).filter((item) => exists[item.kind]?.has(item.id));
-  setSelectionItems(state, items, state.selected);
 }
 
 export function describeSelection(items) {

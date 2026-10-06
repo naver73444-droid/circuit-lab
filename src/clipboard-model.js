@@ -1,4 +1,4 @@
-import { CIRCUIT_LIMITS, isKnownComponentType, pinCount, validateCircuitStructure } from "./circuit-engine.js";
+import { CIRCUIT_LIMITS, endpointKey, isKnownComponentType, pinCount, validateCircuitStructure } from "./circuit-engine.js";
 import { remapFragment, extractFragment } from "./circuit-edit.js";
 import { GRID_SIZE } from "./circuit-geometry.js";
 
@@ -84,7 +84,6 @@ function cleanEndpoint(end) {
   return idOf(end.componentId) && Number.isInteger(end.pin) && end.pin >= 0 ? { componentId: end.componentId, pin: end.pin } : null;
 }
 
-const endpointText = (end) => end.junctionId !== undefined ? `J:${end.junctionId}` : `P:${end.componentId}:${end.pin}`;
 
 /**
  * The one wire normalisation every paste path goes through (the internal clipboard and text from the system clipboard): a wire from a
@@ -95,7 +94,7 @@ const endpointText = (end) => end.junctionId !== undefined ? `J:${end.junctionId
 export function normalizeClipboardWires(wires) {
   const kept = [], seen = new Set();
   for (const wire of wires ?? []) {
-    const keyA = endpointText(wire.a), keyB = endpointText(wire.b);
+    const keyA = endpointKey(wire.a), keyB = endpointKey(wire.b);
     if (keyA === keyB) continue;
     const points = Array.isArray(wire.waypoints) ? wire.waypoints : [];
     const forward = keyA < keyB;

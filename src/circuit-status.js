@@ -1,10 +1,6 @@
 import { UnionFind } from "./union-find.js";
-import { parseValue, pinCount, validateCircuitStructure } from "./circuit-engine.js";
+import { endpointKey, junctionKey, parseValue, pinCount, pinKey, validateCircuitStructure } from "./circuit-engine.js";
 
-
-const pinKey = (componentId, pin) => `P:${componentId}:${pin}`;
-const junctionKey = (junctionId) => `J:${junctionId}`;
-const endpointKey = (endpoint) => endpoint.junctionId !== undefined ? junctionKey(endpoint.junctionId) : pinKey(endpoint.componentId, endpoint.pin);
 
 function conductiveForAnalysis(component, analysis, frequency) {
   if (["R", "V", "L", "D", "VCVS", "CURRENT_SENSOR", "CCVS"].includes(component.type)) return true;

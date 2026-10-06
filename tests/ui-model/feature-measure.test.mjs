@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { cursorDelta, measureAll, measureCutoff, measureFinalValue, measurePeriod, measureStats, measureStepResponse, prepareSamples, MEASURE_BASIS } from "../../src/measure-model.js";
 import { simulate } from "../../src/circuit-engine.js";
 import { cloneExample } from "../../src/examples.js";
-import { acMagnitudeLevel } from "../../src/measurement-format.js";
+import { acMagnitudeLevel } from "../../src/plot-format.js";
 
 const near = (actual, expected, tolerance, message = "") => assert.ok(Math.abs(actual - expected) <= tolerance, `${message} ${actual} vs ${expected} (±${tolerance})`);
 const rel = (actual, expected, fraction, message = "") => near(actual, expected, Math.abs(expected) * fraction, message);

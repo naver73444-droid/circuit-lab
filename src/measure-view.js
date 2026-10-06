@@ -88,7 +88,7 @@ export function createMeasureView({ panel, summary, body, bButton, scopeView }) 
     body.querySelector(`[data-measure-trace="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
   });
   // Active trace / B changes come from the scope; only the cached rows are redrawn.
-  scopeView.onChange = () => { refreshButton(); if (measured?.ok) render(); };
+  scopeView.subscribe((type) => { if (type === "change") { refreshButton(); if (measured?.ok) render(); } });
   refreshButton();
   panel.addEventListener("toggle", syncBody);
   phone?.addEventListener?.("change", place);

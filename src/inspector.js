@@ -94,10 +94,7 @@ export function createInspector(deps) {
     for (const update of updates.values()) inputDrafts.delete(update.kind, update.id, update.key);
     if (state.inlineEdit) { state.inlineEdit = null; elements["inline-value-editor"].classList.add("hidden"); }
     if (changed.length) mutate(() => {
-      for (const update of changed) {
-        update.object[update.key] = update.value;
-        if (update.kind === "setting") state.manualSettingKeys.add(update.key);
-      }
+      for (const update of changed) update.object[update.key] = update.value;
       if (changed.some((update) => update.kind === "setting")) state.intent = "manual";
     }, { auto: false });
     updateDraftNotice();
@@ -407,7 +404,6 @@ export function createInspector(deps) {
         inputDrafts.delete("setting", null, input.dataset.setting);
         mutate(() => {
           state.settings[input.dataset.setting] = input.value;
-          state.manualSettingKeys.add(input.dataset.setting);
           state.intent = "manual";
         });
       };

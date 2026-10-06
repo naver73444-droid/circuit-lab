@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { hexRgb, contrastingTrace, contrastRatio } from "../../src/color-model.js";
+import { hexRgb, contrastingTrace, contrastRatio } from "../../src/trace-color.js";
 
 test("waveform colors meet 4.5:1 against each supported canvas", () => {
   for (const dark of [true, false]) for (const input of ["#176baf", "#b85d0b", "#fff", "#000", "#333333", "#ff0000", "#80bfff", "#f5bc79"]) {

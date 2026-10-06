@@ -173,6 +173,6 @@ test("uniformly tiny but well-conditioned systems still solve (scale-aware pivot
 });
 
 test("analysis budget stays conservative", () => {
-  const huge = ladder(60);
+  const huge = ladder(125);
   assert.throws(() => simulateTransient(huge, { analysis: "transient", start: "0", end: "20m", step: "1u" }), (error) => error instanceof CircuitError && error.code === "ANALYSIS_BUDGET");
 });

@@ -4,9 +4,13 @@ import { readFileSync } from "node:fs";
 import { componentDefaults, deserializeCircuit, pinCount, serializeCircuit, simulateACAtFrequency, simulateDC, simulateTransient } from "../../../src/circuit-engine.js";
 import { localPin, pinPosition } from "../../../src/circuit-geometry.js";
 import { deserializeProject, serializeProject } from "../../../src/project-format.js";
-import { buildResultsCSV, parseCSV } from "../../../src/csv-format.js";
-import { cloneSelectedComponent } from "../../../src/circuit-edit.js";
-import { peakToRms, phasorFromPolar, phasorPolar, wrapPhaseDifference } from "../../../src/phasor-format.js";
+import { buildResultsCSV } from "../../../src/csv-format.js";
+import { parseCSV } from "../../helpers/csv.mjs";
+import { cloneComponentSet } from "../../../src/circuit-edit.js";
+
+const cloneSelectedComponent = (circuit, componentId, offset = 40) => cloneComponentSet(circuit, [componentId], offset).components[0] ?? null;
+import { peakToRms, phasorPolar, wrapPhaseDifference } from "../../../src/phasor-format.js";
+import { phasorFromPolar } from "../../helpers/complex.mjs";
 
 describe("ideal op amp basics", () => {
   const VABS = 1e-9, VREL = 1e-8, IABS = 1e-11, IREL = 1e-8;

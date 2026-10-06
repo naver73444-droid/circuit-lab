@@ -4,14 +4,7 @@ export function analysisLabel(analysis) {
   return ANALYSIS_LABELS[analysis] ?? String(analysis ?? "해석");
 }
 
-export function runStateLabel(runState, analysis, generation) {
-  const label = analysisLabel(analysis);
-  if (!runState || runState.status === "not-run") return `${label} 미실행`;
-  if (runState.status === "running") return `${label} 계산 중`;
-  if (runState.status === "stale" || runState.generation !== generation || runState.analysis !== analysis) return `이전 ${analysisLabel(runState.analysis)} 결과 · 현재 회로/설정과 다름`;
-  if (runState.status === "error") return `${label} 해석 실패`;
-  return `${label} 해석 성공`;
-}
+const SOLVER_LIMIT_HINT = "반복 계산이 수렴하지 못했습니다. 입력값이 틀렸다는 뜻은 아니고 해석기의 수치 한계일 수 있습니다. 시간 간격이나 소스 진폭을 줄여 보세요.";
 
 function relatedComponents(circuit, error) {
   const detailed = error?.details?.constraints?.map((constraint) => constraint.componentId) ?? [];
@@ -20,6 +13,15 @@ function relatedComponents(circuit, error) {
   return circuit.components
     .filter((component) => message.includes(component.id) || message.includes(component.props?.ref ?? component.id))
     .map((component) => component.id);
+}
+
+/**
+ * The whole failure as plain data (code, message, hint, details), kept in runState.error: a re-render (undo, workspace switch, resize) must
+ * show the same hint, details and related parts as the first render. Anything that is not a solver error is stored as UNKNOWN.
+ */
+export function failureRecord(error) {
+  if (!error?.code) return { code: "UNKNOWN", message: String(error), hint: "", details: null };
+  return { code: error.code, message: error.message, hint: error.hint ?? "", details: error.details ? structuredClone(error.details) : null };
 }
 
 export function describeCircuitFailure(circuit, settings, error) {
@@ -42,7 +44,7 @@ export function describeCircuitFailure(circuit, settings, error) {
     analysis,
     code: error?.code ?? "UNKNOWN",
     message: error?.message ?? "해석 중 알 수 없는 오류가 발생했습니다.",
-    hint: error?.hint || "지원 범위 안에서 원인을 특정하지 못했습니다. 연결·값과 solver 오류 코드를 확인하세요.",
+    hint: error?.hint || (error?.code === "NO_CONVERGENCE" ? SOLVER_LIMIT_HINT : "지원 범위 안에서 원인을 특정하지 못했습니다. 연결·값과 solver 오류 코드를 확인하세요."),
     certainty,
     certaintyLabel,
     constraints,
