@@ -119,11 +119,14 @@ export function createConvolutionView({ doc, parent, emit }) {
       pane.setDomain(lo, hi, ranges[i][0], ranges[i][1]);
       pane.drawAxes({ xTicks: tickList, yTicks: [...new Set([0, ranges[i][2], ranges[i][3]].map((v) => Number(v.toPrecision(2))))] });
     });
-    if (legendKey !== discrete) {
-      legendKey = discrete;
+    const flipped = !discrete && setup.flip === 1;
+    const legendId = discrete ? 'dt' : flipped ? 'ct-flip' : 'ct';
+    if (legendKey !== legendId) {
+      legendKey = legendId;
       legend.set(discrete
         ? ['x[k]', 'h[n−k] 뒤집어 이동', '곱 x[k]h[n−k] · 합 = y[n]', 'y[n] 출력', '막대는 겹치지 않게 좌우 ±0.12 비껴 그림']
-        : ['x(λ)', 'h(t−λ) 뒤집어 이동', '곱 · 면적', 'y(t) 출력', null]);
+        : flipped ? ['h(λ)', 'x(t−λ) 뒤집어 이동', '곱 · 면적', 'y(t) 출력', null]
+          : ['x(λ)', 'h(t−λ) 뒤집어 이동', '곱 · 면적', 'y(t) 출력', null]);
     }
     const t = discrete ? Math.round(cursor) : cursor;
     cursors.forEach((line) => line.set(t));
@@ -133,8 +136,10 @@ export function createConvolutionView({ doc, parent, emit }) {
 
   function updateContinuous(setup, t) {
     const frame = continuousFrame(setup, t);
-    p1.setTitle('① x(λ)와 뒤집어(Flip) 옮긴(Shift) h(t−λ)', 'start', true);
-    p2.setTitle('② 곱(Multiply) x(λ)·h(t−λ) — 색칠한 넓이(Integrate)가 y(t)', 'start', true);
+    const swap = setup.flip === 1;
+    const [fixedName, movingName] = swap ? ['h', 'x'] : ['x', 'h'];
+    p1.setTitle(`① ${fixedName}(λ)와 뒤집어(Flip) 옮긴(Shift) ${movingName}(t−λ)`, 'start', true);
+    p2.setTitle(`② 곱(Multiply) ${fixedName}(λ)·${movingName}(t−λ) — 색칠한 넓이(Integrate)가 y(t)`, 'start', true);
     p3.setTitle('③ y(t): t까지의 값이 쌓이는 중', 'start', true);
     xLine.set(sampleX(setup));
     xJumps.set(jumpsX(setup));
@@ -144,10 +149,10 @@ export function createConvolutionView({ doc, parent, emit }) {
     flippedLine.set(frame.flipped);
     productLine.set(frame.product);
     productArea.set(frame.product);
-    const hEnd = Math.max(0, ...setup.hEdges) || (setup.axis.hi - setup.axis.lo) * 0.12;
+    const hEnd = Math.max(0, ...(swap ? setup.xEdges : setup.hEdges)) || (setup.axis.hi - setup.axis.lo) * 0.12;
     const topY = p1.y1 * 0.88;
-    flipLabel.setAt(-hEnd / 2, topY, 'h(−λ)', 'middle');
-    moveLabel.setAt(t - hEnd / 2, topY * 0.86, 'h(t−λ)', 'middle');
+    flipLabel.setAt(-hEnd / 2, topY, `${movingName}(−λ)`, 'middle');
+    moveLabel.setAt(t - hEnd / 2, topY * 0.86, `${movingName}(t−λ)`, 'middle');
     if (Math.abs(t) > (setup.axis.hi - setup.axis.lo) * 0.03) shiftArrow.set(0, p1.y0 * 0.45, t, p1.y0 * 0.45);
     else shiftArrow.hide();
     areaLabel.setAt(t, p2.y1 * 0.8, `y(${formatNumber(t)})=${formatNumber(frame.y)}`, t > (setup.axis.lo + setup.axis.hi) / 2 ? 'end' : 'start');
@@ -162,8 +167,9 @@ export function createConvolutionView({ doc, parent, emit }) {
   function sampleX(setup) {
     if (xCache.setup !== setup) {
       xCache.setup = setup;
-      xCache.points = sampleCurve(setup.x, setup.axis.lo, setup.axis.hi, 400, setup.xEdges, { gaps: true });
-      xCache.jumps = jumpList(setup.x, setup.xEdges, setup.axis.lo, setup.axis.hi);
+      const [fn, edges] = setup.flip === 1 ? [setup.h, setup.hEdges] : [setup.x, setup.xEdges]; // the signal that stays in place
+      xCache.points = sampleCurve(fn, setup.axis.lo, setup.axis.hi, 400, edges, { gaps: true });
+      xCache.jumps = jumpList(fn, edges, setup.axis.lo, setup.axis.hi);
     }
     return xCache.points;
   }

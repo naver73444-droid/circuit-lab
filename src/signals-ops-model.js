@@ -14,6 +14,7 @@ export const OPS_FAMILIES = [
   { value: 'en-exp', label: '에너지/전력 A e^(−αt)u(t) (Ex 1.10)' },
   { value: 'en-train', label: '주기 펄스열 평균·전력 (Ex 1.8)' },
   { value: 'chain', label: 'δ → u → r 적분 사슬 (CT)' },
+  { value: 'sift', label: '임펄스 체 거르기 sifting (CT)' },
   { value: 'chain-dt', label: 'δ[n] → u[n] → r[n] 누적합 (DT)' },
   { value: 'dt-pi', label: 'DT 정현파 주기 · Ω₀=mπ' },
   { value: 'dt-rad', label: 'DT 정현파 주기 · Ω₀ [rad]' },
@@ -129,6 +130,19 @@ export const stepApprox = (a) => (t) => (t <= -a / 2 ? 0 : t >= a / 2 ? 1 : (t +
 export const rampApprox = (a) => (t) => (t <= -a / 2 ? 0 : t >= a / 2 ? t : ((t + a / 2) ** 2) / (2 * a));
 export const idealStep = (t) => (t > 0 ? 1 : 0);
 export const idealRamp = (t) => (t > 0 ? t : 0);
+
+// Sifting by the pulse approximation: the integral of x(t) q_a(t - t1) over the pulse window (midpoint rule) tends to x(t1) as a -> 0.
+export const siftSignal = (t) => 2 * Math.sin(1.5 * t);
+export function siftIntegral(x, t1, a, n = 2000) {
+  const q = deltaApprox(a);
+  const h = a / n;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const t = t1 - a / 2 + (i + 0.5) * h;
+    sum += x(t) * q(t - t1) * h;
+  }
+  return sum;
+}
 
 // DT chain by definition: delta[n-n0], the running sum u[n] = sum delta, and r[n] = sum_{k<n} u[k] (rows for n in [lo, hi]).
 export function dtChain(n0, lo = -6, hi = 8) {
@@ -293,6 +307,35 @@ function chainFrame({ a }) {
   };
 }
 
+function siftFrame({ a, t1 }) {
+  const lo = -1.5;
+  const hi = 1.5;
+  const x = siftSignal;
+  const q = deltaApprox(a);
+  const edges = [t1 - a / 2, t1 + a / 2];
+  const value = siftIntegral(x, t1, a);
+  const target = x(t1);
+  const product = (t) => x(t) * q(t - t1);
+  const productPts = pts(product, lo, hi, 600, edges);
+  const [plo, phi] = range([product(t1) * 1.05, ...productPts.map((p) => p[1]).filter(Number.isFinite)]);
+  const curve = Array.from({ length: 120 }, (_, i) => {
+    const w = 0.02 + (0.98 * i) / 119;
+    return [w, siftIntegral(x, t1, w, 400)];
+  });
+  const [clo, chi] = range([target, ...curve.map((p) => p[1])], 0.25);
+  return {
+    panes: [
+      { title: `x(t)=2 sin(1.5t) 와 펄스 창 [t₁−a/2, t₁+a/2]  ·  점: x(t₁)=${num(target)}`, x: [lo, hi], y: [-2.7, 2.7], yTicks: [-2, 0, 2],
+        lines: [{ cls: 'c1', pts: pts(x, lo, hi, 400) }], vlines: edges.map((e) => ({ cls: 'cm dash', x: e })), dots: [{ cls: 'c4', x: t1, y: target }] },
+      { title: `x(t)·q_a(t−t₁): 색칠한 넓이 = ∫x(t)q_a(t−t₁)dt = ${num(value)}`, x: [lo, hi], y: [plo, phi], yTicks: [0, Number(Math.max(Math.abs(plo), phi).toPrecision(2))],
+        areas: [{ cls: 'c2', pts: productPts }], lines: [{ cls: 'c2', pts: productPts }], vlines: [{ cls: 'c4 dash', x: t1 }] },
+      { title: 'a를 줄이면 ∫x(t)q_a(t−t₁)dt 가 x(t₁)에 수렴 (점선: x(t₁), 점: 현재 a)', x: [0, 1], y: [clo, chi], xTicks: [0, 0.25, 0.5, 0.75, 1], yTicks: [0, Number(target.toPrecision(2))],
+        lines: [{ cls: 'c5', pts: curve }], hlines: [{ cls: 'c4 dash', y: target }], dots: [{ cls: 'c5', x: a, y: value }] },
+    ],
+    legend: [{ cls: 'c1', text: 'x(t)' }, { cls: 'c2', text: 'x(t)q_a(t−t₁)' }, { cls: 'c5', text: '∫x q_a (a 의 함수)' }, { cls: 'c4 dash', text: 'x(t₁)' }],
+  };
+}
+
 function chainDtFrame({ n0 }) {
   const rows = dtChain(n0, -6, 8);
   const lo = -6.8;
@@ -338,6 +381,7 @@ export function opsFrame(family, params) {
   if (family === 'eo-pulse' || family === 'eo-exp') return evenOddFrame(family, params);
   if (family.startsWith('en-')) return energyFrame(family, params);
   if (family === 'chain') return chainFrame(params);
+  if (family === 'sift') return siftFrame(params);
   if (family === 'chain-dt') return chainDtFrame(params);
   if (family === 'dt-pi' || family === 'dt-rad') return dtPeriodFrame(family, params);
   throw new RangeError('지원하지 않는 예시입니다.');
@@ -355,6 +399,7 @@ function opsControls(family) {
   if (family === 'en-exp') return [slider('A', 'A 진폭', 0.5, 4, 0.5, 2), slider('alpha', 'α 감쇠 (0이면 계단)', 0, 3, 0.1, 1, '1/s')];
   if (family === 'en-train') return [slider('A', 'A 높이', 0.5, 4, 0.5, 2), slider('d', 'd 듀티', 0.05, 0.95, 0.05, 0.3)];
   if (family === 'chain') return [slider('a', 'a 펄스 폭', 0.05, 1, 0.05, 0.5, 's')];
+  if (family === 'sift') return [slider('a', 'a 펄스 폭', 0.05, 1, 0.05, 0.5, 's'), slider('t1', 't₁ 임펄스 위치', -1, 1, 0.05, 1, 's')];
   if (family === 'chain-dt') return [{ key: 'n0', label: 'n₀ 임펄스 위치', min: -4, max: 4, step: 1, initial: 0, unit: '', integer: true }];
   if (family === 'dt-pi') return [slider('m', 'm  (Ω₀=mπ)', 0.05, 1.95, 0.05, 0.2), slider('theta', 'θ 위상', -1, 1, 0.1, 0.2, 'π rad')];
   return [slider('omega', 'Ω₀ [rad]', 0.1, 3.1, 0.1, 0.2, 'rad')];
@@ -398,6 +443,7 @@ export const opsLesson = {
     if (family.startsWith('eo-')) return 'x=x_e+x_o: 우함수 x_e는 좌우 대칭, 기함수 x_o는 부호 반전 대칭. 두 성분의 에너지를 더하면 x의 에너지입니다.';
     if (family.startsWith('en-')) return '에너지 신호는 E가 유한하고 P=0, 전력 신호는 E=∞이고 P가 유한합니다 (R=1 Ω 정규화). RMS=√P 입니다.';
     if (family === 'chain') return 'δ를 폭 a인 직사각 펄스로 근사해 적분하면 u, 다시 적분하면 r입니다. a를 줄이면 u는 점프(CT에서 u(0)는 미정의)에 다가갑니다.';
+    if (family === 'sift') return '폭 a, 높이 1/a인 펄스 q_a(t−t₁)를 x(t)에 곱해 적분하면 t₁ 둘레 창에서의 x 평균값이 나옵니다. a→0이면 x(t₁) 하나만 남습니다 (임펄스가 값을 체로 거름).';
     if (family === 'chain-dt') return 'DT는 δ[0]=1, u[0]=1. δ[n]=u[n]−u[n−1], u[n]=Σδ[k], r[n]=n u[n]. 누적합과 차분이 서로 역연산입니다.';
     return 'x[n]=A cos(Ω₀n+θ)는 F₀=Ω₀/2π가 유리수 p/q일 때만 주기이고 N=k/F₀ (최소 정수 k)입니다. cos(0.2n)은 비주기입니다.';
   },
@@ -407,6 +453,7 @@ export const opsLesson = {
     if (family.startsWith('eo-')) return sentenceOf.eo(family, params);
     if (family.startsWith('en-')) return sentenceOf.en(family, params);
     if (family === 'chain') return `a=${num(params.a)} s: q_a 높이 ${num(1 / params.a)}, 넓이 1 · u_a(0)=½ · r_a(t)=t (t≥a/2)`;
+    if (family === 'sift') return `∫x(t)q_a(t−t₁)dt = ${num(siftIntegral(siftSignal, params.t1, params.a))} → a→0에서 x(t₁) = ${num(siftSignal(params.t1))} (a=${num(params.a)} s, t₁=${num(params.t1)} s)`;
     if (family === 'chain-dt') return `δ[n−${params.n0}] 의 누적합이 u[n−${params.n0}], 그 누적합이 r[n−${params.n0}] · 차분하면 되돌아옵니다`;
     const s = dtSinusoid(family, params);
     return s.periodic
@@ -422,6 +469,7 @@ export const opsLesson = {
     if (family === 'en-exp') return 'E_x=∫₀^∞ A² e^(−2αt)dt=A²/(2α); P_x=lim (1/T)∫x² dt=0 (α>0); α=0: P_x=A²/2';
     if (family === 'en-train') return 'x̄=(1/T₀)∫x dt=Ad; P_x=(1/T₀)∫x² dt=A²d';
     if (family === 'chain') return 'u(t)=∫_{−∞}^{t}δ(λ)dλ; δ(t)=du/dt; r(t)=∫_{−∞}^{t}u(λ)dλ=t u(t)';
+    if (family === 'sift') return '∫_{−∞}^{∞}x(t)δ(t−t₁)dt=x(t₁); x(t)δ(t−t₁)=x(t₁)δ(t−t₁); δ(t)=lim_{a→0}q_a(t)';
     if (family === 'chain-dt') return 'δ[n]=u[n]−u[n−1]; u[n]=Σ_{k=−∞}^{n}δ[k]; r[n]=Σ_{k=−∞}^{n−1}u[k]=n u[n]';
     return 'x[n]=A cos(2πF₀n+θ); x[n+N]=x[n] ⇒ 2πF₀N=2πk; N=k/F₀; Ω₀=2πF₀';
   },

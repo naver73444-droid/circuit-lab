@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CONVOLUTION_FAMILIES, convolutionSetup, continuousFrame, rcPulseResponse, ex222Response, ex222Slice, overlapCase, describeConvolution, convolutionLesson,
+  CONVOLUTION_FAMILIES, FLIP_OPTIONS, overlapInterval, convolutionSetup, continuousFrame, rcPulseResponse, ex222Response, ex222Slice, overlapCase, describeConvolution, convolutionLesson,
 } from '../../../src/signals-convolution-model.js';
 
 const near = (a, b, tol = 1e-9) => assert.ok(Math.abs(a - b) <= tol, `${a} versus ${b}`);
@@ -98,12 +98,59 @@ test('the flipped / moving copies carry their jump limits (u(0) is undefined: op
   assert.ok(frame.flipped.some(([, y]) => Number.isNaN(y)));
 });
 
+test('commutativity select: flipping x or h gives the same y(t); only the moving copy changes', () => {
+  assert.deepEqual(FLIP_OPTIONS.map((o) => o.value), [0, 1]);
+  for (const family of ['rect-rect', 'tri-rect', 'exp-rect', 'exp-exp', 'rc-step', 'rc-pulse', 'ex222']) {
+    const base = convolutionSetup(family, { flip: 0 });
+    const swapped = convolutionSetup(family, { flip: 1 });
+    assert.equal(base.flip, 0);
+    assert.equal(swapped.flip, 1);
+    for (const f of [0.1, 0.35, 0.6, 0.85]) {
+      const t = base.domain.min + (base.domain.max - base.domain.min) * f;
+      near(base.y(t), swapped.y(t), 1e-12);
+      const a = continuousFrame(base, t, 600);
+      const b = continuousFrame(swapped, t, 600);
+      near(a.y, b.y, 1e-12);
+      // the area under the product is the same number whichever copy is flipped
+      const area = (frame) => frame.product.reduce((s, p, i, arr) => (i && Number.isFinite(p[1]) && Number.isFinite(arr[i - 1][1]) ? s + ((p[1] + arr[i - 1][1]) / 2) * (p[0] - arr[i - 1][0]) : s), 0);
+      near(area(a), area(b), 2e-2 * Math.max(1, Math.abs(a.y)));
+    }
+  }
+  // the moving copy is x(t-lambda) in flip mode: exp(-alpha (t-lambda)) for lambda < t, zero after t
+  const swapped = convolutionSetup('exp-rect', { alpha: 1, T2: 1, flip: 1 });
+  const frame = continuousFrame(swapped, 2, 400);
+  const before = frame.moving.find(([lambda, v]) => lambda > 1.4 && lambda < 1.6 && Number.isFinite(v));
+  near(before[1], Math.exp(-(2 - before[0])), 1e-9);
+  assert.ok(frame.moving.filter(([lambda, v]) => lambda > 2.05 && Number.isFinite(v)).every(([, v]) => v === 0));
+});
+
+test('commutativity reading: both selections state x*h = h*x with the same y and the overlap interval', () => {
+  const params0 = { T1: 2, T2: 1, flip: 0 };
+  const params1 = { T1: 2, T2: 1, flip: 1 };
+  const d0 = describeConvolution(convolutionSetup('rect-rect', params0), 1.5);
+  const d1 = describeConvolution(convolutionSetup('rect-rect', params1), 1.5);
+  for (const d of [d0, d1]) {
+    assert.match(d, /y\(t\)=1 /);
+    assert.match(d, /x∗h = h∗x: 뒤집는 쪽을 바꿔도 y는 같음/);
+  }
+  assert.match(d0, /h\(t−λ\)를 뒤집음, 겹침 λ∈\[0\.5, 1\.5\]/);
+  assert.match(d1, /x\(t−λ\)를 뒤집음, 겹침 λ∈\[0, 1\]/);
+  assert.equal(overlapInterval(convolutionSetup('rect-rect', params0), 4), null);
+  assert.match(describeConvolution(convolutionSetup('rect-rect', params1), -1), /겹침 없음/);
+  assert.deepEqual(overlapInterval(convolutionSetup('exp-exp', { alpha: 1, beta: 2, flip: 0 }), 2), [0, 2]);
+  assert.deepEqual(overlapInterval(convolutionSetup('rc-pulse', { tau: 0.25, flip: 1 }), 0.3), [0, 0.8]);
+  const select = convolutionLesson.controls('rect-rect', {}).find((c) => c.key === 'flip');
+  assert.deepEqual(select.options.map((o) => o.label), ['뒤집을 쪽: h(λ)', '뒤집을 쪽: x(λ)']);
+  assert.equal(convolutionLesson.controls('dt-basic', {}).some((c) => c.key === 'flip'), false);
+});
+
 test('lessons text: variable lambda and the Flip-Shift-Multiply-Integrate procedure', () => {
   assert.match(convolutionLesson.formula('rc-step'), /∫ x\(λ\) h\(t−λ\) dλ/);
   assert.match(convolutionLesson.read('rect-rect'), /뒤집기→이동→곱→적분/);
   for (const family of ['rc-step', 'rc-pulse', 'ex222']) {
     const controls = convolutionLesson.controls(family, {});
-    assert.equal(controls.length, 1);
+    assert.equal(controls.length, 2); // the parameter slider and the flip select
+    assert.ok(controls[1].options && controls[1].key === 'flip');
     const spec = convolutionLesson.cursor(family, Object.fromEntries(controls.map((c) => [c.key, c.initial])), null);
     assert.ok(spec.initial >= spec.min && spec.initial <= spec.max, family);
     assert.doesNotMatch(convolutionLesson.describe({ family, params: Object.fromEntries(controls.map((c) => [c.key, c.initial])), cursor: spec.initial, extra: {} }), /NaN/);

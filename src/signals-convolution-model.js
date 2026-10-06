@@ -1,6 +1,7 @@
 // Lesson 2 (pure): convolution families, the three panes' curves at a given t, and DT frames.
 import { rectangleConvolution, exponentialConvolution, discreteConvolution } from './signals-course-model.js';
 import { customConvolutionAt, windowSignal } from './signals-expression.js';
+import { choiceControl } from './signals-axis.js';
 import { controlDefaults, formatNumber, jumpList, midpointRect, sampleCurve } from './signals-util.js';
 
 export const CONVOLUTION_FAMILIES = [
@@ -70,7 +71,14 @@ export function expRectConvolution(t, a, T2) {
   return (Math.exp(-a * Math.max(0, t - T2)) - Math.exp(-a * t)) / a;
 }
 
+export const FLIP_OPTIONS = [{ value: 0, label: '뒤집을 쪽: h(λ)' }, { value: 1, label: '뒤집을 쪽: x(λ)' }];
+
 function convolutionControls(family) {
+  const list = continuousControls(family);
+  return isDiscreteFamily(family) ? list : [...list, choiceControl('flip', '뒤집을 쪽', FLIP_OPTIONS, 0)];
+}
+
+function continuousControls(family) {
   const width = (key, label, initial) => ({ key, label, min: 0.25, max: 4, step: 0.05, initial, unit: 's' });
   const decay = (key, label, initial) => ({ key, label, min: 0.25, max: 4, step: 0.05, initial, unit: '1/s' });
   if (family === 'rect-rect') return [width('T1', 'T₁ x 폭', 2), width('T2', 'T₂ h 폭', 1)];
@@ -88,6 +96,8 @@ function continuousSetup(family, p) {
   let y;
   let xEdges;
   let hEdges;
+  let xSupport;
+  let hSupport;
   let end;
   if (family === 'rect-rect') {
     x = (t) => rect(t, p.T1);
@@ -95,6 +105,8 @@ function continuousSetup(family, p) {
     y = (t) => rectangleConvolution(t, p.T1, p.T2).y;
     xEdges = [0, p.T1];
     hEdges = [0, p.T2];
+    xSupport = [0, p.T1];
+    hSupport = [0, p.T2];
     end = p.T1 + p.T2;
   } else if (family === 'tri-rect') {
     x = (t) => triangle(t, p.T1);
@@ -102,6 +114,8 @@ function continuousSetup(family, p) {
     y = (t) => triangleCumulative(t, p.T1) - triangleCumulative(t - p.T2, p.T1);
     xEdges = [0, p.T1 / 2, p.T1];
     hEdges = [0, p.T2];
+    xSupport = [0, p.T1];
+    hSupport = [0, p.T2];
     end = p.T1 + p.T2;
   } else if (family === 'exp-rect') {
     x = (t) => expRight(t, p.alpha);
@@ -109,6 +123,8 @@ function continuousSetup(family, p) {
     y = (t) => expRectConvolution(t, p.alpha, p.T2);
     xEdges = [0];
     hEdges = [0, p.T2];
+    xSupport = [0, Infinity];
+    hSupport = [0, p.T2];
     end = p.T2 + 5 / p.alpha;
   } else if (family === 'rc-step' || family === 'rc-pulse') {
     const pulse = family === 'rc-pulse';
@@ -117,6 +133,8 @@ function continuousSetup(family, p) {
     y = pulse ? (t) => rcPulseResponse(p.tau, t) : (t) => (t <= 0 ? 0 : 1 - Math.exp(-t / p.tau));
     xEdges = pulse ? [-0.5, 0.5] : [0];
     hEdges = [0];
+    xSupport = pulse ? [-0.5, 0.5] : [0, Infinity];
+    hSupport = [0, Infinity];
     end = 1 + 6 * p.tau;
   } else if (family === 'ex222') {
     x = (t) => midpointRect(t, 0, 1) - midpointRect(t, 1, 2);
@@ -124,6 +142,8 @@ function continuousSetup(family, p) {
     y = (t) => ex222Response(p.alpha, t);
     xEdges = [0, 1, 2];
     hEdges = [0, 2];
+    xSupport = [0, 2];
+    hSupport = [0, 2];
     end = 4;
   } else {
     x = (t) => expRight(t, p.alpha);
@@ -131,6 +151,8 @@ function continuousSetup(family, p) {
     y = (t) => exponentialConvolution(t, p.alpha, p.beta);
     xEdges = [0];
     hEdges = [0];
+    xSupport = [0, Infinity];
+    hSupport = [0, Infinity];
     end = 8 / Math.min(p.alpha, p.beta);
   }
   const cursor0 = family === 'exp-exp' ? 1 / Math.min(p.alpha, p.beta) : family === 'exp-rect' ? p.T2
@@ -144,13 +166,16 @@ function continuousSetup(family, p) {
     y,
     xEdges,
     hEdges,
+    xSupport,
+    hSupport,
+    flip: p.flip === 1 ? 1 : 0,
     domain: wide ? { min: wide.lo + 0.1, max: wide.hi, step: (wide.hi - wide.lo) / 200, unit: 's' } : { min: -0.1 * end, max: 1.1 * end, step: end / 200, unit: 's' },
     axis: wide ?? { lo: -0.2 * end, hi: 1.2 * end },
     cursor0,
   };
 }
 
-function customContinuousSetup(prepared) {
+function customContinuousSetup(prepared, flip = 0) {
   const T = prepared.T;
   const clampT = (t) => Math.max(-2 * T, Math.min(2 * T, t));
   return {
@@ -163,6 +188,9 @@ function customContinuousSetup(prepared) {
     curve: prepared.output,
     xEdges: [],
     hEdges: [],
+    xSupport: [-T, T],
+    hSupport: [-T, T],
+    flip,
     domain: { min: -2 * T, max: 2 * T, step: prepared.dt, unit: 's' },
     axis: { lo: -2 * T, hi: 2 * T },
     cursor0: 0,
@@ -179,7 +207,7 @@ function discreteSetup(family, spec) {
 
 // `custom`: prepared continuous input (signals-expression) or a validated DT spec {x,h,xStart,hStart}.
 export function convolutionSetup(family, params = {}, custom = null) {
-  if (family === 'custom') return customContinuousSetup(custom);
+  if (family === 'custom') return customContinuousSetup(custom, params.flip === 1 ? 1 : 0);
   if (family === 'custom-dt') return discreteSetup(family, custom);
   if (DT_PRESETS[family]) return discreteSetup(family, DT_PRESETS[family]);
   return continuousSetup(family, { ...controlDefaults(convolutionControls(family)), ...params });
@@ -204,18 +232,28 @@ export function outputCurve(setup, count = 301) {
 }
 
 // Curves of the CT panes at cursor t, over the shared axis.
-export function continuousFrame(setup, t, count = 400) {
+// flip = 0: x(lambda) stays and h(t - lambda) is flipped and shifted; flip = 1 (commutativity): h(lambda) stays and x(t - lambda) moves. y is the same.
+export function continuousFrame(setup, t, count = 400, flip = setup.flip ?? 0) {
   const { lo, hi } = setup.axis;
-  const movedEdges = setup.hEdges.map((edge) => t - edge);
+  const [fixed, moving, fixedEdges, movingEdges] = flip === 1 ? [setup.h, setup.x, setup.hEdges, setup.xEdges] : [setup.x, setup.h, setup.xEdges, setup.hEdges];
+  const movedEdges = movingEdges.map((edge) => t - edge);
   return {
-    // h(t - tau): the flipped, shifted impulse response
-    moving: sampleCurve((tau) => setup.h(t - tau), lo, hi, count, movedEdges, { gaps: true }),
-    movingJumps: jumpList((tau) => setup.h(t - tau), movedEdges, lo, hi),
-    // h(-tau): where the flipped copy starts (t = 0)
-    flipped: sampleCurve((tau) => setup.h(-tau), lo, hi, count, setup.hEdges.map((edge) => -edge), { gaps: true }),
-    product: sampleCurve((tau) => setup.x(tau) * setup.h(t - tau), lo, hi, count, [...setup.xEdges, ...movedEdges]),
+    // moving(t - tau): the flipped, shifted copy
+    moving: sampleCurve((tau) => moving(t - tau), lo, hi, count, movedEdges, { gaps: true }),
+    movingJumps: jumpList((tau) => moving(t - tau), movedEdges, lo, hi),
+    // moving(-tau): where the flipped copy starts (t = 0)
+    flipped: sampleCurve((tau) => moving(-tau), lo, hi, count, movingEdges.map((edge) => -edge), { gaps: true }),
+    product: sampleCurve((tau) => fixed(tau) * moving(t - tau), lo, hi, count, [...fixedEdges, ...movedEdges]),
     y: setup.y(t),
   };
+}
+
+// Interval of the integration variable where the fixed copy and the flipped, shifted copy both live; null when they do not overlap (y = 0).
+export function overlapInterval(setup, t) {
+  const [fixed, moving] = setup.flip === 1 ? [setup.hSupport, setup.xSupport] : [setup.xSupport, setup.hSupport];
+  const lo = Math.max(fixed[0], t - moving[1]);
+  const hi = Math.min(fixed[1], t - moving[0]);
+  return hi > lo ? [lo, hi] : null;
 }
 
 // DT terms x[k] h[n-k] at observation n.
@@ -242,7 +280,11 @@ export function describeConvolution(setup, t) {
     return `n=${n}: ${used.length ? used.join(' + ') : '0'} = y[${n}] = ${formatNumber(frame.sum)}`;
   }
   const k = overlapCase(setup.family, t);
-  return `t=${formatNumber(t)} s${k ? ` (Case ${k})` : ''}: 겹친 곱의 면적 y(t)=${formatNumber(setup.y(t))}`;
+  const span = overlapInterval(setup, t);
+  const shown = (v) => (Number.isFinite(v) ? formatNumber(v) : '∞');
+  const where = span ? `겹침 λ∈[${shown(span[0])}, ${shown(span[1])}]` : '겹침 없음';
+  const side = setup.flip === 1 ? 'x(t−λ)를 뒤집음' : 'h(t−λ)를 뒤집음';
+  return `t=${formatNumber(t)} s${k ? ` (Case ${k})` : ''}: 겹친 곱의 면적 y(t)=${formatNumber(setup.y(t))} · x∗h = h∗x: 뒤집는 쪽을 바꿔도 y는 같음 (${side}, ${where})`;
 }
 
 // ---- lesson description consumed by the controller -------------------------------------------

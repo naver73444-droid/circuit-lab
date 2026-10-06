@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   OPS_FAMILIES, opsFrame, opsLesson, ex11, ex12x1, ex12x2, ampOp, sumOp, prodOp, pieceFormulas, evenPart, oddPart, pulseAt, expRight, evenOddEnergy,
-  energyPower, runningPower, runningEnergy, trainPower, sinePeak, deltaApprox, stepApprox, rampApprox, idealStep, idealRamp, dtChain, dtSinusoid, EX11,
+  energyPower, runningPower, runningEnergy, trainPower, sinePeak, siftSignal, siftIntegral, deltaApprox, stepApprox, rampApprox, idealStep, idealRamp, dtChain, dtSinusoid, EX11,
 } from '../../../src/signals-ops-model.js';
 import { controlDefaults } from '../../../src/signals-util.js';
 
@@ -149,6 +149,39 @@ test('delta, step, ramp chain: areas and derivatives of the approximations, and 
   near(rampApprox(0.001)(0.7), idealRamp(0.7), 1e-3);
   assert.equal(idealStep(-1), 0);
   assert.equal(idealRamp(-1), 0);
+});
+
+test('sifting: the integral of x(t) q_a(t-t1) tends to x(t1) as the pulse width a shrinks', () => {
+  assert.ok(OPS_FAMILIES.some((f) => f.value === 'sift'));
+  for (const t1 of [-1, -0.3, 0.6, 1]) {
+    let previous = Infinity;
+    for (const a of [1, 0.5, 0.2, 0.05, 0.01]) {
+      const err = Math.abs(siftIntegral(siftSignal, t1, a) - siftSignal(t1));
+      assert.ok(err <= previous + 1e-12, `error does not grow as a shrinks (t1=${t1}, a=${a})`);
+      previous = err;
+    }
+    near(siftIntegral(siftSignal, t1, 0.01), siftSignal(t1), 2e-3);
+  }
+  // independent check against the full-line integral of x(t) q_a(t-t1)
+  const a = 0.4;
+  const t1 = 0.7;
+  near(integrate((t) => siftSignal(t) * deltaApprox(a)(t - t1), -3, 3, 600000), siftIntegral(siftSignal, t1, a), 1e-4);
+});
+
+test('sifting example: two sliders, three panes, the reading line gives the integral and x(t1), a = 0.05 is nearly x(t1)', () => {
+  const controls = opsLesson.controls('sift', {});
+  assert.deepEqual(controls.map((c) => c.key), ['a', 't1']);
+  assert.equal(controls[1].initial, 1);
+  assert.ok(controls[1].min >= -1.5 && controls[1].max <= 1.5, 't1 stays inside the plotted range');
+  const params = defaults('sift');
+  const frame = opsFrame('sift', params);
+  assert.ok(frame.panes.length <= 3);
+  const text = opsLesson.describe({ family: 'sift', params });
+  assert.match(text, /∫x\(t\)q_a\(t−t₁\)dt = /);
+  assert.match(text, /x\(t₁\) = 1\.995 /);
+  const sharp = opsLesson.describe({ family: 'sift', params: { a: 0.05, t1: 1 } });
+  const [, integral] = sharp.match(/dt = (−?[\d.]+) →/);
+  near(Number(integral.replace('−', '-')), siftSignal(1), 5e-3);
 });
 
 test('DT chain: delta = u[n]-u[n-1], u = running sum of delta, r[n] = n u[n]', () => {
