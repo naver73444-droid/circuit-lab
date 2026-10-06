@@ -1,6 +1,8 @@
 // Geometry of the 2D top-down view: world <-> canvas mapping, picking, scale bar. Pure: no DOM.
 // The view shows one coordinate plane with equal scaling on both axes; `span` metres fit each side of the shorter edge.
 import { sourceCenter } from './em-playground-state.js';
+import { planeBasis, sheetLineDirection } from './em-current-field.js';
+import { cross3, norm3 } from './em-physics.js';
 
 const AXES = { xy: [0, 1], xz: [0, 2], yz: [1, 2] };
 const NORMALS = { xy: 2, xz: 1, yz: 0 };
@@ -25,9 +27,33 @@ export function pointOnPlane(view, plane, fixed, x, y) {
   return p;
 }
 
+const SHEET_HANDLE = 0.8; // metres from a sheet's base point to its rotate handle
+
+// Handles of a current source (type wire / segment / loop / sheet): a loop also has a radius handle at the end of its in-plane
+// radius, a sheet a rotate handle along its line in the view.
+function currentHandles(source, plane) {
+  if (source.type === 'loop') {
+    const { a, n } = planeBasis(plane), across = cross3(source.normal, n), length = norm3(across);
+    const direction = length > 1e-9 ? across.map(value => value / length) : a;
+    return [
+      { handle: 'body', position: source.position },
+      { handle: 'radius', position: source.position.map((value, i) => value + direction[i] * source.radius) },
+    ];
+  }
+  if (source.type === 'sheet') {
+    const line = sheetLineDirection(source, plane);
+    return [
+      { handle: 'body', position: source.position },
+      ...(line ? [{ handle: 'rotate', position: source.position.map((value, i) => value + line[i] * SHEET_HANDLE) }] : []),
+    ];
+  }
+  return null;
+}
+
 /** Grab points of a source: [{ handle, position }] with 3D positions. */
-export function handlesOf(source) {
-  if (source.type === 'finite-line') {
+export function handlesOf(source, plane = 'xy') {
+  if (source.type === 'loop' || source.type === 'sheet') return currentHandles(source, plane);
+  if (source.type === 'finite-line' || source.type === 'segment') {
     return [
       { handle: 'start', position: source.start }, { handle: 'end', position: source.end },
       { handle: 'body', position: sourceCenter(source) },
@@ -54,7 +80,7 @@ export function hitSource(sources, view, plane, x, y, radius = 22) {
   for (const source of sources) {
     if (source.visible === false) continue;
     let mine = null;
-    for (const { handle, position } of handlesOf(source)) {
+    for (const { handle, position } of handlesOf(source, plane)) {
       const [px, py] = view.toCanvas(position[axes[0]], position[axes[1]]);
       const distance = Math.hypot(px - x, py - y);
       if (distance > radius) continue;
@@ -82,6 +108,26 @@ export function hitGauss(view, plane, gauss, fixed, x, y, edgePx = 11) {
   if (radius <= 0) return null;
   const axes = AXES[plane], [cx, cy] = view.toCanvas(gauss.center[axes[0]], gauss.center[axes[1]]);
   const distance = Math.hypot(x - cx, y - cy), ring = radius * view.scale;
+  if (Math.abs(distance - ring) <= edgePx) return 'edge';
+  return distance < ring ? 'inside' : null;
+}
+
+/**
+ * Where a pointer lands on the Ampere loop (a circle or an axis-aligned rectangle in the view plane, centre in 3D):
+ * 'edge' (circle ring), 'edge-x' / 'edge-y' / 'corner' (rectangle sides), 'inside', else null.
+ */
+export function hitAmpere(view, plane, ampere, x, y, edgePx = 11) {
+  const axes = AXES[plane], [cx, cy] = view.toCanvas(ampere.center[axes[0]], ampere.center[axes[1]]), dx = x - cx, dy = y - cy;
+  if (ampere.shape === 'rect') {
+    const hw = ampere.halfWidth * view.scale, hh = ampere.halfHeight * view.scale;
+    const nearX = Math.abs(Math.abs(dx) - hw) <= edgePx && Math.abs(dy) <= hh + edgePx;
+    const nearY = Math.abs(Math.abs(dy) - hh) <= edgePx && Math.abs(dx) <= hw + edgePx;
+    if (nearX && nearY) return 'corner';
+    if (nearX) return 'edge-x';
+    if (nearY) return 'edge-y';
+    return Math.abs(dx) < hw && Math.abs(dy) < hh ? 'inside' : null;
+  }
+  const distance = Math.hypot(dx, dy), ring = ampere.radius * view.scale;
   if (Math.abs(distance - ring) <= edgePx) return 'edge';
   return distance < ring ? 'inside' : null;
 }

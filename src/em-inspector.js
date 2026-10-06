@@ -1,14 +1,20 @@
 // Inline inspector for the selected source: a strength slider (+ exact number), position fields, copy / delete.
+// The same panel serves the charge sandbox and the current sandbox: `model` says which fields a source has and how a typed value
+// becomes a patch (default: the charges of em-source-edit; em-current-edit has the current sources).
 // Every change applies live through editor.updateSource(); one slider drag or one typed number is one undo step.
 import { escapeHtml } from './safe-dom.js';
-import { inspectorFields, patchFromField, sliderFromStrength, sourceTitle, strengthFromSlider } from './em-source-edit.js';
+import * as chargeModel from './em-source-edit.js';
 
 const show = value => String(Number(Number(value).toPrecision(6)));
 
+const CHARGE_NOTE = '전하를 누르면 여기서 세기와 위치를 바꿀 수 있습니다.';
+
 // announce(text): polite live-region message; focusCanvas(): where the keyboard focus goes when the inspector's own button vanishes.
-export function createInspector({ host, editor, request, getPlane, signal, announce = () => {}, focusCanvas = () => {} }) {
-  const pg = editor.state;
-  let structure = null, focusStrength = false;
+// model: { inspectorFields, patchFromField, sliderFromStrength, strengthFromSlider, sourceTitle, emptyNote?, sourceActions?, actionPatch?, senseText? }
+export function createInspector({ host, editor, request, getPlane, signal, announce = () => {}, focusCanvas = () => {}, model = chargeModel }) {
+  const { inspectorFields, patchFromField, sliderFromStrength, sourceTitle, strengthFromSlider } = model;
+  const pg = editor.state, emptyNote = model.emptyNote ?? CHARGE_NOTE;
+  let structure = null, focusStrength = false, refocusAction = null;
 
   const selected = () => pg.sources.find(source => source.id === pg.selectedId) ?? null;
   const input = id => host.querySelector(`[data-em-field="${id}"]`);
@@ -23,11 +29,14 @@ export function createInspector({ host, editor, request, getPlane, signal, annou
         data-em-field="strength" inputmode="decimal"><i>${strength.unit}</i></span></label>`;
     const others = rest.map(field => `<label>${escapeHtml(field.label)}
       <span class="em-number"><input data-em-field="${field.id}" inputmode="decimal"><i>${field.unit}</i></span></label>`).join('');
+    const extra = model.sourceActions?.(source, plane) ?? [];
+    const extras = extra.map(item => `<button data-em-act="${escapeHtml(item.id)}" type="button">${escapeHtml(item.label)}</button>`).join('');
+    const sense = model.senseText ? `<p class="em-note" data-em-sense></p>` : '';
     host.innerHTML = `<div class="em-side-head"><strong>${escapeHtml(sourceTitle(source))}</strong>
       <span class="em-inspector-actions"><button data-em-act="clone" type="button">복제</button>
         <button data-em-act="delete" type="button">삭제</button></span></div>
       <label class="em-check"><input data-em-enabled type="checkbox"> 계산에 포함</label>
-      ${sliderRow}<div class="em-field-grid">${others}</div>`;
+      ${sliderRow}${sense}<div class="em-field-grid">${others}</div>${extras ? `<div class="em-inspector-actions em-inspector-extra">${extras}</div>` : ''}`;
   }
 
   function fill(source, plane) {
@@ -36,10 +45,12 @@ export function createInspector({ host, editor, request, getPlane, signal, annou
       if (element && element !== document.activeElement) element.value = show(field.value);
       if (field.id === 'strength') {
         const slider = input('strength-slider');
-        if (slider !== document.activeElement) slider.value = String(sliderFromStrength(field.value));
+        if (slider !== document.activeElement) slider.value = String(sliderFromStrength(field.value, source));
       }
     }
     host.querySelector('[data-em-enabled]').checked = source.enabled !== false;
+    const sense = host.querySelector('[data-em-sense]'), text = model.senseText?.(source, plane) ?? '';
+    if (sense && sense.textContent !== text) sense.textContent = text;
   }
 
   function sync() {
@@ -48,14 +59,15 @@ export function createInspector({ host, editor, request, getPlane, signal, annou
       // The note never changes: rewriting it on every frame would replace the node under the screen reader's cursor.
       if (structure !== 'none') {
         structure = 'none';
-        host.innerHTML = '<p class="em-note">전하를 누르면 여기서 세기와 위치를 바꿀 수 있습니다.</p>';
+        host.innerHTML = `<p class="em-note">${escapeHtml(emptyNote)}</p>`;
       }
       return;
     }
-    const key = `${source.id}:${source.type}:${plane}`;
+    const key = `${source.id}:${source.type}:${plane}:${inspectorFields(source, plane).map(field => field.id).join(',')}:${(model.sourceActions?.(source, plane) ?? []).map(item => item.label).join(',')}`;
     if (key !== structure) { build(source, plane); structure = key; }
     fill(source, plane);
     if (focusStrength) { focusStrength = false; input('strength')?.focus({ preventScroll: true }); }
+    if (refocusAction) { host.querySelector(`[data-em-act="${refocusAction}"]`)?.focus({ preventScroll: true }); refocusAction = null; }
   }
 
   function applyField(id, value) {
@@ -74,7 +86,9 @@ export function createInspector({ host, editor, request, getPlane, signal, annou
     const field = event.target.dataset.emField;
     if (!field) return;
     if (field === 'strength-slider') {
-      const nc = strengthFromSlider(Number(event.target.value));
+      const source = selected();
+      if (!source) return;
+      const nc = strengthFromSlider(Number(event.target.value), source);
       const text = input('strength');
       text.value = show(nc);
       applyField('strength', nc);
@@ -83,7 +97,7 @@ export function createInspector({ host, editor, request, getPlane, signal, annou
     const text = event.target.value.trim();
     applyField(field, text === '' ? NaN : Number(text));
     if (field === 'strength' && text !== '' && Number.isFinite(Number(text))) {
-      input('strength-slider').value = String(sliderFromStrength(Number(text)));
+      input('strength-slider').value = String(sliderFromStrength(Number(text), selected()));
     }
   }, { signal });
   // A finished edit (slider released, field left) closes the undo step.
@@ -98,7 +112,10 @@ export function createInspector({ host, editor, request, getPlane, signal, annou
   }, { signal });
   host.addEventListener('click', event => {
     const action = event.target.closest('[data-em-act]')?.dataset.emAct, before = selected();
-    if (action === 'clone') {
+    if (before && model.actionPatch && action && action !== 'clone' && action !== 'delete') {
+      const patch = model.actionPatch(before, getPlane(), action);
+      if (patch) { editor.updateSource(before.id, patch); editor.endEdit(); refocusAction = action; }
+    } else if (action === 'clone') {
       // The clone becomes the selection and the inspector is rebuilt for it: the focus follows to its strength field.
       const clone = editor.cloneSelected();
       if (clone) { focusStrength = true; announce(`복제했습니다: ${sourceTitle(selected() ?? before)}`); }

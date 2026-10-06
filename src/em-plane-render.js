@@ -10,6 +10,9 @@ import { planeAxes, planeNormal, scaleBar, sectionRadius } from './em-plane-geom
 import { cssRgb, cssRgba, mixRgb } from './em-palette.js';
 import { sourceCenter } from './em-playground-state.js';
 import { strengthText } from './em-source-edit.js';
+import { strengthText as currentStrengthText } from './em-current-edit.js';
+import { circleBasis, planeBasis, screenSense, sheetLineDirection, strengthOf } from './em-current-field.js';
+import { dot3 } from './em-physics.js';
 
 const FONT = 'system-ui, "Malgun Gothic", sans-serif';
 const CLIP = 25; // |v| / reference at which the colour map saturates
@@ -161,6 +164,111 @@ function drawSource(ctx, source, scene, palette, selected) {
   }
 }
 
+// ---- current sources (magnetostatic mode) --------------------------------------------------------------------------------
+
+// A current seen end-on: a dot in a circle (toward the viewer, out of the screen) or a cross (away from it).
+function currentGlyph(ctx, x, y, out, color, palette, radius = 13) {
+  ctx.fillStyle = color; ctx.strokeStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, radius, 0, 2 * Math.PI); ctx.fill();
+  ctx.strokeStyle = cssRgb(palette.bg.rgb); ctx.fillStyle = cssRgb(palette.bg.rgb); ctx.lineWidth = 2.4;
+  if (out) { ctx.beginPath(); ctx.arc(x, y, radius * 0.28, 0, 2 * Math.PI); ctx.fill(); }
+  else {
+    const k = radius * 0.5;
+    ctx.beginPath(); ctx.moveTo(x - k, y - k); ctx.lineTo(x + k, y + k); ctx.moveTo(x + k, y - k); ctx.lineTo(x - k, y + k); ctx.stroke();
+  }
+}
+
+function arrowHead(ctx, x, y, ux, uy, size = 7) {
+  ctx.beginPath();
+  ctx.moveTo(x + ux * size, y + uy * size);
+  ctx.lineTo(x - ux * size - uy * size * 0.8, y - uy * size + ux * size * 0.8);
+  ctx.lineTo(x - ux * size + uy * size * 0.8, y - uy * size - ux * size * 0.8);
+  ctx.closePath(); ctx.fill();
+}
+
+function drawCurrentSource(ctx, source, scene, palette, selected) {
+  const { view, plane } = scene, { a, b, n } = planeBasis(plane), strength = strengthOf(source);
+  const at = p => view.toCanvas(dot3(p, a), dot3(p, b)), sense = screenSense(source, n);
+  const color = (sense !== 0 ? sense > 0 : strength >= 0) ? palette.pos.css : palette.neg.css;
+  // Picture-plane direction (canvas y grows downward) of a 3D vector.
+  const flat = vector => [dot3(vector, a), -dot3(vector, b)];
+  ctx.globalAlpha = source.enabled === false ? 0.4 : 1;
+  ctx.strokeStyle = color; ctx.fillStyle = color;
+  let [cx, cy] = at(source.type === 'segment' ? source.start.map((value, i) => (value + source.end[i]) / 2) : source.position);
+  if (source.type === 'wire') {
+    if (sense !== 0) currentGlyph(ctx, cx, cy, sense > 0, color, palette);
+    else {
+      const [dx, dy] = flat(source.direction), length = Math.hypot(dx, dy) || 1, far = Math.max(view.width, view.height) * 2;
+      const ux = dx / length * Math.sign(strength || 1), uy = dy / length * Math.sign(strength || 1);
+      ctx.lineWidth = 3; ctx.setLineDash([8, 6]);
+      ctx.beginPath(); ctx.moveTo(cx - ux * far, cy - uy * far); ctx.lineTo(cx + ux * far, cy + uy * far); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(cx, cy, 7, 0, 2 * Math.PI); ctx.fill();
+      arrowHead(ctx, cx + ux * 34, cy + uy * 34, ux, uy, 9);
+    }
+  } else if (source.type === 'segment') {
+    const [x1, y1] = at(source.start), [x2, y2] = at(source.end), dx = x2 - x1, dy = y2 - y1, length = Math.hypot(dx, dy) || 1;
+    const flip = strength >= 0 ? 1 : -1;
+    ctx.lineWidth = 5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.lineCap = 'butt';
+    for (const [x, y] of [[x1, y1], [x2, y2]]) { ctx.beginPath(); ctx.arc(x, y, 6, 0, 2 * Math.PI); ctx.fill(); }
+    ctx.fillStyle = cssRgb(palette.bg.rgb);
+    arrowHead(ctx, cx, cy, flip * dx / length, flip * dy / length, 7);
+    ctx.fillStyle = color;
+  } else if (source.type === 'loop') {
+    const { e1, e2 } = circleBasis(source.normal);
+    const count = 72, point = theta => source.position.map((value, i) => value + source.radius * (e1[i] * Math.cos(theta) + e2[i] * Math.sin(theta)));
+    const tangent = theta => e1.map((value, i) => -value * Math.sin(theta) + e2[i] * Math.cos(theta));
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    for (let i = 0; i <= count; i += 1) { const [x, y] = at(point(2 * Math.PI * i / count)); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+    ctx.stroke();
+    const sign = strength >= 0 ? 1 : -1;
+    // End-on points of the wire (tangent mostly along the viewing direction) get a dot / cross; in-plane stretches get arrowheads.
+    const ends = [], steps = 360;
+    let best = 0;
+    for (let i = 0; i < steps; i += 1) { const value = Math.abs(dot3(tangent(2 * Math.PI * i / steps), n)); if (value > best) { best = value; ends[0] = i; } }
+    if (best > 0.5) {
+      for (const i of [ends[0], (ends[0] + steps / 2) % steps]) {
+        const theta = 2 * Math.PI * i / steps, [x, y] = at(point(theta));
+        currentGlyph(ctx, x, y, sign * dot3(tangent(theta), n) > 0, color, palette, 10);
+      }
+    }
+    for (const theta of [Math.PI / 4, 5 * Math.PI / 4]) {
+      const [x, y] = at(point(theta)), [tx, ty] = flat(tangent(theta)), length = Math.hypot(tx, ty);
+      if (length > 0.3) arrowHead(ctx, x, y, sign * tx / length, sign * ty / length, 8);
+    }
+    const handle = at(point(0));
+    if (selected) { ctx.beginPath(); ctx.rect(handle[0] - 5, handle[1] - 5, 10, 10); ctx.fill(); }
+    [cx, cy] = at(source.position);
+    ctx.beginPath(); ctx.arc(cx, cy, 5, 0, 2 * Math.PI); ctx.fill();
+  } else {
+    const line = sheetLineDirection(source, plane), far = Math.max(view.width, view.height) * 2;
+    if (line) {
+      const [dx, dy] = flat(line), length = Math.hypot(dx, dy) || 1, ux = dx / length, uy = dy / length;
+      ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(cx - ux * far, cy - uy * far); ctx.lineTo(cx + ux * far, cy + uy * far); ctx.stroke();
+      const along = dot3(source.direction, n), pitch = 76, reach = Math.hypot(view.width, view.height);
+      for (let step = -Math.floor(reach / pitch); step <= Math.floor(reach / pitch); step += 1) {
+        const x = cx + ux * step * pitch, y = cy + uy * step * pitch;
+        if (x < -20 || y < -20 || x > view.width + 20 || y > view.height + 20) continue;
+        if (Math.abs(along) >= 0.5) currentGlyph(ctx, x, y, strength * along > 0, color, palette, 8);
+        else arrowHead(ctx, x, y, ux * Math.sign(strength * dot3(source.direction, line) || 1), uy * Math.sign(strength * dot3(source.direction, line) || 1), 8);
+      }
+      const [hx, hy] = at(source.position.map((value, i) => value + line[i] * 0.8));
+      ctx.save(); ctx.translate(hx, hy); ctx.rotate(Math.PI / 4); ctx.fillRect(-5, -5, 10, 10); ctx.restore();
+    }
+    ctx.beginPath(); ctx.arc(cx, cy, 6, 0, 2 * Math.PI); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  if (selected) {
+    ctx.strokeStyle = palette.accent.css; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.arc(cx, cy, source.type === 'wire' ? 19 : 14, 0, 2 * Math.PI); ctx.stroke();
+    label(ctx, `${source.id}  ${currentStrengthText(source)}`, cx + 22, cy - 20, palette, 'left');
+  }
+}
+
 function label(ctx, text, x, y, palette, align = 'left') {
   ctx.font = `600 12px ${FONT}`; ctx.textAlign = align; ctx.textBaseline = 'middle';
   ctx.lineWidth = 3.5; ctx.strokeStyle = cssRgba(palette.bg.rgb, 0.9);
@@ -187,6 +295,47 @@ function drawGauss(ctx, scene, palette) {
   ctx.fillStyle = palette.gauss.css;
   ctx.beginPath(); ctx.arc(hx, hy, 6, 0, 2 * Math.PI); ctx.fill();
   if (gauss.label) label(ctx, gauss.label, cx, cy + pixels + 14, palette, 'center');
+}
+
+// The Ampere loop: a dashed path (circle or rectangle) with its traversal direction, the sources that link it, and a resize handle.
+function drawAmpere(ctx, scene, palette) {
+  const { ampere, view, plane } = scene, [a, b] = planeAxes(plane);
+  const [cx, cy] = view.toCanvas(ampere.center[a], ampere.center[b]);
+  const rect = ampere.shape === 'rect', hw = ampere.halfWidth * view.scale, hh = ampere.halfHeight * view.scale, r = ampere.radius * view.scale;
+  const turn = ampere.orientation === -1 ? -1 : 1;
+  ctx.fillStyle = cssRgba(palette.accent.rgb, 0.08);
+  ctx.strokeStyle = palette.accent.css; ctx.lineWidth = 2; ctx.setLineDash([9, 6]);
+  ctx.beginPath();
+  if (rect) ctx.rect(cx - hw, cy - hh, 2 * hw, 2 * hh); else ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+  ctx.fill(); ctx.stroke();
+  ctx.setLineDash([]);
+  // Direction of travel: counter-clockwise on the screen for +1.
+  ctx.fillStyle = palette.accent.css;
+  const [ax, ay, ux, uy] = rect ? [cx + hw, cy, 0, -turn] : [cx + r, cy, 0, -turn];
+  arrowHead(ctx, ax, ay, ux, uy, 8);
+  for (const id of ampere.enclosedIds ?? []) {
+    const source = scene.sources.find(item => item.id === id);
+    if (!source) continue;
+    const [x, y] = view.toCanvas(...[sourceCenter(source)[a], sourceCenter(source)[b]]);
+    ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 23, 0, 2 * Math.PI); ctx.stroke();
+  }
+  const [hx, hy] = rect ? [cx + hw, cy - hh] : [cx + r * Math.SQRT1_2, cy - r * Math.SQRT1_2];
+  ctx.beginPath(); ctx.arc(hx, hy, 6, 0, 2 * Math.PI); ctx.fill();
+  if (ampere.label) label(ctx, ampere.label, cx, cy + (rect ? hh : r) + 14, palette, 'center');
+}
+
+// Force on the selected source: an arrow of fixed length (the strength is in the text) from the source, along the in-plane part of F.
+function drawForce(ctx, scene, palette) {
+  const { force, view, plane } = scene, [a, b] = planeAxes(plane), source = scene.sources.find(item => item.id === force.sourceId);
+  if (!source) return;
+  const [x, y] = view.toCanvas(sourceCenter(source)[a], sourceCenter(source)[b]), n = Math.hypot(force.vector[0], force.vector[1]);
+  ctx.strokeStyle = palette.danger.css; ctx.fillStyle = palette.danger.css; ctx.lineWidth = 3;
+  if (n > 0) {
+    const ux = force.vector[0] / n, uy = -force.vector[1] / n;
+    ctx.beginPath(); ctx.moveTo(x + ux * 20, y + uy * 20); ctx.lineTo(x + ux * 62, y + uy * 62); ctx.stroke();
+    arrowHead(ctx, x + ux * 66, y + uy * 66, ux, uy, 9);
+  }
+  if (force.text) label(ctx, force.text, x + 22, y + 30, palette, 'left');
 }
 
 function drawSensor(ctx, scene, palette) {
@@ -259,7 +408,7 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
     const { grid, ref } = sampleGrid(scene, draft, gridKey);
     lap('sample');
     const signed = scene.field.scalarName === 'V';
-    if (ref > 0) {
+    if (ref > 0 && scene.chips.mcolor !== false) {
       const colors = { bg: palette.bg.rgb, pos: palette.pos.rgb, neg: palette.neg.rgb, accent: palette.accent.rgb };
       paintPotential(baseCtx, tile, grid, ref, signed, colors, view.width, view.height);
       lap('paint');
@@ -288,7 +437,7 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
       const samples = sampleVectorGrid(scene.field, scene.plane, scene.fixed, view.area, cols, rows);
       gridCache.arrows = { samples, typical: typicalMagnitude(samples.map(item => item.magnitude), 1) };
     }
-    strokeFieldArrows(baseCtx, gridCache.arrows, scene, palette);
+    if (scene.chips.arrows !== false) strokeFieldArrows(baseCtx, gridCache.arrows, scene, palette);
     lap('arrows');
     Object.assign(stats, { baseMs: performance.now() - started, cols: grid.cols, rows: grid.rows, lines: lines.length, stages });
   }
@@ -303,7 +452,7 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
       // What the sampled field depends on. Chips and colours are deliberately absent: they only change how it is painted.
       const gridKey = JSON.stringify([scene.fieldKey, view.width, view.height, view.span, view.offset, scene.plane, scene.fixed, scene.quality]);
       const key = JSON.stringify([
-        gridKey, scene.chips.lines, scene.chips.contours, palette.bg.css, palette.pos.css, palette.neg.css, palette.accent.css, palette.text.css, dpr,
+        gridKey, scene.chips.lines, scene.chips.contours, scene.chips.mcolor, scene.chips.arrows, palette.bg.css, palette.pos.css, palette.neg.css, palette.accent.css, palette.text.css, dpr,
       ]);
       stats.baseCached = key === baseKey;
       if (!stats.baseCached) { drawBase(scene, palette, dpr, gridKey); baseKey = key; }
@@ -311,10 +460,13 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
       sizeCanvas(canvas, ctx, view.width, view.height, dpr);
       ctx.clearRect(0, 0, view.width, view.height);
       const overlay = { ...scene, normal: planeNormal(scene.plane) };
+      const drawOne = scene.field.kind === 'current' ? drawCurrentSource : drawSource;
       for (const source of scene.sources) {
-        if (source.visible !== false) drawSource(ctx, source, overlay, palette, source.id === scene.selectedId);
+        if (source.visible !== false) drawOne(ctx, source, overlay, palette, source.id === scene.selectedId);
       }
       if (scene.gauss) drawGauss(ctx, overlay, palette);
+      if (scene.ampere) drawAmpere(ctx, overlay, palette);
+      if (scene.force) drawForce(ctx, overlay, palette);
       if (scene.sensor) drawSensor(ctx, overlay, palette);
       drawScaleBar(ctx, view, palette, scene.field.kind === 'wave');
       stats.overlayMs = performance.now() - started;

@@ -489,10 +489,10 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 
 /* Top bar: view tabs and edit history. */
 .em-bar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.em-tabs, .em-history, .em-palette, .em-chips, .em-model-buttons, .em-3d-views, .em-inspector-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.em-bar button, .em-toolbar button, .em-3d-bar button, .em-model-buttons button, .em-inspector-actions button, .em-course-bar button, .em-course-viewbar button { min-height: 34px; padding: 3px 12px; white-space: nowrap; }
+.em-tabs, .em-history, .em-palette, .em-chips, .em-model-buttons, .em-3d-views, .em-inspector-actions, .em-modeswitch, .em-presets, .em-ampere-controls, .em-ampere-controls > span { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.em-ampere-controls button, .em-bar button, .em-toolbar button, .em-3d-bar button, .em-model-buttons button, .em-inspector-actions button, .em-course-bar button, .em-course-viewbar button { min-height: 34px; padding: 3px 12px; white-space: nowrap; }
 .em-chip { border-radius: 16px; }
-.em-workspace .em-tabs button[aria-pressed="true"], .em-workspace .em-chip[aria-pressed="true"], .em-workspace .em-model-buttons button[aria-pressed="true"], .em-workspace .em-course-answer-card .segmented button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--selection); }
+.em-workspace .em-tabs button[aria-pressed="true"], .em-workspace .em-modeswitch button[aria-pressed="true"], .em-workspace .em-ampere-controls button[aria-pressed="true"], .em-workspace .em-chip[aria-pressed="true"], .em-workspace .em-model-buttons button[aria-pressed="true"], .em-workspace .em-course-answer-card .segmented button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--selection); }
 .em-palette button { min-width: 52px; font-weight: 600; }
 
 /* Stage: toolbar, canvas, hint. */
@@ -519,6 +519,12 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
 .em-readout dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 0; }
 .em-readout dt { color: var(--muted); font-size: 12px; }
 .em-readout dd { margin: 0; font: 13px var(--mono); overflow-wrap: anywhere; }
+.em-ampere-controls { justify-content: space-between; margin-bottom: 8px; }
+.em-ampere-controls button { min-height: 34px; padding: 3px 12px; }
+.em-inspector-extra { margin-top: 8px; }
+.em-presets button { min-height: 34px; padding: 3px 12px; white-space: nowrap; }
+#em-ampere-lines p, #em-force-lines p { margin: 0 0 4px; font: 13px/1.5 var(--mono); overflow-wrap: anywhere; }
+#em-ampere-size-text { font: 12px var(--mono); }
 #em-gauss-lines p { margin: 0 0 4px; font: 13px/1.5 var(--mono); overflow-wrap: anywhere; }
 #em-gauss-lines[data-agrees="true"] p:last-child { color: var(--success); }
 .em-group { display: grid; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); }

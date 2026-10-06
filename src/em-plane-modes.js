@@ -3,12 +3,14 @@
 // Pure: no DOM. Fields are rebuilt only when the underlying state changes.
 import { createSandboxField, createSceneField, toDisplay, toMetres } from './em-plane-field.js';
 import { planeNormal } from './em-plane-geometry.js';
+import { createCurrentPlaneField } from './em-current-field.js';
 
 export function createSandboxMode(editor) {
   const pg = editor.state;
   let cache = null;
   return {
     kind: 'sandbox',
+    editor,
     plane: () => pg.plane,
     setPlane: plane => editor.setPlane(plane),
     fixed: () => pg.probe[planeNormal(pg.plane)],
@@ -32,6 +34,32 @@ function hash(text) {
   let h = 2166136261;
   for (let i = 0; i < text.length; i += 1) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
   return (h >>> 0).toString(36);
+}
+
+/**
+ * The magnetostatic sandbox: the current sources of `currentEditor` seen in the plane and with the sensor of the charge editor
+ * (both field modes share the viewed plane and the test point). Its field is B of the current sources; kind 'current'.
+ */
+export function createCurrentMode(currentEditor, chargeEditor) {
+  const cs = currentEditor.state, pg = chargeEditor.state;
+  let cache = null;
+  return {
+    kind: 'current',
+    editor: currentEditor,
+    plane: () => pg.plane,
+    setPlane: plane => chargeEditor.setPlane(plane),
+    fixed: () => pg.probe[planeNormal(pg.plane)],
+    sources: () => cs.sources,
+    model: () => null,
+    sensor: () => pg.probe,
+    moveSensor: point => chargeEditor.setProbe(point),
+    field() {
+      const key = JSON.stringify(cs.sources);
+      if (cache?.key !== key) cache = { key, field: createCurrentPlaneField(cs.sources), fieldKey: `current:${hash(key)}` };
+      return cache.field;
+    },
+    fieldKey() { this.field(); return cache.fieldKey; },
+  };
 }
 
 export function createSceneMode(store) {

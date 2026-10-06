@@ -8,6 +8,7 @@ import { C, norm3, sceneMeasurement } from './em-physics.js';
 import { createPointChargeEvaluator } from './em-playground-physics.js';
 import { planeAxes, planeNormal } from './em-plane-geometry.js';
 import { traceSourceLines, traceStreamline } from './em-fieldlines.js';
+import { traceCurrentLines } from './em-current-lines.js';
 
 const FAILED = { status: 'excluded', vector: null, scalar: NaN };
 
@@ -135,6 +136,7 @@ export function computePlaneLines(field, { plane, fixed, area, sources = [], mod
   const [a, b] = planeAxes(plane), normal = planeNormal(plane), options = QUALITY[quality];
   const bounds = { aMin: area.aMin, aMax: area.aMax, bMin: area.bMin, bMax: area.bMax };
   const vectorOf = point => { const r = field.evaluate(point); return r.status === 'valid' ? r.vector : null; };
+  if (field.kind === 'current') return traceCurrentLines(sources, vectorOf, { plane, fixed, bounds, quality });
   const chargeSources = model ? sceneChargeSources(model) : sources;
   if (chargeSources.length) {
     return traceSourceLines(chargeSources, vectorOf, {

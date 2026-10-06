@@ -3,7 +3,11 @@
 import { createEMState, DEFAULT_SCENES } from './em-state.js';
 import { createInteraction } from './em-interaction.js';
 import { createPointChargeEditor } from './em-playground-state.js';
-import { createSandboxMode, createSceneMode } from './em-plane-modes.js';
+import { createCurrentMode, createSandboxMode, createSceneMode } from './em-plane-modes.js';
+import { createCurrentEditor } from './em-current-state.js';
+import * as currentEdit from './em-current-edit.js';
+import { CURRENT_PRESETS, currentPreset } from './em-current-presets.js';
+import { clampAmpere } from './em-ampere.js';
 import { createPlaneController } from './em-plane-controller.js';
 import { create3DPanel } from './em-3d-panel.js';
 import { createInspector } from './em-inspector.js';
@@ -33,7 +37,11 @@ export function prefetchEMCourse() { loadEMCourseModule().catch(() => {}); }
 const WAVE_CYCLES_PER_SECOND = 0.5;
 // Assigning identical text still invalidates layout; the readouts update on every drag frame.
 const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
+const FIELD_KEY = 'circuit-lab.em-field-mode';
+const MAGNETIC_ONLY = ['mcolor', 'arrows', 'hfield', 'ampere', 'force'];
+const AMPERE_SLIDER = 'em-ampere-size';
 const HINTS = {
+  current: '도선·루프·판을 끌어 옮기고 노란 측정점으로 B·H를 읽어 보세요 · 암페어 루프(점선)를 끌어 ∮H·dl = I내부 확인 · 휠로 확대',
   sandbox: '전하와 노란 시험전하를 끌어 보세요 · 휠로 확대 · 키보드: [ ] 로 전하 선택, 화살표로 이동',
   scene: '노란 관측점을 끌어 보세요 · 휠로 확대',
   '3d': '빈 곳을 끌면 시점이 돌아갑니다 · 휠로 확대 · 전하는 선택한 평면 위에서 끌 수 있습니다',
@@ -44,15 +52,23 @@ export function createEMController(root) {
   const $ = selector => root.querySelector(selector);
   const store = createEMState(), s = store.state;
   const editor = createPointChargeEditor(), pg = editor.state;
+  // Which field the sandbox shows (전기 / 자기) is remembered for the session only.
+  let storedField = 'electric';
+  try { if (sessionStorage.getItem(FIELD_KEY) === 'magnetic') storedField = 'magnetic'; } catch { /* storage may be blocked */ }
   const lab = {
-    tab: 'plane', scene: 'playground', chips: { lines: true, contours: true, gauss: false },
-    gauss: null, view: { span: 3, offset: [0, 0] }, quality: 'final', error: '',
+    tab: 'plane', scene: 'playground', field: storedField, presetNote: '',
+    chips: { lines: true, contours: true, gauss: false, mcolor: true, arrows: true, hfield: false, ampere: false, force: false },
+    gauss: null, ampere: null, view: { span: 3, offset: [0, 0] }, quality: 'final', error: '',
   };
   const interaction = createInteraction();
-  const modes = { sandbox: createSandboxMode(editor), scene: createSceneMode(store) };
+  const currentEditor = createCurrentEditor(), cs = currentEditor.state;
+  const modes = { sandbox: createSandboxMode(editor), scene: createSceneMode(store), current: createCurrentMode(currentEditor, editor) };
+  const isMagnetic = () => lab.scene === 'playground' && lab.field === 'magnetic';
+  // One pair of undo / redo / reset buttons works on the sources of the field that is showing (each field keeps its own history).
+  const activeEditor = () => (isMagnetic() ? currentEditor : editor);
   // Screen-reader announcements (keyboard selection of a source) go to a polite live region.
   const announce = text => { const node = $('#em-live'); if (node) node.textContent = text; };
-  const getMode = () => (lab.scene === 'playground' ? modes.sandbox : modes.scene);
+  const getMode = () => (lab.scene === 'playground' ? (lab.field === 'magnetic' ? modes.current : modes.sandbox) : modes.scene);
   const diagnostics = { frames: 0, suspends: 0, lastDrawMs: 0, lastFrameMs: 0, chromeMs: 0, panelsMs: 0 };
   let frameId = null, destroyed = false, workspaceActive = false, courseActive = false;
   let course = null, coursePending = null, courseStatus = null, playFrame = null, lastTick = 0;
@@ -76,23 +92,35 @@ export function createEMController(root) {
     host: $('#em-inspector'), editor, request: requestRender, getPlane: () => pg.plane, signal: events.signal,
     announce, focusCanvas: () => $(lab.tab === '3d' ? '#em-canvas' : '#em-plane').focus({ preventScroll: true }),
   });
+  const currentInspector = createInspector({
+    host: $('#em-current-inspector'), editor: currentEditor, request: requestRender, getPlane: () => pg.plane, signal: events.signal,
+    announce, focusCanvas: () => $('#em-plane').focus({ preventScroll: true }), model: currentEdit,
+  });
   const scenesPanel = createScenesPanel({
     host: $('#em-model-fields'), store, signal: events.signal,
     onApplied: () => { lab.error = ''; requestRender(); },
     onError: text => { lab.error = text; requestRender(); },
   });
   const calculus = createCalculusPanel({
-    root, editor, isSandbox: () => lab.scene === 'playground', getPalette, signal: events.signal, interaction,
+    root, editor, isSandbox: () => lab.scene === 'playground' && lab.field === 'electric', getPalette, signal: events.signal, interaction,
   });
   const project = createProjectPanel({
     root, editor, store, calculus, signal: events.signal,
-    onLoaded: () => { setScene('playground'); lab.gauss = null; if (lab.chips.gauss) plane.placeGauss(); requestRender(); },
+    onLoaded: () => { lab.field = 'electric'; setScene('playground'); lab.gauss = null; if (lab.chips.gauss) plane.placeGauss(); requestRender(); },
   });
 
   // ---- one render ------------------------------------------------------------------------------------------------
 
   function syncChrome() {
-    const sandbox = lab.scene === 'playground', mode = getMode();
+    const sandbox = lab.scene === 'playground', mode = getMode(), magnetic = isMagnetic(), electric = sandbox && !magnetic;
+    if (magnetic && lab.tab === '3d') lab.tab = 'plane'; // the 3D view only knows the charges
+    root.querySelectorAll('[data-em-field-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emFieldMode === lab.field)));
+    $('#em-field-mode').hidden = !sandbox;
+    $('#em-current-palette').hidden = !magnetic;
+    $('#em-current-presets').hidden = !magnetic;
+    MAGNETIC_ONLY.forEach(name => { $(`#em-chip-${name}`).hidden = !magnetic; });
+    root.querySelector('[data-em-tab="3d"]').hidden = magnetic;
+    root.querySelector('[data-em-chip="lines"]').textContent = magnetic ? '자기장선' : '장선';
     root.querySelectorAll('[data-em-tab]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emTab === lab.tab)));
     root.querySelectorAll('[data-em-scene]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emScene === lab.scene)));
     root.querySelectorAll('[data-em-chip]').forEach(button => button.setAttribute('aria-pressed', String(lab.chips[button.dataset.emChip])));
@@ -100,22 +128,27 @@ export function createEMController(root) {
     $('#em-plane-base').hidden = lab.tab !== 'plane';
     $('#em-canvas').hidden = lab.tab !== '3d';
     $('#em-3d-bar').hidden = lab.tab !== '3d';
-    $('#em-palette').hidden = !sandbox;
-    $('#em-chip-gauss').hidden = !sandbox;
+    $('#em-palette').hidden = !electric;
+    $('#em-chip-gauss').hidden = !electric;
     $('#em-chip-contours').hidden = lab.tab === '3d';
+    const history = activeEditor().state;
     $('#em-pg-undo').hidden = !sandbox;
     $('#em-pg-redo').hidden = !sandbox;
-    $('#em-pg-undo').disabled = !pg.past.length;
-    $('#em-pg-redo').disabled = !pg.future.length;
-    $('#em-chip-contours').textContent = sandbox || mode.field().scalarName === 'V' ? '등전위선' : '등크기선';
-    $('#em-inspector').hidden = !sandbox;
+    $('#em-pg-undo').disabled = !history.past.length;
+    $('#em-pg-redo').disabled = !history.future.length;
+    $('#em-chip-contours').textContent = electric || mode.field().scalarName === 'V' ? '등전위선' : '등크기선';
+    $('#em-inspector').hidden = !electric;
+    $('#em-current-inspector').hidden = !magnetic;
     $('#em-wave-controls').hidden = lab.scene !== 'wave';
     $('#em-play').textContent = s.playing ? '정지' : '재생';
-    $('#em-readout-target').textContent = sandbox ? '시험전하' : sceneTitle(lab.scene);
-    $('#em-hint').textContent = lab.tab === '3d' ? HINTS['3d'] : sandbox ? HINTS.sandbox : HINTS.scene;
+    $('#em-readout-target').textContent = magnetic ? '측정점 (B · H)' : sandbox ? '시험전하' : sceneTitle(lab.scene);
+    $('#em-hint').textContent = lab.tab === '3d' ? HINTS['3d'] : magnetic ? (lab.presetNote || HINTS.current) : sandbox ? HINTS.sandbox : HINTS.scene;
+    $('#em-plane').setAttribute('aria-label', magnetic
+      ? '전류와 자기장 평면. 도선·루프·판과 노란 측정점, 암페어 루프를 끌어 움직이고, 휠로 확대합니다. 키보드: 대괄호 [ ]로 원천을 고르고 화살표로 옮깁니다.'
+      : '전하와 전기장 평면. 전하와 노란 시험전하를 끌어 움직이고, 휠로 확대합니다. 키보드: 대괄호 [ ]로 전하를 고르고 화살표로 옮깁니다.');
     const select = $('#em-pg-plane');
     if (select.value !== mode.plane()) select.value = mode.plane();
-    const error = sandbox ? pg.error : lab.error || s.error;
+    const error = magnetic ? cs.error : sandbox ? pg.error : lab.error || s.error;
     $('#em-error').hidden = !error;
     $('#em-error').textContent = error || '';
   }
@@ -128,10 +161,13 @@ export function createEMController(root) {
       rows.replaceChildren(...info.readout.rows.flatMap(row => {
         const dt = document.createElement('dt'), dd = document.createElement('dd');
         dt.textContent = row.label;
+        dt.title = row.title ?? '';
         dd.textContent = row.text;
         return [dt, dd];
       }));
     }
+    showAmpere(info);
+    showForce(info);
     const box = $('#em-gauss-readout');
     box.hidden = !info.gauss;
     if (!info.gauss) return;
@@ -145,6 +181,37 @@ export function createEMController(root) {
     const slider = $('#em-gauss-radius');
     if (slider !== document.activeElement) slider.value = String(lab.gauss.radius);
     $('#em-gauss-radius-text').textContent = `${Number(lab.gauss.radius.toFixed(2))} m`;
+  }
+
+  function fillLines(node, lines, agrees) {
+    const key = lines.join('|');
+    if (node.dataset.key !== key) {
+      node.dataset.key = key;
+      node.replaceChildren(...lines.map(text => Object.assign(document.createElement('p'), { textContent: text })));
+    }
+    node.dataset.agrees = String(agrees);
+  }
+
+  function showAmpere(info) {
+    const box = $('#em-ampere-readout');
+    box.hidden = !info.ampere;
+    if (!info.ampere) return;
+    fillLines($('#em-ampere-lines'), info.ampere.lines, info.ampere.agrees);
+    $('#em-ampere-state').textContent = info.ampere.stateText ?? '';
+    root.querySelectorAll('[data-em-ampere-shape]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emAmpereShape === lab.ampere.shape)));
+    $('#em-ampere-turn').textContent = lab.ampere.orientation === -1 ? '시계 ↻' : '반시계 ↺';
+    const size = lab.ampere.shape === 'rect' ? lab.ampere.halfWidth : lab.ampere.radius, slider = $(`#${AMPERE_SLIDER}`);
+    if (slider !== document.activeElement) slider.value = String(size);
+    $('#em-ampere-size-text').textContent = lab.ampere.shape === 'rect'
+      ? `${Number((2 * lab.ampere.halfWidth).toFixed(2))} × ${Number((2 * lab.ampere.halfHeight).toFixed(2))} m` : `r = ${Number(lab.ampere.radius.toFixed(2))} m`;
+  }
+
+  function showForce(info) {
+    const box = $('#em-force-readout');
+    box.hidden = !info.force;
+    if (!info.force) return;
+    setText($('#em-force-target'), info.force.title ?? '');
+    fillLines($('#em-force-lines'), info.force.lines, null);
   }
 
   function showTime() {
@@ -163,7 +230,9 @@ export function createEMController(root) {
     const drawDone = performance.now();
     diagnostics.frames += 1;
     if (info) showReadouts(info);
-    if (lab.scene === 'playground') inspector.sync(); else scenesPanel.refresh();
+    if (isMagnetic()) currentInspector.sync();
+    else if (lab.scene === 'playground') inspector.sync();
+    else scenesPanel.refresh();
     showTime();
     calculus.update(interaction.active);
     const done = performance.now();
@@ -203,6 +272,38 @@ export function createEMController(root) {
 
   // ---- events ----------------------------------------------------------------------------------------------------
 
+  function setFieldMode(name) {
+    if (name !== 'electric' && name !== 'magnetic') return;
+    plane.cancel();
+    lab.field = name;
+    lab.error = '';
+    lab.presetNote = '';
+    if (name === 'magnetic' && lab.chips.ampere && !lab.ampere) plane.placeAmpere();
+    try { sessionStorage.setItem(FIELD_KEY, name); } catch { /* storage may be blocked */ }
+    plane.invalidate();
+    threeD.invalidate();
+  }
+
+  function addCurrent(kind) {
+    const mode = modes.current, spot = currentEdit.freeCurrentSpot(cs.sources, pg.plane, mode.fixed(), pg.probe);
+    lab.presetNote = '';
+    currentEditor.add(currentEdit.newSource(kind, pg.plane, spot));
+  }
+
+  function applyPreset(name) {
+    const preset = currentPreset(name, pg.plane);
+    if (!preset) return;
+    plane.cancel();
+    if (!currentEditor.load(preset.sources, preset.selectedId)) return;
+    lab.view = { span: preset.view.span, offset: [0, 0] };
+    Object.assign(lab.chips, preset.chips);
+    lab.ampere = preset.ampere ? clampAmpere(preset.ampere) : null;
+    modes.current.moveSensor(preset.sensor);
+    lab.presetNote = `${CURRENT_PRESETS[name]}: ${preset.note}`;
+    announce(lab.presetNote);
+    plane.invalidate();
+  }
+
   function addSource(kind) {
     const mode = modes.sandbox, plane3 = pg.plane;
     const spot = freeSpot(pg.sources, plane3, mode.fixed(), pg.probe);
@@ -219,10 +320,20 @@ export function createEMController(root) {
     if (target.id === 'em-course-open') { switchCourse(true); return; }
     if (target.dataset.emTab) { lab.tab = target.dataset.emTab; plane.cancel(); threeD.cancel(); requestRender(); return; }
     if (target.dataset.emScene) { setScene(target.dataset.emScene); requestRender(); return; }
+    if (target.dataset.emFieldMode) { setFieldMode(target.dataset.emFieldMode); requestRender(); return; }
+    if (target.dataset.emCurrentAdd) { addCurrent(target.dataset.emCurrentAdd); requestRender(); return; }
+    if (target.dataset.emCurrentPreset) { applyPreset(target.dataset.emCurrentPreset); requestRender(); return; }
+    if (target.dataset.emAmpereShape) {
+      lab.ampere = clampAmpere({ ...lab.ampere, shape: target.dataset.emAmpereShape });
+      requestRender();
+      return;
+    }
+    if (target.id === 'em-ampere-turn') { lab.ampere = { ...lab.ampere, orientation: lab.ampere.orientation === -1 ? 1 : -1 }; requestRender(); return; }
     if (target.dataset.emChip) {
       const name = target.dataset.emChip;
       lab.chips[name] = !lab.chips[name];
       if (name === 'gauss' && lab.chips.gauss && !lab.gauss) plane.placeGauss();
+      if (name === 'ampere' && lab.chips.ampere && !lab.ampere) plane.placeAmpere();
       requestRender();
       return;
     }
@@ -230,8 +341,8 @@ export function createEMController(root) {
     if (target.dataset.emPgAdd) { addSource(Number(target.dataset.emPgAdd)); requestRender(); return; }
     if (target.id === 'em-pg-add-finite') { addSource('finite'); requestRender(); return; }
     if (target.id === 'em-pg-add-infinite') { addSource('infinite'); requestRender(); return; }
-    if (target.id === 'em-pg-undo') { editor.undo(); requestRender(); return; }
-    if (target.id === 'em-pg-redo') { editor.redo(); requestRender(); return; }
+    if (target.id === 'em-pg-undo') { activeEditor().undo(); requestRender(); return; }
+    if (target.id === 'em-pg-redo') { activeEditor().redo(); requestRender(); return; }
     if (target.id === 'em-pg-reset') { resetCurrent(); return; }
     if (target.id === 'em-play') {
       if (s.playing) stopPlayback();
@@ -243,7 +354,12 @@ export function createEMController(root) {
   function resetCurrent() {
     plane.cancel();
     lab.view = { span: 3, offset: [0, 0] };
-    if (lab.scene === 'playground') {
+    if (isMagnetic()) {
+      currentEditor.reset();
+      lab.ampere = null;
+      lab.presetNote = '';
+      if (lab.chips.ampere) plane.placeAmpere();
+    } else if (lab.scene === 'playground') {
       editor.reset();
       project.resetCarried(); // a reset world must not save the comparison / vector mode / legend of the file opened before it
       lab.gauss = null;
@@ -262,6 +378,14 @@ export function createEMController(root) {
   // The radius slider is an interaction like a drag: the precise flux waits until it is released (change / focusout).
   root.addEventListener('input', event => {
     if (event.target.id === 'em-time') { stopPlayback(); store.setTime(event.target.value); requestRender(); return; }
+    if (event.target.id === AMPERE_SLIDER && lab.ampere) {
+      interaction.begin('ampere-slider');
+      const size = Number(event.target.value);
+      lab.ampere = clampAmpere(lab.ampere.shape === 'rect'
+        ? { ...lab.ampere, halfWidth: size, halfHeight: size * 0.7 } : { ...lab.ampere, radius: size });
+      requestRender();
+      return;
+    }
     if (event.target.id === 'em-gauss-radius' && lab.gauss) {
       interaction.begin('gauss-slider');
       lab.gauss = { ...lab.gauss, radius: Number(event.target.value) };
@@ -269,7 +393,8 @@ export function createEMController(root) {
     }
   }, listen);
   const endSlider = event => {
-    if (event.target.id !== 'em-gauss-radius' || !interaction.end('gauss-slider')) return;
+    const token = event.target.id === AMPERE_SLIDER ? 'ampere-slider' : event.target.id === 'em-gauss-radius' ? 'gauss-slider' : null;
+    if (!token || !interaction.end(token)) return;
     requestRender();
   };
   root.addEventListener('change', endSlider, listen);
@@ -283,6 +408,11 @@ export function createEMController(root) {
       const center = lab.gauss.center.slice();
       center[planeNormal(pg.plane)] = modes.sandbox.fixed();
       lab.gauss = { ...lab.gauss, center };
+    }
+    if (lab.ampere) {
+      const center = lab.ampere.center.slice();
+      center[planeNormal(pg.plane)] = modes.sandbox.fixed();
+      lab.ampere = { ...lab.ampere, center };
     }
     requestRender();
   }, listen);
@@ -372,6 +502,7 @@ export function createEMController(root) {
       return {
         ...store.inspect(), playground: editor.inspect(), playgroundActive: lab.scene === 'playground',
         reducedMotion: motion.matches, quality: lab.quality, tab: lab.tab, scene: lab.scene, chips: { ...lab.chips }, gauss: lab.gauss ? structuredClone(lab.gauss) : null,
+        field: lab.field, current: structuredClone(cs), ampere: lab.ampere ? structuredClone(lab.ampere) : null,
         view: structuredClone(lab.view), courseActive, course: course ? course.inspect() : null,
         diagnostics: { ...diagnostics, plane: { ...plane.stats } },
       };

@@ -15,7 +15,7 @@ export const DEFAULT_SOURCES = Object.freeze([
   { id: 'q2', q: -1e-9, position: [0.75, 0, 0], enabled: true, visible: true },
 ]);
 
-export const sourceCenter = source => (source.type === 'finite-line'
+export const sourceCenter = source => (source.type === 'finite-line' || source.type === 'segment'
   ? source.start.map((value, axis) => (value + source.end[axis]) / 2) : source.position);
 
 const PLANES = ['xy', 'xz', 'yz'];
