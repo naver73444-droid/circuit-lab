@@ -2,6 +2,7 @@ import { preserveCourseFocus } from './course-focus.js';
 import { EXPERIMENTS, getExperiment, initialParameters, evaluateExperiment } from './circuit-course-registry.js';
 import { parseProblemQuantity } from './circuit-course-problem.js';
 import { createCircuitCourseView } from './circuit-course-view.js';
+import { createYDeltaTool } from './y-delta-tool-controller.js';
 export function parseCourseNumber(text) {
   const trimmed = String(text).trim();
   if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed)) throw new RangeError('유한한 숫자를 입력하세요. 예: -2.5, 3e-3');
@@ -12,7 +13,8 @@ export function parseCourseNumber(text) {
 export function createCircuitCourseController(host) {
   if (!host || typeof host.querySelector !== 'function') throw new TypeError('AC 실험 패널 host가 필요합니다.');
   const view = createCircuitCourseView(host);
-  let active = false, destroyed = false, id = EXPERIMENTS[0].id;
+  let active = false, destroyed = false, id = EXPERIMENTS[0].id, tool = null;
+  const yDelta = createYDeltaTool(view.toolPanel('y-delta'));
   const states = new Map();
   function newState(experiment) {
     const params = initialParameters(experiment);
@@ -29,6 +31,7 @@ export function createCircuitCourseController(host) {
     const restoreFocus=preserveCourseFocus(host,['data-circuit-course-key','data-circuit-course-experiment','data-circuit-course-mode','data-circuit-course-reset','data-circuit-course-example']);
     const state = current();
     view.showForm(getExperiment(id), displayParams(), state.drafts);
+    view.showTool(tool);
     if (state.dirty && !state.validationFailed) view.dirty(); else view.showResult(state.result, id, state.params);
     restoreFocus();
   }
@@ -73,7 +76,8 @@ export function createCircuitCourseController(host) {
   function onClick(event) {
     const target = event.target.closest?.('button');
     if (!target || !host.contains(target)) return;
-    if (target.dataset.circuitCourseExperiment) { id = target.dataset.circuitCourseExperiment; render(); return; }
+    if (target.dataset.circuitCourseTool) { tool = target.dataset.circuitCourseTool; render(); return; }
+    if (target.dataset.circuitCourseExperiment) { id = target.dataset.circuitCourseExperiment; tool = null; render(); return; }
     if (id==='problem' && ['numeric','symbolic'].includes(target.dataset.circuitCourseMode)) {
       const state=current(),mode=target.dataset.circuitCourseMode;
       state.drafts.solutionMode=mode;state.dirty=true;state.validationFailed=false;render();
@@ -105,11 +109,11 @@ export function createCircuitCourseController(host) {
     inspect() {
       if (destroyed) return { active: false, destroyed: true, experimentId: id };
       const state = current();
-      return { active, destroyed, experimentId: id, dirty: state.dirty, params: { ...state.params }, drafts: { ...state.drafts },
+      return { active, destroyed, experimentId: id, tool, yDelta: yDelta.inspect(), dirty: state.dirty, params: { ...state.params }, drafts: { ...state.drafts },
         status: state.validationFailed ? 'invalid' : state.dirty ? 'draft' : state.result.status,
         // Serializable read-only summary, without graph callback functions.
         result: JSON.parse(JSON.stringify(state.result, (key, value) => typeof value === 'function' ? undefined : value)) };
     },
-    destroy() { if (destroyed) return; this.deactivate(); host.removeEventListener('input', onInput); host.removeEventListener('click', onClick); host.removeEventListener('submit', onSubmit); view.clear(); destroyed = true; states.clear(); }
+    destroy() { if (destroyed) return; this.deactivate(); yDelta.destroy(); host.removeEventListener('input', onInput); host.removeEventListener('click', onClick); host.removeEventListener('submit', onSubmit); view.clear(); destroyed = true; states.clear(); }
   };
 }

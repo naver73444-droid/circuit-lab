@@ -5,6 +5,7 @@
  *   Ctrl+D             복제                      Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y   되돌리기·다시 하기
  *   Ctrl+C / X / V     복사 / 잘라내기 / 붙여넣기   Ctrl+A         모두 선택
  *   W / V              배선 / 선택 도구          방향키 (Shift = 5칸)   선택 항목 이동
+ *   Y                  저항 3개 Y↔Δ 변환(선택한 저항 3개가 Y 또는 Δ일 때)
  *   Ctrl+S             JSON 저장                 Ctrl+Enter     해석 실행
  *
  * typing(글자를 입력하는 칸에 포커스)이면 Ctrl+S와 Ctrl+Enter만 동작한다(브라우저 "페이지 저장" 대화상자 대신 프로젝트 저장,
@@ -27,7 +28,7 @@ function letterOf(event) {
 }
 
 /** Actions that write history or replay it: an in-progress drag is committed first so its history entry comes before theirs. */
-const DRAG_COMMITTING = new Set(["delete", "rotate", "clone", "undo", "redo", "cut", "paste"]);
+const DRAG_COMMITTING = new Set(["delete", "rotate", "clone", "undo", "redo", "cut", "paste", "yDelta"]);
 export const commitsActiveDrag = (action) => DRAG_COMMITTING.has(action);
 
 const TEXT_INPUT_TYPES = new Set(["text", "number", "search", "email", "url", "password", "tel", ""]);
@@ -117,6 +118,7 @@ export function shortcutFor(event, { typing = false, textSelection = false } = {
     return { action: "nudge", dx, dy, steps: event.shiftKey ? NUDGE_STEPS_SHIFT : NUDGE_STEPS, repeat: Boolean(event.repeat) };
   }
   if (letter === "r") return { action: "rotate", direction: event.shiftKey ? -1 : 1 };
+  if (letter === "y") return { action: "yDelta" };
   if (letter === "w") return { action: "tool", tool: "wire" };
   if (letter === "v") return { action: "tool", tool: "select" };
   return null;

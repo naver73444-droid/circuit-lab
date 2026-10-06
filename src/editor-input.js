@@ -417,7 +417,7 @@ export function createEditorInput(deps) {
   const undoEdit = () => { commitActiveDrag(); undo(); };
   const redoEdit = () => { commitActiveDrag(); redo(); };
 
-  const { deleteSelection, cloneSelection, rotateSelection, nudgeSelection, selectAll, copySelection, pasteSelection } = createSelectionCommands({
+  const { deleteSelection, cloneSelection, rotateSelection, convertYDelta, nudgeSelection, selectAll, copySelection, pasteSelection } = createSelectionCommands({
     state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive,
     notify: (text, kind = "info") => notices.show({ text, kind, autoHideMs: kind === "error" ? 9000 : 8000 }),
   });
@@ -908,6 +908,7 @@ export function createEditorInput(deps) {
       if (button.dataset.multiAction === "delete") deleteSelection();
       else if (button.dataset.multiAction === "clone") cloneSelection();
       else if (button.dataset.multiAction === "rotate") rotateSelection(1);
+      else if (button.dataset.multiAction === "ydelta") convertYDelta();
     });
     elements["wave-plot"].addEventListener("wheel", (event) => {
       if (!scopeView.result) return;
@@ -990,6 +991,7 @@ export function createEditorInput(deps) {
         run: () => { runAnalysis(); return true; },
         delete: () => { deleteSelection(); return false; },
         rotate: () => { rotateSelection(shortcut.direction); return false; },
+        yDelta: () => { convertYDelta(); return false; },
         clone: () => { cloneSelection(); return true; },
         selectAll: () => selectAll(),
         undo: () => { undoEdit(); return true; },

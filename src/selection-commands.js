@@ -4,6 +4,7 @@ import { allItems, clearSelection, selectedItems, setSelectionItems, setSingleSe
 import { moveGroup, movableItems, rotateGroup } from "./group-edit.js";
 import { allocatorFor } from "./id-allocator.js";
 import { NUDGE_IDLE_MS } from "./editor-shortcuts.js";
+import { convertYDeltaInCircuit, selectedResistorIds } from "./y-delta-circuit.js";
 import { CLIPBOARD_FORMAT, additionLimitReason, buildClipboard, clipboardLimitReason, controlsNeedingTarget, parseClipboardText, pasteClipboard, pasteRejection, serializeClipboard } from "./clipboard-model.js";
 
 /**
@@ -74,6 +75,34 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
       ]);
     });
     setStatus(`${cloned.components.length}개 부품 복제 완료`, "ready");
+  }
+
+  /**
+   * Y→Δ / Δ→Y for exactly three selected resistors, as ONE history entry. Anything else selected is ignored (no-op); a recognised but
+   * unsupported topology says why. The three new resistors become the selection; the result turns stale like any circuit edit.
+   */
+  function convertYDelta() {
+    commitActiveDrag();
+    const ids = selectedResistorIds(state.circuit, selectedItems(state));
+    if (!ids) return false;
+    let outcome;
+    try {
+      outcome = convertYDeltaInCircuit(state.circuit, ids, { allocator: allocatorFor(state), probes: state.probes });
+    } catch (error) {
+      const reason = error instanceof RangeError ? error.message : "변환하지 못했습니다.";
+      setStatus(`Y–Δ 변환 거부 · ${reason}`, "error");
+      notify(`Y–Δ 변환 거부 · ${reason}`, "error");
+      return false;
+    }
+    if (state.inlineEdit && ids.includes(state.inlineEdit.componentId)) { state.inlineEdit = null; elements["inline-value-editor"].classList.add("hidden"); }
+    mutate(() => {
+      state.circuit = outcome.circuit;
+      state.probes = outcome.probes;
+      setSelectionItems(state, outcome.report.selection);
+    });
+    setStatus(outcome.report.message, "ready");
+    notify(outcome.report.message, "info");
+    return true;
   }
 
   /** One part turns in place; several parts/junctions turn together around the primary (last clicked) item. One history entry. */
@@ -221,5 +250,5 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
     return true;
   }
 
-  return { deleteSelection, cloneSelection, rotateSelection, nudgeSelection, selectAll, copySelection, pasteSelection };
+  return { deleteSelection, cloneSelection, rotateSelection, convertYDelta, nudgeSelection, selectAll, copySelection, pasteSelection };
 }

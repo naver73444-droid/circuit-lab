@@ -23,6 +23,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 - `circuit-engine.js` — 값 파싱, 구조 검증·한도, 토폴로지(MNA), DC/과도/AC 해석, LU(실수·복소 typed array, 선형 과도는 dt별 LU 재사용), 직렬화.
 - `union-find.js` — 토폴로지·진단용 서로소 집합. `port-analysis.js` — DC 테브난·노턴 포트.
 - `analysis-policy.js` — 회로 값에서 해석 종류·범위 제안. `analysis-diagnostics.js` — 오류를 사용자 진단 문구로.
+- `y-delta-model.js`(Y↔Δ 저항 변환 식: 로그 영역 log-sum-exp, SI 문자열 입력, 한국어 RangeError — 회로 과정 도구도 이 모듈만 씀) · `y-delta-circuit.js`(세 저항이 Y/Δ인지 판정 `detectYDelta`(솔버의 `buildTopology`/`nodeFor`와 같은 net, 접지 없는 회로는 같은 규칙의 union-find) · 회로 재작성 `convertYDeltaInCircuit`: 코너 앵커 재사용·중심 접속점·격자 위 삼각 배치·프로브 이동, 입력 불변) · `y-delta-tool-model.js`(회로 과정 도구의 상태·로그 슬라이더 눈금·읽기 문장·식 줄).
 - `circuit-geometry.js`(핀 위치·격자·배선 경로) · `circuit-edit.js`(삭제·분할·세대 검사 `acceptsRunGeneration`) · `circuit-status.js`(연결 상태 분류) · `current-direction.js`(전류 기준 방향·라벨) · `wire-current-model.js`(배선별 전류: 부품 전류를 넷의 배선 그래프에 KCL로 나눔, 고리·불균형은 미정, 흐름 속도 등급·표본 선택. 엔진은 GND 부품을 모두 한 노드로 묶으므로 모든 GND 핀을 **한 정점**으로 합쳐 GND 사이를 잇는 배선처럼 그 정점을 지나는 고리 위 배선은 `loop`(미정). 위상 분석 `analyzeWireNets`은 전류와 무관해 지오메트리마다 한 번만 계산) · `id-allocator.js`(프로젝트별 단조 증가 id 발급).
 - `project-format.js`(JSON 직렬화·검증, version 1~3) · `csv-format.js` · `persistence.js`(탭별 자동저장 슬롯 + 프로젝트를 바꿀 때 이전 상태를 보존하는 `.prev` 슬롯) · `share-url.js`(`#p=` 인코딩·압축·한도).
 - `scope-model.js`(눈금·표본 선택) · `plot-format.js`(표시 배율·축, AC 크기 dB·위상) · `phasor-format.js` · `cursor-label-model.js` · `cursor-delta-model.js`(A/B 차이) · `measure-model.js`·`wave-measure-model.js`(자동 측정) · `node-readout-model.js`(호버 판독) · `sweep-model.js`(스윕 계획·병합).
@@ -31,7 +32,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 ### 회로 편집기 컨트롤러 (DOM 있음, `app.js`가 조립)
 - `editor-session.js` — 편집 상태(`createEditorState`)와 회로·설정을 바꾸는 경로: `mutate()`(이력·세대·재렌더·자동실행·자동저장 알림)·`mutateGrouped()`(휠·방향키를 이력 한 단계로 묶음, 방향키는 키업 또는 700 ms 유휴로 닫힘)·`commitMove()`(끝난 드래그, 제자리로 돌아오면 호출하지 않음)·프로브 추가·제거(`recordProbeEdit`, 결과를 무효화하지 않음). undo/redo(`restore`)는 같은 프로젝트 안에서는 진행 중인 실행만 취소하고 결과를 stale로 표시하며 스코프 줌·커서·포트 선택·스윕 입력은 유지하고, 다른 프로젝트의 스냅샷(새 회로·열기·예제를 되돌릴 때)이면 `resetProjectSession()`으로 전부 비웁니다.
 - `canvas-renderer.js` — SVG 캔버스 전체 렌더, 선택 클래스 토글, 드래그 중 부분 갱신.
-- `editor-input.js` — 도구·배치·배선(클릭-클릭과 핀에서 끌기)·프로브, 캔버스·파형 포인터/휠/키 입력 전부. `canvas-touch.js`(터치 라우팅), `editor-shortcuts.js` 사용. `selection-commands.js` — 선택 전체에 대한 삭제·복제·회전·방향키 이동·모두 선택·복사/잘라내기/붙여넣기(내부 클립보드).
+- `editor-input.js` — 도구·배치·배선(클릭-클릭과 핀에서 끌기)·프로브, 캔버스·파형 포인터/휠/키 입력 전부. `canvas-touch.js`(터치 라우팅), `editor-shortcuts.js` 사용. `selection-commands.js` — 선택 전체에 대한 Y–Δ 변환(`convertYDelta`: `y-delta-circuit.js`로 새 회로를 만들어 `mutate` 한 번, 선택은 새 저항 3개)·삭제·복제·회전·방향키 이동·모두 선택·복사/잘라내기/붙여넣기(내부 클립보드).
 - `analysis-runner.js` — 해석 수명주기(예약·Worker 실행·취소·stale·진단)와 결과 표시(프로브 목록, 파형, 페이저, 포트 패널). `sweep-runner.js`(스윕), `analysis-worker-client.js`(Worker 1회용 래퍼), `analysis-worker.js`(Worker 본체).
 - `inspector.js` — 속성·해석 설정·화면 값 편집·draft 확정. `sweep-panel.js`(스윕 UI).
 - `project-io.js` — 예제·새 회로·JSON 저장/열기·CSV·자동저장·복원 배너·링크 공유. 모든 프로젝트 교체는 `openProject()` 한 길이며 시작 시 `#p=`와 열린 탭에서 주소를 바꾸는 `hashchange`도 같은 길을 탑니다. 교체 직전에 `autosave.retire()`가 이전 프로젝트의 대기 중 저장을 마무리하고, 새 프로젝트의 첫 저장이 그 슬롯을 `<탭 id>.prev`로 옮깁니다(탭마다 prev는 하나, 5개 한도에 함께 셈). 예제·새 회로·파일 열기는 이전 프로젝트에서 직접 입력한 해석 설정을 가져오지 않고 기본값에서 시작합니다.
@@ -47,7 +48,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
   - DOM·canvas: `em-controller`(조립·한 번의 `render()`·`prefers-reduced-motion` 감시) · `em-plane-controller`(포인터·키·`draw()`) · `em-plane-render`(canvas 두 장) · `em-palette`(CSS 토큰 → canvas 색) · `em-3d-panel` + `em-view`(WebGL) · `em-inspector` · `em-scenes-panel`(기본 모델 폼) · `em-calculus-panel` + `em-calculus-view` · `em-project-panel`(EM 파일·예제). 문제 풀이: `em-course-controller`(진입점) · `em-course-ui`(셸·슬라이더 줄·답 카드) · `em-course-view`(그림·ℰ(t) 그래프) · `em-course-symbolic`.
   - `em-controller`는 문제 풀이(약 290KB)를 처음 열 때만 동적 import하고(`prefetchEMCourse`는 `문제 풀이` 버튼에 올리거나 포커스할 때), 실패하면 `?retry=N`으로 다시 시도합니다.
 - **신호 및 시스템**: `signals-course-controller.js`(탭·슬라이더·재생·키, 진입점). 레슨마다 순수 모델 `signals-{time,convolution,series,transform,roc,sampling}-model.js`와 SVG 뷰 `signals-*-view.js`가 한 쌍이고, 공용 순수 모듈은 `signals-course-model`(레슨 목록·입력 파서·수치 기본 계산) · `signals-util`(눈금·서식·`controlDefaults`) · `signals-expression`(제한 산술 AST, JS 평가 없음) · `signals-custom-input`(컨볼루션 고급 입력) · `signals-playback`(재생 시각 → 커서). SVG 도구 `signals-plot.js`(`createSurface`·`createPane`·`createLegend`, 요소는 한 번만 만들고 속성만 갱신), 스타일 `signals-style.js`(테마 토큰만).
-- **회로 과정**(네 번째 최상위 탭): `circuit-course-controller.js` · `circuit-course-registry.js` · `circuit-course-model.js` · `circuit-course-problem{,-symbolic}.js` · `circuit-course-view.js`(색은 토큰).
+- **회로 과정**(네 번째 최상위 탭): `circuit-course-controller.js` · `circuit-course-registry.js` · `circuit-course-model.js` · `circuit-course-problem{,-symbolic}.js` · `circuit-course-view.js`(색은 토큰). 숫자 실험이 아닌 화면은 탭 줄의 `TOOL_TABS`로 붙이고(현재 `y-delta`) 자기 컨트롤러가 있습니다: `y-delta-tool-controller.js`(슬라이더·텍스트 즉시 반영, 잘못된 입력은 마지막 유효 값 유지) · `y-delta-tool-view.js`(SVG 한 장을 한 번 만들고 값만 갱신, 폰에서는 viewBox를 세로 쌓기로 바꿈). 이 도구는 `y-delta-model.js`·`y-delta-tool-model.js`만 import하며 둘 다 순수 목록에 있습니다(예외: `y-delta-model`이 값 파서 `parseValue`를 `circuit-engine.js`에서 가져옴 — 엔진은 DOM 없는 공용 계산 모듈).
 - 공용: `course-focus.js`(재렌더 후 포커스 유지) · `course-style.js`(스타일 1회 주입) · `course-math-view.js`·`course-symbolic-view.js`(수식 표시) · `course-illustration-contract.js`.
 - `workspace-tabs.js` — `WORKSPACES` 목록, 탭 전환, `createLazyController`.
 
@@ -123,10 +124,10 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 
 ## 시험 구조
 
-단위 1197개(`npm test`, 약 4초) + 브라우저 스모크 98개. 개수는 `node --test` 요약과 `tests/browser/smoke.test.mjs`의 `test(` 호출을 센 값이라 시험을 더하면 이 절도 갱신합니다.
+단위 1230개(`npm test`, 약 4초) + 브라우저 스모크 102개. 개수는 `node --test` 요약과 `tests/browser/smoke.test.mjs`의 `test(` 호출을 센 값이라 시험을 더하면 이 절도 갱신합니다.
 
 - `tests/engine/`(739개) — 순수 계산: `circuit/`(192개, 파일 10: MNA·소스·OP AMP·LU·포트·페이저), `circuit-course/`(63개, 6), `em/`(386개, 30: 물리·닫힌 꼴 전류고리·등위선·장선·가우스·평면·문제 풀이 23실험의 수치·기호·시간 정의), `signals/`(98개, 9: 레슨 모델을 `reference.mjs`의 독립 폐형식과 대조). 독립 기대값과 `tests/fixtures/*.json` 사용.
-- `tests/ui-model/`(450개, 파일 50) — DOM 없는 UI 모델과 가짜 DOM 컨트롤러(편집·이력·기하·단축키·자동저장·공유·측정·스윕·패널·워크스페이스·지연 로딩·테마 대비 등).
+- `tests/ui-model/`(483개, 파일 51) — DOM 없는 UI 모델과 가짜 DOM 컨트롤러(편집·이력·기하·단축키·자동저장·공유·측정·스윕·패널·워크스페이스·지연 로딩·테마 대비 등).
 - `tests/tooling/`(8개) — 소스 내보내기 스크립트와 경계 검사기(`check-boundaries`, 긴 줄 경고 포함). `tests/helpers/` — 시험 전용 보조(`parseCSV`, `phasorFromPolar`).
-- `tests/browser/`(98개 시나리오) — `harness.mjs`(서버 `node server.mjs 0` 기동, 임시 프로필 헤드리스 Edge, CDP 입력·`window.__CIRCUIT_LAB__` 상태 조회, 프로필 경로로만 프로세스를 찾아 종료·확인)와 `smoke.test.mjs`(콘솔 오류·실패 요청이 있으면 해당 시나리오 실패). 회로 편집·해석·이력·자동저장·공유·다중 선택·클립보드·전류 흐름이 대부분이고, 신호 11개(레슨 렌더·슬라이더·키·재생 정책·터치·움직임 줄이기·SVG 노드 불변), 전자기 평면·가우스(경계 근처 전하 둘 포함)·인스펙터·팔레트·3D·문제 풀이·테마·폰 폭·전류고리 휠 확대의 프레임 예산·칩/테마의 격자 캐시·다중 포인터·움직임 줄이기, 작업공간 전환·회로 과정이 들어 있습니다.
+- `tests/browser/`(102개 시나리오) — `harness.mjs`(서버 `node server.mjs 0` 기동, 임시 프로필 헤드리스 Edge, CDP 입력·`window.__CIRCUIT_LAB__` 상태 조회, 프로필 경로로만 프로세스를 찾아 종료·확인)와 `smoke.test.mjs`(콘솔 오류·실패 요청이 있으면 해당 시나리오 실패). 회로 편집·해석·이력·자동저장·공유·다중 선택·클립보드·전류 흐름이 대부분이고, 신호 11개(레슨 렌더·슬라이더·키·재생 정책·터치·움직임 줄이기·SVG 노드 불변), 전자기 평면·가우스(경계 근처 전하 둘 포함)·인스펙터·팔레트·3D·문제 풀이·테마·폰 폭·전류고리 휠 확대의 프레임 예산·칩/테마의 격자 캐시·다중 포인터·움직임 줄이기, 작업공간 전환·회로 과정이 들어 있습니다.
 - 명령: `npm test`(engine + ui-model + tooling), `npm run test:browser`, `npm run test:all`, `npm run test:summary`, `npm run check`.

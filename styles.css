@@ -742,3 +742,58 @@ body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template
   .measure-cells { padding-left: 0; }
   #wave-size-button { display: none; }
 }
+
+/* Y–Δ conversion tool (회로 과정). Tokens only; the figure is one SVG, values are text so colour is never the only cue. */
+.circuit-course .ydelta-tool { display: grid; gap: 12px; max-width: 1200px; }
+.circuit-course .ydelta-tool h3 { margin: 0; }
+.circuit-course .ydelta-lead, .circuit-course .ydelta-note { margin: 0; color: var(--muted); font-size: 13px; }
+.circuit-course .ydelta-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.circuit-course .ydelta-direction { display: inline-flex; gap: 6px; }
+.circuit-course .ydelta-direction button { min-width: 88px; font-weight: 600; }
+.circuit-course .ydelta-direction button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--selection); }
+.circuit-course .ydelta-inputs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.circuit-course .ydelta-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 4px 12px; padding: 8px 12px; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--panel); min-width: 0; }
+.circuit-course .ydelta-field label { grid-area: 1 / 1; display: flex; align-items: baseline; gap: 6px; font-weight: 600; }
+.circuit-course .ydelta-field input[type="text"] { grid-area: 1 / 2; }
+.circuit-course .ydelta-field input[type="range"] { grid-area: 2 / 1 / 3 / 3; }
+.circuit-course .ydelta-error { grid-area: 3 / 1 / 4 / 3; }
+.circuit-course .ydelta-controls { display: contents; }
+.circuit-course .ydelta-head { order: 0; } .circuit-course .ydelta-bar { order: 1; } .circuit-course .ydelta-figure { order: 2; } .circuit-course .ydelta-inputs { order: 3; }
+.circuit-course .ydelta-read { order: 4; } .circuit-course .ydelta-math { order: 5; } .circuit-course .ydelta-formulas { order: 6; }
+@media (min-width: 900px) {
+  .circuit-course .ydelta-tool { grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); grid-template-areas: "head head" "figure controls" "read controls" "math controls" "formulas formulas"; align-items: start; }
+  .circuit-course .ydelta-controls { grid-area: controls; display: grid; gap: 12px; }
+  .circuit-course .ydelta-head { grid-area: head; }
+  .circuit-course .ydelta-figure { grid-area: figure; }
+  .circuit-course .ydelta-read { grid-area: read; }
+  .circuit-course .ydelta-math { grid-area: math; }
+  .circuit-course .ydelta-formulas { grid-area: formulas; }
+}
+.circuit-course .ydelta-field input[type="text"] { font-variant-numeric: tabular-nums; font-family: var(--mono); }
+.circuit-course .ydelta-field input[aria-invalid="true"] { border-color: var(--danger); }
+.circuit-course .ydelta-error { color: var(--danger); font-size: 12px; min-height: 0; overflow-wrap: anywhere; }
+.circuit-course .ydelta-error:empty { display: none; }
+.circuit-course .ydelta-figure { margin: 0; border: 1px solid var(--line-soft); border-radius: 14px; background: var(--canvas); padding: 6px; }
+.circuit-course .ydelta-svg { background: transparent; max-height: 440px; }
+.circuit-course .ydelta-svg .ydelta-wire { stroke: var(--symbol); stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.circuit-course .ydelta-svg [data-role="output"] .ydelta-wire { stroke: var(--accent); }
+.circuit-course .ydelta-svg [data-role="output"] .ydelta-body { stroke-width: 2.8; }
+.circuit-course .ydelta-svg .ydelta-node { fill: var(--text); }
+.circuit-course .ydelta-svg .ydelta-center { fill: var(--muted); }
+.circuit-course .ydelta-svg text { fill: var(--text); font: 600 17px system-ui, sans-serif; }
+.circuit-course .ydelta-svg .ydelta-sub { font-size: 12px; }
+.circuit-course .ydelta-svg .ydelta-value { font: 15px var(--mono); fill: var(--text); }
+.circuit-course .ydelta-svg [data-role="output"] .ydelta-value { fill: var(--accent); font-weight: 700; }
+.circuit-course .ydelta-svg .ydelta-corner { fill: var(--muted); font-size: 16px; }
+.circuit-course .ydelta-svg .ydelta-tag { fill: var(--muted); font: 600 15px system-ui, sans-serif; }
+.circuit-course .ydelta-svg .ydelta-arrow path { stroke: var(--muted); stroke-width: 2.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.circuit-course .ydelta-read { margin: 0; padding: 10px 12px; border-left: 4px solid var(--accent); background: var(--selection); border-radius: 0 9px 9px 0; overflow-wrap: anywhere; }
+.circuit-course .ydelta-math { min-width: 0; }
+.circuit-course .ydelta-formulas { border: 1px solid var(--line-soft); border-radius: 12px; padding: 0 12px 10px; background: var(--panel); }
+@media (max-width: 760px) {
+  .circuit-course .ydelta-direction { width: 100%; }
+  .circuit-course .ydelta-direction button { flex: 1; min-height: 44px; }
+  .circuit-course .ydelta-svg { max-height: none; }
+  .circuit-course .ydelta-field input { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .circuit-course .ydelta-tool * { transition: none !important; animation: none !important; } }

@@ -6,6 +6,8 @@ import { escapeHtml as esc } from './safe-dom.js';
 // Intl.NumberFormat construction dominates the cost, so the two formatters are built once.
 const numberFormats = { scientific: new Intl.NumberFormat('en-US', { maximumSignificantDigits: 7, notation: 'scientific' }), standard: new Intl.NumberFormat('en-US', { maximumSignificantDigits: 7, notation: 'standard' }) };
 export function formatNumber(n) { return n === null || n === undefined || !Number.isFinite(n) ? '미정' : numberFormats[Math.abs(n) > 0 && (Math.abs(n) < 1e-4 || Math.abs(n) >= 1e7) ? 'scientific' : 'standard'].format(Object.is(n, -0) ? 0 : n); }
+// Learning tools that are not numeric experiments (own screen, own controller) share the tab row.
+export const TOOL_TABS = [{ id: 'y-delta', title: '7 · Y–Δ 변환' }];
 const fmt = formatNumber;
 const zText = z => !z ? '유한한 값 없음' : fmt(z.re) + (z.im < 0 ? ' − j' : ' + j') + fmt(Math.abs(z.im));
 const polarText = z => { const p = rectangularPolar(z); return fmt(p.magnitude) + ' ∠ ' + (p.angleDeg === null ? '위상 미정' : fmt(p.angleDeg) + '°'); };
@@ -124,7 +126,7 @@ const symbolMapNote=params=>{const items=problemSymbolMap(params);return items.l
 
 export function createCircuitCourseView(host) {
   host.classList.add('circuit-course');
-  host.innerHTML = '<style>' + style + '</style><header><h2>교류 · 3상 회로 실험실</h2><p>균형 정현파 정상상태에서 페이저, 복소 임피던스, 무효전력과 역률을 직접 바꿔 보세요.</p></header><nav class="circuit-course-tabs" aria-label="AC 학습 실험">' + EXPERIMENTS.map(e => '<button type="button" data-circuit-course-experiment="' + esc(e.id) + '">' + esc(e.title) + '</button>').join('') + '</nav><div class="circuit-course-layout"><aside><section class="circuit-course-card"><h3 data-circuit-course-title></h3><p data-circuit-course-description></p><form class="circuit-course-form" data-circuit-course-form novalidate></form><div class="circuit-course-actions"><button type="button" data-circuit-course-apply class="circuit-course-apply">입력 적용 · 계산</button><button type="button" data-circuit-course-reset>이 실험 초기화</button></div><div class="circuit-course-actions" data-circuit-course-examples></div><p class="circuit-course-note">숫자를 바꾼 뒤 적용하세요. 잘못된 입력은 계산하지 않습니다.</p></section><section class="circuit-course-card" data-circuit-course-theory></section></aside><main><div class="circuit-course-status" role="status" aria-live="polite" data-circuit-course-status></div><div data-circuit-course-results></div></main></div>';
+  host.innerHTML = '<style>' + style + '</style><header><h2>교류 · 3상 회로 실험실</h2><p>균형 정현파 정상상태에서 페이저, 복소 임피던스, 무효전력과 역률을 직접 바꿔 보세요.</p></header><nav class="circuit-course-tabs" aria-label="AC 학습 실험">' + EXPERIMENTS.map(e => '<button type="button" data-circuit-course-experiment="' + esc(e.id) + '">' + esc(e.title) + '</button>').join('') + TOOL_TABS.map(t => '<button type="button" data-circuit-course-tool="' + esc(t.id) + '">' + esc(t.title) + '</button>').join('') + '</nav><div class="circuit-course-layout"><aside><section class="circuit-course-card"><h3 data-circuit-course-title></h3><p data-circuit-course-description></p><form class="circuit-course-form" data-circuit-course-form novalidate></form><div class="circuit-course-actions"><button type="button" data-circuit-course-apply class="circuit-course-apply">입력 적용 · 계산</button><button type="button" data-circuit-course-reset>이 실험 초기화</button></div><div class="circuit-course-actions" data-circuit-course-examples></div><p class="circuit-course-note">숫자를 바꾼 뒤 적용하세요. 잘못된 입력은 계산하지 않습니다.</p></section><section class="circuit-course-card" data-circuit-course-theory></section></aside><main><div class="circuit-course-status" role="status" aria-live="polite" data-circuit-course-status></div><div data-circuit-course-results></div></main></div>' + TOOL_TABS.map(t => '<section class="circuit-course-tool" data-circuit-course-tool-panel="' + esc(t.id) + '" hidden></section>').join('');
   let settingsOpen = false;
   const onToggle = event => { if (event.target.matches?.('[data-circuit-course-display-settings]')) settingsOpen = event.target.open; };
   host.addEventListener('toggle', onToggle, true);
@@ -167,6 +169,14 @@ export function createCircuitCourseView(host) {
     q('theory').innerHTML = '<h3>공식 · 읽는 기준</h3>' + experiment.formulas.map(f => '<div class="circuit-course-formula">' + esc(f) + '</div>').join('') + '<details open><summary>가정 · 지원 범위</summary><ul>' + experiment.assumptions.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul></details><details><summary>공개 교재 출처</summary><p class="circuit-course-note">MIT 교재 일부는 peak를 사용해 ½가 나타납니다. 이 실험은 RMS로 환산한 식을 씁니다. 보상식은 S와 커패시터 Y=jωC에서 유도했습니다.</p>' + REFERENCES.map(r => '<p><a href="' + esc(r.url) + '" target="_blank" rel="noopener noreferrer">' + esc(r.title) + '</a></p>').join('') + '</details>';
     mathCards(q('theory'));
   }
+  // A tool replaces the experiment form/results while it is open; showTool(null) brings the experiment back.
+  function showTool(toolId) {
+    host.querySelector('.circuit-course-layout').hidden = Boolean(toolId);
+    host.querySelectorAll('[data-circuit-course-tool-panel]').forEach(p => { p.hidden = p.dataset.circuitCourseToolPanel !== toolId; });
+    host.querySelectorAll('[data-circuit-course-tool]').forEach(b => b.setAttribute('aria-current', String(b.dataset.circuitCourseTool === toolId)));
+    if (toolId) host.querySelectorAll('[data-circuit-course-experiment]').forEach(b => b.setAttribute('aria-current', 'false'));
+  }
+  function toolPanel(toolId) { return host.querySelector('[data-circuit-course-tool-panel="' + toolId + '"]'); }
   function status(message, kind = 'valid') { q('status').textContent = message; q('status').dataset.kind = kind; }
   function dirty() { status('미적용 입력이 있습니다. 입력 적용을 누르면 새 결과를 계산합니다.', 'draft'); q('results').hidden = true; }
   function projection(result, fraction = 0) {
@@ -216,5 +226,5 @@ export function createCircuitCourseView(host) {
     if (result.checks?.length) html += '<section class="circuit-course-card"><h3>독립 시간영역 확인</h3>' + table(['검사', '표본 계산', '페이저 기대값', '절대 허용오차', '결과'], result.checks.map(c => [c.label, fmt(c.actual) + ' ' + c.unit, fmt(c.expected) + ' ' + c.unit, fmt(c.tolerance), c.pass ? 'PASS' : 'FAIL'])) + '<p class="circuit-course-note">정수 한 주기의 균등 표본으로 계산합니다. 이 확인은 선택된 이상 모델의 일치 검사입니다.</p></section>';
     q('results').innerHTML = html;mathCards(q('results'));if(result.symbolicData?.status==='supported')renderSymbolic(q('symbolic-companion'),result.symbolicData); projection(result);
   }
-  return { showForm, showResult, status, dirty, projection, revealInput(key) { const input=host.querySelector('[data-circuit-course-key="'+key+'"]');const folded=input?.closest?.('[data-circuit-course-display-settings]');if(folded){folded.open=true;settingsOpen=true;}input?.scrollIntoView?.({block:'center'});input?.focus?.({preventScroll:true}); }, revealAnswer() { q('answers')?.scrollIntoView?.({block:'start'}); }, clear() { host.removeEventListener('toggle', onToggle, true);host.replaceChildren(); host.classList.remove('circuit-course'); } };
+  return { showForm, showResult, showTool, toolPanel, status, dirty, projection, revealInput(key) { const input=host.querySelector('[data-circuit-course-key="'+key+'"]');const folded=input?.closest?.('[data-circuit-course-display-settings]');if(folded){folded.open=true;settingsOpen=true;}input?.scrollIntoView?.({block:'center'});input?.focus?.({preventScroll:true}); }, revealAnswer() { q('answers')?.scrollIntoView?.({block:'start'}); }, clear() { host.removeEventListener('toggle', onToggle, true);host.replaceChildren(); host.classList.remove('circuit-course'); } };
 }

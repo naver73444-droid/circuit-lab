@@ -3201,4 +3201,150 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await click("#em-course-back");
     await until(`${L}.getEMState().courseActive === false`, "return to the lab");
   });
+
+  // ---- Y–Δ resistor conversion: editor command and course tool -------------------------------------------------------------------
+  const YD_PINS = [["V1", 0], ["R4", 0], ["R5", 1]]; // source +, corner B, corner C: all three corners survive the conversion
+  const cornerVoltages = (result) => YD_PINS.map(([id, pinIndex]) => nodeValue(result, 0, id, pinIndex));
+  const pickResistors = async (ids) => { await selectPart(ids[0]); for (const id of ids.slice(1)) await shiftClickPart(id); };
+  const ydeltaButton = () => ev(`(() => { const b = document.querySelector('#inspector-content [data-multi-action="ydelta"]'); return b ? { text: b.textContent.trim(), disabled: b.disabled, title: b.title } : null; })()`);
+
+  test("Y–Δ editor: 3 selected resistors → Y→Δ keeps the corner voltages, is ONE history step, undo restores exactly; Δ→Y (key Y) goes back", async () => {
+    await navigate("/?example=y-network");
+    await autoUpdateOff();
+    await runAnalysis("dc");
+    const original = await state();
+    const before = cornerVoltages(original.result);
+    await pickResistors(["R1", "R2", "R3"]);
+    assert.equal(await ev(`document.getElementById("selection-label").textContent.trim()`), "3개 선택");
+    const offered = await ydeltaButton();
+    assert.deepEqual([offered.text, offered.disabled], ["Y→Δ 변환", false], "the recognised Y offers the command");
+
+    await click('#inspector-content [data-multi-action="ydelta"]');
+    const converted = await state();
+    assert.equal(converted.historyDepth, original.historyDepth + 1, "the whole conversion is ONE history entry");
+    assert.equal(converted.circuit.components.length, original.circuit.components.length, "three resistors became three resistors");
+    assert.ok(!converted.circuit.components.some((item) => ["R1", "R2", "R3"].includes(item.id)), "the old arms are gone");
+    assert.ok(!(converted.circuit.junctions ?? []).some((item) => item.id === "J1"), "and so is the Y's centre junction");
+    assert.equal(converted.selection.length, 3, "the selection moved to the three new resistors");
+    assert.ok(converted.selection.every((key) => key.startsWith("component:") && !["R1", "R2", "R3"].some((id) => key.endsWith(":" + id))));
+    assert.equal(converted.stale, true, "the previous result is marked stale (auto update is off here)");
+    assert.match((await noticeTexts()).join("|"), /Y→Δ 변환: RAB=3\.667 kΩ, RBC=11 kΩ, RCA=5\.5 kΩ/);
+    const values = converted.selection.map((key) => converted.circuit.components.find((item) => key.endsWith(":" + item.id)).props.value);
+    near(parseEng(values[0]), 11e3 / 3, 1e-9, "RAB");
+    near(parseEng(values[1]), 11e3, 1e-9, "RBC");
+    near(parseEng(values[2]), 5.5e3, 1e-9, "RCA");
+    assert.equal((await ydeltaButton()).text, "Δ→Y 변환", "the same three parts now form a Δ");
+    // Undo first (running an analysis can add its own history entries): one Ctrl+Z restores everything.
+    await ctrlKey("z", "KeyZ", 90);
+    const undone = await state();
+    assert.deepEqual(undone.circuit, original.circuit, "one Ctrl+Z restores parts, wires and junctions exactly");
+    assert.equal(undone.historyDepth, original.historyDepth);
+    await ctrlKey("y", "KeyY", 89);
+    assert.deepEqual((await state()).circuit, converted.circuit, "redo converts again, identically");
+    await runAnalysis("dc");
+    const after = cornerVoltages((await state()).result);
+    after.forEach((value, index) => near(value, before[index], 1e-6, `corner ${YD_PINS[index].join(".")}`, 1e-9));
+
+    // Δ→Y with the key Y: the new three are still selected. Corner voltages stay.
+    await ev(`document.querySelectorAll("#canvas-notices button").forEach((button) => button.click())`);
+    await pickResistors(converted.selection.map((key) => key.slice("component:".length))); // undo/redo do not restore the selection
+    const midDepth = (await state()).historyDepth;
+    await press("y", "KeyY", 89);
+    const back = await state();
+    assert.equal(back.historyDepth, midDepth + 1, "the key Y is one more history entry");
+    assert.ok((back.circuit.junctions ?? []).length >= 1, "a new centre junction exists");
+    assert.match((await noticeTexts()).join("|"), /Δ→Y 변환: RA=1 kΩ, RB=2 kΩ, RC=3 kΩ/);
+    await runAnalysis("dc");
+    cornerVoltages((await state()).result).forEach((value, index) => near(value, before[index], 1e-6, `corner ${YD_PINS[index].join(".")} after Δ→Y`, 1e-9));
+  });
+
+  test("Y–Δ editor: a selection that is not a Y or Δ shows a disabled command with the reason; other selections show none", async () => {
+    await navigate("/?example=y-network");
+    await autoUpdateOff();
+    await pickResistors(["R1", "R2", "R4"]);
+    const refused = await ydeltaButton();
+    assert.equal(refused.disabled, true, "R1, R2 and R4 are no Y/Δ");
+    assert.ok(refused.title.length > 5, "the reason is the tooltip: " + refused.title);
+    assert.match(await ev(`document.querySelector("[data-ydelta-reason]").textContent`), /[가-힣]/, "and also visible text for touch screens");
+    const depth = (await state()).historyDepth;
+    await press("y", "KeyY", 89);
+    assert.equal((await state()).historyDepth, depth, "the key Y on a refused selection edits nothing");
+    assert.match((await noticeTexts()).join("|"), /Y–Δ 변환 거부/, "and says why");
+    await ev(`document.querySelectorAll("#canvas-notices button").forEach((button) => button.click())`);
+    await pickResistors(["R1", "R2"]);
+    assert.equal(await ydeltaButton(), null, "two resistors: no command");
+    await pickResistors(["R1", "R2", "V1"]);
+    assert.equal(await ydeltaButton(), null, "a source among them: no command");
+    await selectPart("R1");
+    assert.equal(await ev(`document.querySelector('[data-multi-action="ydelta"]')`), null, "single selection: no command");
+  });
+
+  test("Y–Δ course tool: live sliders and SI fields, RA=RB=RC=1k gives RAB=3 kΩ, bad text keeps the last valid network, direction toggle", async () => {
+    await navigate("/");
+    await click("#circuit-course-workspace-tab");
+    await until(`${L}.getCircuitCourseState()?.active === true`, "the circuit course");
+    assert.equal(await ev(`${L}.getCircuitCourseState().tool`), null, "experiments stay the default view");
+    await click('[data-circuit-course-tool="y-delta"]');
+    assert.equal(await ev(`${L}.getCircuitCourseState().tool`), "y-delta");
+    assert.equal(await ev(`document.querySelector(".circuit-course-layout").hidden`), true, "the experiment form is hidden while the tool is open");
+    assert.equal(await ev(`document.querySelectorAll(".ydelta-svg").length`), 1, "one figure");
+    assert.equal(await ev(`document.querySelectorAll("[data-ydelta-resistor]").length`), 6, "three arms and three sides");
+    assert.equal(await ev(`document.querySelector("#circuit-course-host button.circuit-course-apply")?.offsetParent ?? null`), null, "no apply button is visible");
+    const valueOf = (name) => ev(`document.querySelector('[data-ydelta-value="${name}"]').textContent`);
+    assert.deepEqual([await valueOf("RAB"), await valueOf("RBC"), await valueOf("RCA")], ["3.667 kΩ", "11 kΩ", "5.5 kΩ"], "default Y 1k/2k/3k");
+
+    // Typing applies at once (no button).
+    for (const index of [0, 1, 2]) await typeInto(`[data-ydelta-text="${index}"]`, "1k");
+    assert.deepEqual([await valueOf("RAB"), await valueOf("RBC"), await valueOf("RCA")], ["3 kΩ", "3 kΩ", "3 kΩ"], "RA=RB=RC=1k -> every side 3 kΩ");
+    assert.match(await ev(`document.querySelector("[data-ydelta-read]").textContent`), /Δ의 변은 Y 팔의 3배/);
+    assert.equal((await ev(`Number(document.querySelector('[data-ydelta-slider="0"]').value)`)) > 0, true, "the slider follows the text");
+
+    // The slider is logarithmic and live: its right end is 10 MΩ for RA and the Δ side follows at once.
+    await ev(`(() => { const slider = document.querySelector('[data-ydelta-slider="0"]'); slider.value = slider.max; slider.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    assert.equal(await ev(`document.querySelector('[data-ydelta-text="0"]').value`), "10meg", "slider end = 10 MΩ");
+    near(parseEng(await valueOf("RAB")), 1e7 + 1e3 + (1e7 * 1e3) / 1e3, 1e-3, "RAB for RA=10M, RB=RC=1k");
+    await ev(`(() => { const slider = document.querySelector('[data-ydelta-slider="0"]'); slider.value = 0; slider.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    assert.equal(await ev(`document.querySelector('[data-ydelta-text="0"]').value`), "10", "slider start = 10 Ω");
+
+    // Bad text: the last valid network stays on screen and the field says why.
+    const lastGood = await valueOf("RAB");
+    await typeInto('[data-ydelta-text="1"]', "abc");
+    assert.equal(await ev(`document.querySelector('[data-ydelta-text="1"]').getAttribute("aria-invalid")`), "true");
+    assert.match(await ev(`document.querySelector('[data-ydelta-error="1"]').textContent`), /[가-힣]/);
+    assert.equal(await valueOf("RAB"), lastGood, "outputs keep the last valid values");
+    await typeInto('[data-ydelta-text="1"]', "2.2k");
+    assert.equal(await ev(`document.querySelector('[data-ydelta-text="1"]').getAttribute("aria-invalid")`), null, "a valid value clears the complaint");
+
+    // Direction: the results become the inputs, the figure's roles swap.
+    await click('[data-ydelta-direction="toY"]');
+    const toY = await ev(`${L}.getCircuitCourseState().yDelta`);
+    assert.equal(toY.direction, "toY");
+    assert.deepEqual(Object.keys(toY.inputs), ["RAB", "RBC", "RCA"]);
+    assert.equal(await ev(`document.querySelector('[data-ydelta-shape="Δ"]').dataset.role`), "input");
+    assert.equal(await ev(`document.querySelector('[data-ydelta-shape="Y"]').dataset.role`), "output");
+    near(toY.outputs.RB, 2.2e3, 1e-5, "the round trip returns to the original RB");
+    assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true, "no horizontal overflow");
+    // The numeric experiments are untouched: picking one brings its form back.
+    await click('[data-circuit-course-experiment="impedance"]');
+    assert.equal(await ev(`document.querySelector(".circuit-course-layout").hidden`), false);
+    assert.equal(await ev(`${L}.getCircuitCourseState().tool`), null);
+    assert.equal(await ev(`document.querySelector('[data-circuit-course-tool="y-delta"]').getAttribute("aria-current")`), "false");
+  });
+
+  test("Y–Δ course tool on a phone (390x844): stacked figure, no overflow, touch-sized fields", async () => {
+    await navigate("/", { width: 390, height: 844, mobile: true });
+    await ev(`${L}.activateWorkspace("circuit-course")`);
+    await until(`${L}.getCircuitCourseState()?.active === true`, "the circuit course");
+    await click('[data-circuit-course-tool="y-delta"]');
+    await until(`document.querySelector(".ydelta-svg")?.dataset.layout === "stacked"`, "the stacked phone figure");
+    assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1 && document.getElementById("circuit-course-workspace").scrollWidth <= innerWidth + 1`), true, "no horizontal overflow");
+    const sizes = await ev(`(() => { const box = (selector) => document.querySelector(selector).getBoundingClientRect(); return { svg: box(".ydelta-svg").width, text: box('[data-ydelta-text="0"]').height, button: box('[data-ydelta-direction="toY"]').height }; })()`);
+    assert.ok(sizes.svg <= 390 && sizes.svg > 280, "the figure fits the phone: " + JSON.stringify(sizes));
+    assert.ok(sizes.text >= 40 && sizes.button >= 40, "touch targets are at least 40px: " + JSON.stringify(sizes));
+    const stackedOrder = await ev(`(() => { const top = (selector) => document.querySelector(selector).getBoundingClientRect().top; return top(".ydelta-bar") < top(".ydelta-figure") && top(".ydelta-figure") < top(".ydelta-inputs") && top(".ydelta-inputs") < top("[data-ydelta-read]"); })()`);
+    assert.equal(stackedOrder, true, "stacked order: toggle, figure, fields, read-out");
+    for (const index of [0, 1, 2]) await typeInto(`[data-ydelta-text="${index}"]`, "1k");
+    assert.equal(await ev(`document.querySelector('[data-ydelta-value="RAB"]').textContent`), "3 kΩ");
+    assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true);
+  });
 });

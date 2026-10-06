@@ -184,6 +184,37 @@ export const examples = [
       ],
     ),
   },
+  {
+    id: "y-network",
+    name: "Y 저항망 (Y–Δ 변환)",
+    description: "12 V 전원 뒤에 R1·R2·R3가 한 점에서 만나는 Y가 있고 B·C 가지에 1 kΩ 부하가 있습니다. 저항 3개를 모두 선택하고 'Y→Δ 변환'을 누르면 삼각형으로 바뀌어도 A·B·C 전압은 그대로입니다.",
+    settings: { analysis: "dc" },
+    circuit: {
+      version: 1,
+      geometryVersion: CURRENT_GEOMETRY_VERSION,
+      components: [
+        component("V1", "V", 140, 260, { mode: "DC", dc: "12", ref: "V1" }, 90),
+        component("R1", "R", 320, 260, { value: "1k", ref: "R1" }),
+        component("R2", "R", 420, 160, { value: "2k", ref: "R2" }, 90),
+        component("R3", "R", 420, 360, { value: "3k", ref: "R3" }, 90),
+        component("R4", "R", 560, 160, { value: "1k", ref: "R4" }, 90),
+        component("R5", "R", 560, 360, { value: "1k", ref: "R5" }, 90),
+        component("G1", "GND", 620, 540, { ref: "GND" }),
+      ],
+      junctions: [{ id: "J1", x: 420, y: 260 }],
+      wires: [
+        wire("W1", "V1", 0, "R1", 0),
+        { id: "W2", a: { componentId: "R1", pin: 1 }, b: { junctionId: "J1" } },
+        { id: "W3", a: { componentId: "R2", pin: 1 }, b: { junctionId: "J1" } },
+        { id: "W4", a: { componentId: "R3", pin: 0 }, b: { junctionId: "J1" } },
+        wire("W5", "R2", 0, "R4", 0),
+        wire("W6", "R3", 1, "R5", 1),
+        { id: "W7", a: { componentId: "R4", pin: 1 }, b: { componentId: "G1", pin: 0 }, waypoints: [{ x: 620, y: 200 }] },
+        { id: "W8", a: { componentId: "R5", pin: 0 }, b: { componentId: "G1", pin: 0 }, waypoints: [{ x: 620, y: 320 }] },
+        { id: "W9", a: { componentId: "V1", pin: 1 }, b: { componentId: "G1", pin: 0 }, waypoints: [{ x: 140, y: 500 }] },
+      ],
+    },
+  },
 ];
 
 export function cloneExample(id) {
