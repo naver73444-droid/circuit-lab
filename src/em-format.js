@@ -45,12 +45,6 @@ export function siVector(vector, unit = '', digits = 4) {
   return shared ? withUnit(`(${shared.parts.join(', ')})`, shared.unit) : '미정';
 }
 
-/** "−102 … 102 V": both ends share one prefix. */
-export function siRange(low, high, unit = '', digits = 3) {
-  const shared = siParts([low, high], unit, digits);
-  return shared ? withUnit(`${shared.parts[0]} … ${shared.parts[1]}`, shared.unit) : '미정';
-}
-
 /** "3 + j4 = 5 ∠ 53.13° V" complex value with one shared prefix; polar:false drops the magnitude/angle part. */
 export function siComplex(re, im, unit = '', { digits = 4, polar = true } = {}) {
   const magnitude = Math.hypot(re, im);

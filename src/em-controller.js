@@ -1,40 +1,20 @@
-import { createEMState } from './em-state.js';
-import { C, loopFieldAtN, loopWireDistance, norm3, scale3, sceneMeasurement } from './em-physics.js';
-import { EMView } from './em-view.js';
-import { createPointChargeEvaluator, evaluatePointChargeWorld, pointChargePlaneSample } from './em-playground-physics.js';
-import { preserveCourseFocus } from './course-focus.js';
+// Electromagnetics workspace. Primary view: a 2D top-down sandbox (drag charges and the test charge, everything
+// updates live). Secondary: the same state in 3D, and the problem-solving course (a separate lazy module).
+import { createEMState, DEFAULT_SCENES } from './em-state.js';
 import { createPointChargeEditor } from './em-playground-state.js';
-import { intersectEditingPlane, projectedDistance } from './em-playground-interaction.js';
-import { differential3D, loopCirculation, mathField, sphereFlux } from './em-playground-calculus.js';
-import { makeExampleProject, parseEMProject, serializeEMProject } from './em-playground-project.js';
-import { escapeHtml } from './safe-dom.js';
-import { noiseAwareText, noiseAwareVectorText, plainText, siRange, siText, siVector } from './em-format.js';
+import { createSandboxMode, createSceneMode } from './em-plane-modes.js';
+import { createPlaneController } from './em-plane-controller.js';
+import { create3DPanel } from './em-3d-panel.js';
+import { createInspector } from './em-inspector.js';
+import { createScenesPanel, sceneTitle } from './em-scenes-panel.js';
+import { createCalculusPanel } from './em-calculus-panel.js';
+import { createProjectPanel } from './em-project-panel.js';
+import { createPalette } from './em-palette.js';
+import { freeSpot } from './em-source-edit.js';
+import { planeNormal } from './em-plane-geometry.js';
+import { siText } from './em-format.js';
 
-const labels = { charge:'점전하', dipole:'전기쌍극자', line:'무한 직선전류', loop:'원형 전류고리', wave:'진공 평면파' };
-export function parseEMNumber(value) { const text=String(value??'').trim();if(!text)throw new Error('빈값 또는 유한하지 않은 입력입니다.');const result=Number(text);if(!Number.isFinite(result))throw new Error('빈값 또는 유한하지 않은 입력입니다.');return result; }
-const vectorText = (value, unit) => value ? siVector(value, unit) : '미정';
-// The loop-convergence row is shown only where it carries a number.
-function setIntegrationRow(root, text) { const value=root.querySelector('#em-integration-value'); if(!value)return; value.textContent=text||''; value.hidden=!text; const label=value.previousElementSibling; if(label?.tagName==='DT')label.hidden=!text; }
-const directionOptions = value => ['x','-x','y','-y','z','-z'].map(item=>`<option value="${item}"${item===value?' selected':''}>${item.startsWith('-')?'−':'+'}${item.at(-1)}</option>`).join('');
-const directionVector = value => { const sign=value.startsWith('-')?-1:1,axis=value.at(-1);return [axis==='x'?sign:0,axis==='y'?sign:0,axis==='z'?sign:0]; };
-const directionName = vector => { const index=vector.findIndex(Math.abs);return `${vector[index]<0?'-':''}${'xyz'[index]}`; };
-
-function modelForm(name, model) {
-  if(name==='charge') return `<label>전하 q (nC)<input data-em-model="q" value="${model.q*1e9}"></label><label>소스 x (m)<input data-em-model="sx" value="${model.position[0]}"></label><label>소스 y (m)<input data-em-model="sy" value="${model.position[1]}"></label><label>소스 z (m)<input data-em-model="sz" value="${model.position[2]}"></label>`;
-  if(name==='dipole') return `<label>+전하 q (nC)<input data-em-model="q" value="${model.q*1e9}"></label><label>간격 (m)<input data-em-model="separation" value="${model.separation}"></label><label>+q 방향<select data-em-model="axis">${directionOptions(directionName(model.axis))}</select></label><span class="em-field-note">±q 두 점전하의 정확한 중첩</span>`;
-  if(name==='line') return `<label>전류 I (A)<input data-em-model="current" value="${model.current}"></label><label>+I 방향<select data-em-model="direction">${directionOptions(directionName(model.direction))}</select></label><span class="em-field-note">화면 선분은 무한선 안내 도형</span>`;
-  if(name==='loop') return `<label>전류 I (A)<input data-em-model="current" value="${model.current}"></label><label>반지름 R (m)<input data-em-model="radius" value="${model.radius}"></label><label>법선<select data-em-model="normal">${directionOptions(directionName(model.normal))}</select></label><span class="em-field-note">법선에서 볼 때 +I는 반시계 · N=64…1024 수렴 표시</span>`;
-  return `<label>E peak (V/m)<input data-em-model="amplitude" value="${model.amplitude}"></label><label>주파수 (Hz)<input data-em-model="frequency" value="${model.frequency}"></label><label>위상 (°)<input data-em-model="phaseDeg" value="${model.phase*180/Math.PI}"></label><label>진행 방향<select data-em-model="direction">${directionOptions(directionName(model.direction))}</select></label><span class="em-field-note">편광은 진행축과 직교하는 기본축 · peak/cos 기준</span>`;
-}
-
-function deriveFields(name, raw, model) {
-  if(name==='charge') return {q:parseEMNumber(raw.q)*1e-9,position:[parseEMNumber(raw.sx),parseEMNumber(raw.sy),parseEMNumber(raw.sz)]};
-  if(name==='dipole') return {q:parseEMNumber(raw.q)*1e-9,separation:parseEMNumber(raw.separation),axis:directionVector(raw.axis)};
-  if(name==='line') return {current:parseEMNumber(raw.current),direction:directionVector(raw.direction)};
-  if(name==='loop') return {current:parseEMNumber(raw.current),radius:parseEMNumber(raw.radius),normal:directionVector(raw.normal)};
-  const direction=directionVector(raw.direction),polarization=Math.abs(direction[0])===1?[0,1,0]:[1,0,0];
-  return {amplitude:parseEMNumber(raw.amplitude),frequency:parseEMNumber(raw.frequency),phase:((parseEMNumber(raw.phaseDeg)%360)+360)%360*Math.PI/180,direction,polarization};
-}
+export { parseEMNumber } from './em-scenes-panel.js';
 
 // The course (lesson registry + topic modules, ~290KB) loads only when it is opened.
 // A failed module fetch is cached by the browser, so a retry adds a cache-busting suffix.
@@ -48,274 +28,346 @@ function loadEMCourseModule() {
   return courseModulePromise;
 }
 export function prefetchEMCourse() { loadEMCourseModule().catch(() => {}); }
-export function createEMController(root) {
-  const store=createEMState(), s=store.state, $=selector=>root.querySelector(selector);
-  const playground=createPointChargeEditor(), pg=playground.state;
-  const view=new EMView($('#em-canvas'),$('#em-renderer-status')),events=new AbortController(),listen={signal:events.signal};
-  const diagnostics={lineRuns:0,sliceRuns:0,suspends:0,lastLines:null,lastSlice:null};
-  let raf=null,lastFrame=0,destroyed=false,cachedLines=[],lineTask=0,cachedSlice=null,sliceTask=0,isPlayground=true,courseActive=false,workspaceActive=false,course=null,coursePending=null,courseStatus=null,cachedPlaygroundSlice=null,playgroundDragOffset=null,playgroundVectorMode='E',playgroundLegend={mode:'auto'},playgroundSliceDrag=null,suppressPlaygroundSliceClick=false,calculusDisplay=null,emLoadGeneration=0,frameId=null,frameDirty=0,lastSourceStructure=null,cachedLinesKey=null,pendingLinesKey=null,cachedSliceKey=null,pendingSliceKey=null;
-  const DIRTY_SCENE=1,DIRTY_PANELS=2,DIRTY_ALL=3;
-  function publishDiagnostics(){root.dataset.emLineRuns=String(diagnostics.lineRuns);root.dataset.emSliceRuns=String(diagnostics.sliceRuns);root.dataset.emSuspends=String(diagnostics.suspends);root.dataset.emPointers=String(view.pointers.size);if(diagnostics.lastSlice){root.dataset.emSliceLocations=String(diagnostics.lastSlice.locations);root.dataset.emSliceSourceTerms=String(diagnostics.lastSlice.sourceTerms);}}
-  // One rAF per frame: every request in the same frame is merged into a single render (flags OR-ed together).
-  function flushFrame(){frameId=null;const dirty=frameDirty;frameDirty=0;if(destroyed||!s.active)return;render(dirty);}
-  function requestRender(dirty=DIRTY_ALL){frameDirty|=dirty;if(frameId===null&&!destroyed)frameId=requestAnimationFrame(flushFrame);}
-  function cancelFrame(){if(frameId!==null){cancelAnimationFrame(frameId);frameId=null;}frameDirty=0;}
-  view.cameraListener=delta=>{if(!s.active)return;s.camera.yaw+=delta.yaw;s.camera.pitch=Math.max(-1.45,Math.min(1.45,s.camera.pitch+delta.pitch));s.camera.distance=Math.max(2,Math.min(20,s.camera.distance+delta.zoom));requestRender(DIRTY_SCENE);};
-  view.interactionListener={
-    down(_event,ray){
-      if(!isPlayground||!s.active||!ray)return false;let target=null,distance=Infinity;
-      for(const source of pg.sources.filter(item=>item.visible!==false)){const candidates=source.type==='finite-line'?[{handle:'start',position:source.start},{handle:'end',position:source.end},{handle:'body',position:sourceCenter(source)}]:source.type==='infinite-line'?[{handle:'body',position:source.position},{handle:'direction',position:source.position.map((value,index)=>value+source.direction[index]*source.displayLength/2)}]:[{handle:'body',position:source.position}];for(const candidate of candidates){const next=projectedDistance(ray,candidate.position);if(next<distance){target={source,...candidate};distance=next;}}}
-      if(!target||distance>Math.max(.12,s.camera.distance*.025))return false;
-      const fixed=planeFixed(pg.plane,target.position),hit=intersectEditingPlane(ray,pg.plane,fixed);if(!hit)return false;
-      playground.select(target.source.id);if(!playground.beginDrag(target.source.id,pg.plane,target.handle,target.position)){renderPlayground();return true;}playgroundDragOffset=target.position.map((value,index)=>value-hit[index]);refreshPlayground();return true;
-    },
-    move(_event,ray){if(!pg.drag||!ray)return;const fixed=planeFixed(pg.drag.plane,pg.drag.origin),hit=intersectEditingPlane(ray,pg.drag.plane,fixed);if(!hit)return;playground.previewDrag(hit.map((value,index)=>value+playgroundDragOffset[index]));refreshPlayground({defer:true});},
-    up(_event,cancelled,ray){if(!pg.drag)return;if(cancelled||!ray)playground.cancelDrag();else{const fixed=planeFixed(pg.drag.plane,pg.drag.origin),hit=intersectEditingPlane(ray,pg.drag.plane,fixed);if(hit)playground.commitDrag(hit.map((value,index)=>value+playgroundDragOffset[index]));else playground.cancelDrag();}playgroundDragOffset=null;refreshPlayground();},
-  };
 
-  const activeVector=result=>result?.E??result?.B??[0,0,0];
-  function visualMeasurement(model,p,time=0){
-    if(model.kind!=='loop')return sceneMeasurement(model,p,time);
-    const exclusion=Math.max(.001,.02*model.radius);
-    if(model.current!==0&&loopWireDistance(model,p)<=exclusion)return{status:'excluded',reason:'고리 도선 모델 제외영역',B:null};
-    return{status:'valid',B:loopFieldAtN(model,p,64),samples:64,visualApproximation:true};
-  }
-  const playgroundSnapshot=()=>({
-    revision:pg.revision,
-    calculationToken:pg.calculationToken,
-    sources:structuredClone(pg.sources),
-    point:[...pg.probe],
-    plane:pg.plane,
-    result:evaluatePointChargeWorld(pg.sources,pg.probe,{jacobian:false}),
+const WAVE_CYCLES_PER_SECOND = 0.5;
+// Assigning identical text still invalidates layout; the readouts update on every drag frame.
+const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
+const HINTS = {
+  sandbox: '전하와 노란 시험전하를 끌어 보세요 · 휠로 확대',
+  scene: '노란 관측점을 끌어 보세요 · 휠로 확대',
+  '3d': '빈 곳을 끌면 시점이 돌아갑니다 · 휠로 확대 · 전하는 선택한 평면 위에서 끌 수 있습니다',
+};
+
+export function createEMController(root) {
+  const events = new AbortController(), listen = { signal: events.signal };
+  const $ = selector => root.querySelector(selector);
+  const store = createEMState(), s = store.state;
+  const editor = createPointChargeEditor(), pg = editor.state;
+  const lab = {
+    tab: 'plane', scene: 'playground', chips: { lines: true, contours: true, gauss: false },
+    gauss: null, view: { span: 3, offset: [0, 0] }, quality: 'final', error: '',
+  };
+  const modes = { sandbox: createSandboxMode(editor), scene: createSceneMode(store) };
+  const getMode = () => (lab.scene === 'playground' ? modes.sandbox : modes.scene);
+  const diagnostics = { frames: 0, suspends: 0, lastDrawMs: 0, lastFrameMs: 0, chromeMs: 0, panelsMs: 0 };
+  let frameId = null, destroyed = false, workspaceActive = false, courseActive = false;
+  let course = null, coursePending = null, courseStatus = null, playFrame = null, lastTick = 0;
+
+  const palette = createPalette(root, () => { plane.invalidate(); threeD.invalidate(); requestRender(); });
+  const getPalette = () => palette.current();
+  const requestRender = () => { if (frameId === null && !destroyed) frameId = requestAnimationFrame(flush); };
+  const flush = () => { frameId = null; render(); };
+
+  const plane = createPlaneController({
+    baseCanvas: $('#em-plane-base'), canvas: $('#em-plane'), editor, getMode, lab, getPalette, onChange: requestRender, signal: events.signal,
   });
-  const planeFixed=(plane,point)=>point[plane==='xy'?2:plane==='xz'?1:0];
-  const sourceCenter=source=>source.type==='finite-line'?source.start.map((value,axis)=>(value+source.end[axis])/2):source.position;
-  const sourceLabel=source=>source.type==='finite-line'?`유한선 ${source.lambda>=0?'+':'−'}${Math.abs(source.lambda*1e9).toPrecision(4)} nC/m`:source.type==='infinite-line'?`무한선 ${source.lambda>=0?'+':'−'}${Math.abs(source.lambda*1e9).toPrecision(4)} nC/m · s_ref ${source.sRef} m`:`점 ${source.q>=0?'+':'−'}${Math.abs(source.q*1e9).toPrecision(4)} nC · (${source.position.map(value=>value.toPrecision(3)).join(', ')})`;
-  const calculusSettings=()=>({mode:$('#em-c-field-mode').value,differentialMode:$('#em-c-differential-mode').value,alpha:parseEMNumber($('#em-c-alpha').value),h:parseEMNumber($('#em-c-h').value),radius:parseEMNumber($('#em-c-radius').value),normal:['x','y','z'].map(axis=>parseEMNumber($(`#em-c-normal-${axis}`).value))});
-  const currentLegend=()=>$('#em-d-legend').value==='fixed'?{mode:'fixed',min:parseEMNumber($('#em-d-legend-min').value),max:parseEMNumber($('#em-d-legend-max').value)}:{mode:'auto'};
-  const projectSnapshot=()=>({format:'circuit-lab-em-playground',version:1,world:{sources:structuredClone(pg.sources),probe:[...pg.probe],plane:pg.plane,selectedId:pg.selectedId,comparison:pg.comparison?{sources:structuredClone(pg.comparison.sources),probe:[...pg.comparison.probe]}:null},view:{camera:{yaw:s.camera.yaw,pitch:s.camera.pitch,distance:s.camera.distance},vectorMode:playgroundVectorMode},calculus:calculusSettings(),legend:currentLegend()});
-  function applyEMProject(project){playground.replaceWorld(project.world);Object.assign(s.camera,project.view.camera);playgroundVectorMode=project.view.vectorMode;playgroundLegend=structuredClone(project.legend);$('#em-c-field-mode').value=project.calculus.mode;$('#em-c-differential-mode').value=project.calculus.differentialMode;$('#em-c-alpha').value=project.calculus.alpha;$('#em-c-h').value=project.calculus.h;$('#em-c-radius').value=project.calculus.radius;['x','y','z'].forEach((axis,index)=>$(`#em-c-normal-${axis}`).value=project.calculus.normal[index]);$('#em-d-legend').value=project.legend.mode;$('#em-d-legend-min').value=project.legend.min??-10;$('#em-d-legend-max').value=project.legend.max??10;calculusDisplay=null;$('#em-c-result').textContent='계산 전 · 불러온 장면에서 다시 계산하세요.';$('#em-c-result').title='';$('#em-d-status').textContent='불러오기 완료 · 실행 취소 기록을 초기화했습니다.';refreshPlayground();}
-  function saveEMProject(){if(pg.draft||pg.drag){$('#em-d-status').textContent='적용하지 않은 입력이나 끌기를 적용 또는 취소한 뒤 저장하세요.';return;}try{const source=serializeEMProject(projectSnapshot()),url=URL.createObjectURL(new Blob([source],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download='circuit-lab-em-playground.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),0);$('#em-d-status').textContent=`저장했습니다 · ${new TextEncoder().encode(source).byteLength} bytes`;}catch(error){$('#em-d-status').textContent=`저장 오류: ${error.message}`;}}
-  const sourceEditorForm=(source,draft)=>{if(!source)return'<span class="em-field-note">원천을 선택하세요.</span>';const value=(key,fallback)=>draft?.[key]??String(fallback),input=(label,key,fallback)=>`<label>${label}<input data-em-pg-draft="${key}" value="${escapeHtml(value(key,fallback))}"></label>`;if(source.type==='finite-line')return input('λ (nC/m)','lambda',source.lambda*1e9)+['x','y','z'].map((axis,index)=>input(`A ${axis}`,'a'+axis,source.start[index])).join('')+['x','y','z'].map((axis,index)=>input(`B ${axis}`,'b'+axis,source.end[index])).join('');if(source.type==='infinite-line')return input('λ (nC/m)','lambda',source.lambda*1e9)+['x','y','z'].map((axis,index)=>input(`기준 ${axis}`,'p'+axis,source.position[index])).join('')+['x','y','z'].map((axis,index)=>input(`방향 ${axis}`,'d'+axis,source.direction[index])).join('')+input('s_ref (m)','sRef',source.sRef)+input('표시 길이 (m)','displayLength',source.displayLength);return input('q (nC)','q',source.q*1e9)+['x','y','z'].map((axis,index)=>input(axis,axis,source.position[index])).join('');};
-  // Rebuild the source list only when its structure (ids / selection / checkboxes) changes. Label-only changes
-  // (e.g. a dragged charge's coordinates) patch the button text in place, so keyboard focus and the DOM survive a drag.
-  function syncSourceList(){
-    const list=$('#em-source-list'),structure=JSON.stringify([pg.selectedId,pg.sources.map(source=>[source.id,Boolean(source.enabled),Boolean(source.visible)])]);
-    const rows=[...list.querySelectorAll('[data-em-source-row]')];
-    if(structure===lastSourceStructure&&rows.length===pg.sources.length){
-      pg.sources.forEach((source,index)=>{const row=rows[index],button=row.querySelector('[data-em-source-select]'),enabled=row.querySelector('[data-em-source-enabled]'),visible=row.querySelector('[data-em-source-visible]'),label=`${source.id} · ${sourceLabel(source)}`;if(button.textContent!==label)button.textContent=label;if(enabled.checked!==Boolean(source.enabled))enabled.checked=Boolean(source.enabled);if(visible.checked!==Boolean(source.visible))visible.checked=Boolean(source.visible);});
+  const threeD = create3DPanel({
+    canvas: $('#em-canvas'), status: $('#em-renderer-status'), editor, store, lab, getMode, getPalette,
+    onChange: requestRender, isActive: () => s.active && lab.tab === '3d', signal: events.signal,
+  });
+  const inspector = createInspector({
+    host: $('#em-inspector'), editor, request: requestRender, getPlane: () => pg.plane, signal: events.signal,
+  });
+  const scenesPanel = createScenesPanel({
+    host: $('#em-model-fields'), store, signal: events.signal,
+    onApplied: () => { lab.error = ''; requestRender(); },
+    onError: text => { lab.error = text; requestRender(); },
+  });
+  const calculus = createCalculusPanel({
+    root, editor, isSandbox: () => lab.scene === 'playground', getPalette, signal: events.signal,
+  });
+  createProjectPanel({
+    root, editor, store, calculus, signal: events.signal,
+    onLoaded: () => { setScene('playground'); lab.gauss = null; if (lab.chips.gauss) plane.placeGauss(); requestRender(); },
+  });
+
+  // ---- one render ------------------------------------------------------------------------------------------------
+
+  function syncChrome() {
+    const sandbox = lab.scene === 'playground', mode = getMode();
+    root.querySelectorAll('[data-em-tab]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emTab === lab.tab)));
+    root.querySelectorAll('[data-em-scene]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emScene === lab.scene)));
+    root.querySelectorAll('[data-em-chip]').forEach(button => button.setAttribute('aria-pressed', String(lab.chips[button.dataset.emChip])));
+    $('#em-plane').hidden = lab.tab !== 'plane';
+    $('#em-plane-base').hidden = lab.tab !== 'plane';
+    $('#em-canvas').hidden = lab.tab !== '3d';
+    $('#em-3d-bar').hidden = lab.tab !== '3d';
+    $('#em-palette').hidden = !sandbox;
+    $('#em-chip-gauss').hidden = !sandbox;
+    $('#em-chip-contours').hidden = lab.tab === '3d';
+    $('#em-pg-undo').hidden = !sandbox;
+    $('#em-pg-redo').hidden = !sandbox;
+    $('#em-pg-undo').disabled = !pg.past.length;
+    $('#em-pg-redo').disabled = !pg.future.length;
+    $('#em-chip-contours').textContent = sandbox || mode.field().scalarName === 'V' ? '등전위선' : '등크기선';
+    $('#em-inspector').hidden = !sandbox;
+    $('#em-wave-controls').hidden = lab.scene !== 'wave';
+    $('#em-play').textContent = s.playing ? '정지' : '재생';
+    $('#em-readout-target').textContent = sandbox ? '시험전하' : sceneTitle(lab.scene);
+    $('#em-hint').textContent = lab.tab === '3d' ? HINTS['3d'] : sandbox ? HINTS.sandbox : HINTS.scene;
+    const select = $('#em-pg-plane');
+    if (select.value !== mode.plane()) select.value = mode.plane();
+    const error = sandbox ? pg.error : lab.error || s.error;
+    $('#em-error').hidden = !error;
+    $('#em-error').textContent = error || '';
+  }
+
+  function showReadouts(info) {
+    setText($('#em-sensor-text'), info.readout.compact);
+    const rows = $('#em-sensor-rows'), rowsKey = JSON.stringify(info.readout.rows);
+    if (rows.dataset.key !== rowsKey) {
+      rows.dataset.key = rowsKey;
+      rows.replaceChildren(...info.readout.rows.flatMap(row => {
+        const dt = document.createElement('dt'), dd = document.createElement('dd');
+        dt.textContent = row.label;
+        dd.textContent = row.text;
+        return [dt, dd];
+      }));
+    }
+    const box = $('#em-gauss-readout');
+    box.hidden = !info.gauss;
+    if (!info.gauss) return;
+    const lines = $('#em-gauss-lines'), linesKey = info.gauss.lines.join('|');
+    if (lines.dataset.key !== linesKey) {
+      lines.dataset.key = linesKey;
+      lines.replaceChildren(...info.gauss.lines.map(text => Object.assign(document.createElement('p'), { textContent: text })));
+    }
+    lines.dataset.agrees = String(info.gauss.agrees);
+    $('#em-gauss-state').textContent = info.gauss.agrees === null ? '' : info.gauss.agrees ? '가우스 법칙과 일치' : '근사 중';
+    const slider = $('#em-gauss-radius');
+    if (slider !== document.activeElement) slider.value = String(lab.gauss.radius);
+    $('#em-gauss-radius-text').textContent = `${Number(lab.gauss.radius.toFixed(2))} m`;
+  }
+
+  function showTime() {
+    if (lab.scene !== 'wave') return;
+    $('#em-time').value = String(s.timeCycles);
+    const model = s.models.wave;
+    $('#em-time-text').textContent = `t = ${siText(s.timeCycles / model.frequency, 's', 3)} (${s.timeCycles.toFixed(2)} T)`;
+  }
+
+  function render() {
+    if (destroyed || !s.active) return;
+    const started = performance.now();
+    syncChrome();
+    const chromeDone = performance.now();
+    const info = lab.tab === 'plane' ? plane.draw() : (threeD.draw(), plane.measure());
+    const drawDone = performance.now();
+    diagnostics.frames += 1;
+    if (info) showReadouts(info);
+    if (lab.scene === 'playground') inspector.sync(); else scenesPanel.refresh();
+    showTime();
+    calculus.update(plane.isDragging());
+    const done = performance.now();
+    Object.assign(diagnostics, {
+      lastDrawMs: drawDone - started, lastFrameMs: done - started, chromeMs: chromeDone - started, panelsMs: done - drawDone,
+    });
+  }
+
+  // ---- scenes, playback ------------------------------------------------------------------------------------------
+
+  function stopPlayback() {
+    if (playFrame !== null) { cancelAnimationFrame(playFrame); playFrame = null; }
+    store.stop();
+  }
+
+  function tick(now) {
+    if (!s.active || document.hidden || !s.playing) { playFrame = null; return; }
+    if (now - lastTick >= 1000 / 30) {
+      const dt = Math.min(0.1, (now - lastTick) / 1000 || 0);
+      lastTick = now;
+      store.setTime((s.timeCycles + dt * WAVE_CYCLES_PER_SECOND) % 2);
+      render();
+    }
+    playFrame = requestAnimationFrame(tick);
+  }
+
+  function setScene(name) {
+    stopPlayback();
+    plane.cancel();
+    lab.error = '';
+    lab.scene = name;
+    if (name !== 'playground') store.setScene(name);
+    scenesPanel.show(name === 'playground' ? null : name);
+    plane.invalidate();
+    threeD.invalidate();
+  }
+
+  // ---- events ----------------------------------------------------------------------------------------------------
+
+  function addSource(kind) {
+    const mode = modes.sandbox, plane3 = pg.plane;
+    const spot = freeSpot(pg.sources, plane3, mode.fixed(), pg.probe);
+    const along = plane3 === 'yz' ? [0, 1, 0] : [1, 0, 0];
+    const shift = (vector, scale) => spot.map((value, i) => value + vector[i] * scale);
+    if (kind === 'finite') editor.addFiniteLine(1e-9, shift(along, -0.75), shift(along, 0.75));
+    else if (kind === 'infinite') editor.addInfiniteLine(1e-9, spot, along);
+    else editor.add(kind * 1e-9, spot);
+  }
+
+  root.addEventListener('click', event => {
+    const target = event.target.closest('button');
+    if (!target) return;
+    if (target.id === 'em-course-open') { switchCourse(true); return; }
+    if (target.dataset.emTab) { lab.tab = target.dataset.emTab; plane.cancel(); threeD.cancel(); requestRender(); return; }
+    if (target.dataset.emScene) { setScene(target.dataset.emScene); requestRender(); return; }
+    if (target.dataset.emChip) {
+      const name = target.dataset.emChip;
+      lab.chips[name] = !lab.chips[name];
+      if (name === 'gauss' && lab.chips.gauss && !lab.gauss) plane.placeGauss();
+      requestRender();
       return;
     }
-    const restoreFocus=preserveCourseFocus(root,['data-em-source-select','data-em-source-enabled','data-em-source-visible']);
-    list.innerHTML=pg.sources.map(source=>{const attribute=escapeHtml(source.id),label=escapeHtml(`${source.id} · ${sourceLabel(source)}`);return`<div class="em-source-row${source.id===pg.selectedId?' selected':''}" role="option" aria-selected="${source.id===pg.selectedId}" data-em-source-row="${attribute}"><button data-em-source-select="${attribute}" type="button">${label}</button><label><input data-em-source-enabled="${attribute}" type="checkbox"${source.enabled?' checked':''}>계산</label><label><input data-em-source-visible="${attribute}" type="checkbox"${source.visible?' checked':''}>표시</label></div>`;}).join('')||'<p class="em-field-note">점전하가 없습니다. +q 또는 −q를 추가하세요.</p>';
-    lastSourceStructure=structure;restoreFocus();
-  }
-  function syncPlaygroundControls(){
-    syncSourceList();
-    const selected=pg.sources.find(source=>source.id===pg.selectedId),draft=pg.draft?.id===pg.selectedId?pg.draft:null,fieldRoot=$('#em-pg-source-fields');if(!fieldRoot.contains(document.activeElement))fieldRoot.innerHTML=sourceEditorForm(selected,draft);root.querySelectorAll('[data-em-pg-draft]').forEach(input=>{input.disabled=!selected||(pg.draft&&pg.draft.id!==pg.selectedId);});
-    $('#em-pg-plane').value=pg.plane;$('#em-slice-select').value=pg.plane;$('#em-pg-vector').value=playgroundVectorMode;
-    $('#em-pg-undo').disabled=!pg.past.length||Boolean(pg.draft);$('#em-pg-redo').disabled=!pg.future.length||Boolean(pg.draft);
-    const hint=$('#em-selected-hint'),hintText=!selected?'선택한 전하가 없습니다. +q / −q / 선을 추가하세요.':pg.draft?'입력 적용 또는 취소 후 이동하세요.':'';hint.textContent=hintText;hint.hidden=!isPlayground||!hintText;
-    $('#em-pg-delete').disabled=!selected||Boolean(pg.draft);$('#em-pg-clone').disabled=!selected||Boolean(pg.draft);
-  }
-  const playgroundDisplayField=result=>playgroundVectorMode==='gradV'?result.gradV:playgroundVectorMode==='minusGradV'?result.gradV.map(value=>-value):result.E;
-  function playgroundGridVectors(sample){
-    if(!sample)return[];const arrows=[];
-    for(let row=2;row<sample.grid;row+=5)for(let column=2;column<sample.grid;column+=5){const item=sample.values[row*sample.grid+column],field=item.result.status==='valid'?playgroundDisplayField(item.result):null,magnitude=field?norm3(field):0;if(!magnitude)continue;const direction=scale3(field,.18/magnitude);arrows.push({start:item.point,end:item.point.map((value,index)=>value+direction[index])});}
-    return arrows;
-  }
-  function renderPlaygroundSlice(snapshot){
-    const canvas=$('#em-slice'),ctx=canvas.getContext('2d'),dpr=Math.min(1.5,devicePixelRatio||1),w=Math.max(2,Math.round(canvas.clientWidth*dpr)),h=Math.max(2,Math.round(canvas.clientHeight*dpr));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}ctx.clearRect(0,0,w,h);
-    const cache=cachedPlaygroundSlice;if(!cache||cache.revision!==snapshot.revision){ctx.fillStyle='#111827';ctx.fillRect(0,0,w,h);ctx.fillStyle='#cbd5e1';ctx.font=`${Math.max(11,12*dpr)}px sans-serif`;ctx.fillText('전위·E 격자 계산 중',10*dpr,20*dpr);return;}
-    const sharedMax=cache.sharedMax||1,range=cache.range??{min:-sharedMax,max:sharedMax},panels=cache.comparison?[{sample:cache.comparison,sources:pg.comparison.sources,point:pg.comparison.probe,label:'이동 전'},{sample:cache.current,sources:snapshot.sources,point:snapshot.point,label:'현재'}]:[{sample:cache.current,sources:snapshot.sources,point:snapshot.point,label:'현재'}],panelWidth=w/panels.length;
-    const drawArrow=(x,y,dx,dy)=>{ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+dx,y+dy);ctx.stroke();const angle=Math.atan2(dy,dx),head=3.5*dpr;ctx.beginPath();ctx.moveTo(x+dx,y+dy);ctx.lineTo(x+dx-head*Math.cos(angle-.55),y+dy-head*Math.sin(angle-.55));ctx.moveTo(x+dx,y+dy);ctx.lineTo(x+dx-head*Math.cos(angle+.55),y+dy-head*Math.sin(angle+.55));ctx.stroke();};
-    const edgePoint=(edge,level,corners,x0,y0,cellW,cellH)=>{const pairs=[[0,1],[1,2],[3,2],[0,3]],positions=[[0,0],[1,0],[1,1],[0,1]],[a,b]=pairs[edge],denominator=corners[b]-corners[a],t=denominator?Math.max(0,Math.min(1,(level-corners[a])/denominator)):.5;return[x0+(positions[a][0]+t*(positions[b][0]-positions[a][0]))*cellW,y0+(positions[a][1]+t*(positions[b][1]-positions[a][1]))*cellH];};
-    panels.forEach((panel,panelIndex)=>{const {sample}=panel,{grid,values}=sample,xOffset=panelIndex*panelWidth,cellW=panelWidth/grid,cellH=h/grid;
-      for(let row=0;row<grid;row+=1)for(let column=0;column<grid;column+=1){const item=values[row*grid+column],value=item.result.status==='valid'?item.result.potential:NaN,clamped=Number.isFinite(value)?Math.max(range.min,Math.min(range.max,value)):NaN,t=Number.isFinite(clamped)?2*(clamped-range.min)/(range.max-range.min)-1:0;ctx.fillStyle=Number.isFinite(value)?`rgb(${Math.round(35+190*Math.max(0,t))},${Math.round(45+80*(1-Math.abs(t)))},${Math.round(55+190*Math.max(0,-t))})`:'#111827';ctx.fillRect(xOffset+column*cellW,row*cellH,Math.ceil(cellW),Math.ceil(cellH));}
-      ctx.strokeStyle='rgba(255,255,255,.58)';ctx.lineWidth=Math.max(1,dpr*.75);const levels=[.17,.33,.5,.67,.83].map(fraction=>range.min+(range.max-range.min)*fraction);
-      for(let row=0;row<grid-1;row+=1)for(let column=0;column<grid-1;column+=1){const cells=[values[row*grid+column],values[row*grid+column+1],values[(row+1)*grid+column+1],values[(row+1)*grid+column]],corners=cells.map(item=>item.result.status==='valid'?item.result.potential:NaN);if(corners.some(value=>!Number.isFinite(value)))continue;for(const level of levels){const edges=[];for(let edge=0;edge<4;edge+=1){const pairs=[[0,1],[1,2],[3,2],[0,3]],[a,b]=pairs[edge];if((corners[a]<level&&corners[b]>=level)||(corners[b]<level&&corners[a]>=level))edges.push(edge);}for(let index=0;index+1<edges.length;index+=2){const first=edgePoint(edges[index],level,corners,xOffset+column*cellW,row*cellH,cellW,cellH),second=edgePoint(edges[index+1],level,corners,xOffset+column*cellW,row*cellH,cellW,cellH);ctx.beginPath();ctx.moveTo(...first);ctx.lineTo(...second);ctx.stroke();}}}
-      ctx.strokeStyle='rgba(80,220,255,.95)';ctx.fillStyle='rgba(80,220,255,.95)';ctx.lineWidth=Math.max(1,1.2*dpr);for(let row=2;row<grid;row+=5)for(let column=2;column<grid;column+=5){const item=values[row*grid+column],field=item.result.status==='valid'?playgroundDisplayField(item.result):null,magnitude=field?norm3(field):0;if(!magnitude)continue;const axes=sample.plane==='xy'?[0,1]:sample.plane==='xz'?[0,2]:[1,2],dx=field[axes[0]]/magnitude*8*dpr,dy=-field[axes[1]]/magnitude*8*dpr,x=xOffset+(column+.5)*panelWidth/grid,y=(row+.5)*h/grid;drawArrow(x,y,dx,dy);}
-      const axes=sample.plane==='xy'?[0,1]:sample.plane==='xz'?[0,2]:[1,2],normal=sample.plane==='xy'?2:sample.plane==='xz'?1:0,toCanvas=position=>[xOffset+(position[axes[0]]+2)/4*panelWidth,(2-position[axes[1]])/4*h];for(const source of panel.sources.filter(item=>item.visible!==false)){const strength=source.type==='point'?source.q:source.lambda,color=strength>=0?'#ff694f':'#4f91ff';if(source.type==='finite-line'){const a=toCanvas(source.start),b=toCanvas(source.end);ctx.strokeStyle=color;ctx.lineWidth=3*dpr;ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();for(const p of [a,b]){ctx.beginPath();ctx.fillStyle=color;ctx.arc(...p,Math.max(4,5*dpr),0,Math.PI*2);ctx.fill();}}else if(source.type==='infinite-line'){const start=source.position.map((v,i)=>v-source.direction[i]*source.displayLength/2),end=source.position.map((v,i)=>v+source.direction[i]*source.displayLength/2),a=toCanvas(start),b=toCanvas(end);ctx.strokeStyle=color;ctx.lineWidth=3*dpr;ctx.setLineDash([6*dpr,4*dpr]);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();ctx.setLineDash([]);const p=toCanvas(source.position);ctx.beginPath();ctx.fillStyle=color;ctx.arc(...p,4*dpr,0,Math.PI*2);ctx.fill();}else{const [x,y]=toCanvas(source.position),depth=Math.abs(source.position[normal]-sample.fixedCoordinate);ctx.globalAlpha=depth<1e-9?1:.45;ctx.beginPath();ctx.fillStyle=color;ctx.arc(x,y,Math.max(10,12*dpr),0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font=`bold ${Math.max(12,13*dpr)}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(source.q>=0?'+':'−',x,y);}
-        const center=toCanvas(sourceCenter(source));
-        if(source.id===pg.selectedId&&panelIndex===panels.length-1){ctx.strokeStyle='#fff';ctx.lineWidth=2*dpr;ctx.beginPath();ctx.arc(...center,17*dpr,0,Math.PI*2);ctx.stroke();}
-        ctx.font=`bold ${12*dpr}px sans-serif`;ctx.textAlign='left';ctx.textBaseline='bottom';ctx.strokeStyle='#07101f';ctx.lineWidth=3*dpr;ctx.strokeText(source.id,center[0]+14*dpr,center[1]-12*dpr);ctx.fillStyle='#fff';ctx.fillText(source.id,center[0]+14*dpr,center[1]-12*dpr);
-      }
-      const probeX=xOffset+(panel.point[axes[0]]+2)/4*panelWidth,probeY=(2-panel.point[axes[1]])/4*h;ctx.strokeStyle='#fff';ctx.lineWidth=1.5*dpr;ctx.beginPath();ctx.moveTo(probeX-5*dpr,probeY);ctx.lineTo(probeX+5*dpr,probeY);ctx.moveTo(probeX,probeY-5*dpr);ctx.lineTo(probeX,probeY+5*dpr);ctx.stroke();ctx.fillStyle='#fff';ctx.font=`${Math.max(9,10*dpr)}px sans-serif`;ctx.textAlign='left';ctx.textBaseline='top';ctx.fillText(panel.label,xOffset+5*dpr,5*dpr);
-    });
-    if(panels.length===2){ctx.strokeStyle='rgba(255,255,255,.8)';ctx.beginPath();ctx.moveTo(panelWidth,0);ctx.lineTo(panelWidth,h);ctx.stroke();}
-    ctx.fillStyle='#fff';ctx.font=`${Math.max(9,9*dpr)}px sans-serif`;ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.fillText(`전위 색 범위 ${siRange(range.min,range.max,'V',3)}`,6*dpr,h-6*dpr);
-  }
-  function renderCalculusPanel(snapshot){const canvas=$('#em-c-visual'),ctx=canvas.getContext('2d'),dpr=Math.min(1.5,devicePixelRatio||1),w=Math.max(2,Math.round(canvas.clientWidth*dpr)),h=Math.max(2,Math.round(canvas.clientHeight*dpr));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}ctx.fillStyle='#07101f';ctx.fillRect(0,0,w,h);ctx.fillStyle='#cbd5e1';ctx.font=`${Math.max(10,11*dpr)}px sans-serif`;if(!calculusDisplay){ctx.fillText('계산하면 같은 장의 벡터와 연산·적분 기여를 비교합니다.',10*dpr,20*dpr);return;}if(calculusDisplay.revision!==snapshot.revision||pg.draft){ctx.fillStyle='#fbbf24';ctx.fillText('다시 계산 필요 · 입력이 바뀌어 이전 결과 표시를 잠갔습니다',10*dpr,20*dpr);return;}const value=calculusDisplay,axes=snapshot.plane==='xy'?[0,1]:snapshot.plane==='xz'?[0,2]:[1,2],normalAxis=snapshot.plane==='xy'?2:snapshot.plane==='xz'?1:0,top=h*.62,leftWidth=w*.5,map=(point,side=0)=>[side*leftWidth+(point[axes[0]]+2)/4*leftWidth,(2-point[axes[1]])/4*top],arrow=(x,y,dx,dy,color)=>{const angle=Math.atan2(dy,dx),head=3*dpr;ctx.strokeStyle=color;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+dx,y+dy);ctx.lineTo(x+dx-head*Math.cos(angle-.55),y+dy-head*Math.sin(angle-.55));ctx.moveTo(x+dx,y+dy);ctx.lineTo(x+dx-head*Math.cos(angle+.55),y+dy-head*Math.sin(angle+.55));ctx.stroke();};ctx.strokeStyle='#334155';ctx.beginPath();ctx.moveTo(leftWidth,0);ctx.lineTo(leftWidth,top);ctx.moveTo(0,top);ctx.lineTo(w,top);ctx.stroke();ctx.fillStyle='#e2e8f0';ctx.fillText(`원래 ${value.mode==='electric'?'E (V/m)':value.mode+' F (arb.)'}`,8*dpr,16*dpr);ctx.fillText('div 스칼라 / curl 벡터',leftWidth+8*dpr,16*dpr);for(const item of value.grid){const result=value.field(item.point);if(result.status!=='valid')continue;const base=result.E,n=Math.hypot(base[axes[0]],base[axes[1]]),[x,y]=map(item.point);if(n)arrow(x,y,base[axes[0]]/n*8*dpr,-base[axes[1]]/n*8*dpr,'#4fd1c5');const [ox,oy]=map(item.point,1),divScale=value.mode==='electric'?.002:Math.max(1e-12,3*Math.abs(value.alpha)),t=Math.max(-1,Math.min(1,item.divergence/divScale));ctx.fillStyle=t>=0?`rgba(255,80,50,${.12+.6*Math.abs(t)})`:`rgba(60,120,255,${.12+.6*Math.abs(t)})`;ctx.fillRect(ox-leftWidth/10,oy-top/10,leftWidth/5,top/5);const cx=item.curl[axes[0]],cy=item.curl[axes[1]],cn=Math.hypot(cx,cy);if(cn)arrow(ox,oy,cx/cn*7*dpr,-cy/cn*7*dpr,'#ffd84d');const out=item.curl[normalAxis];if(Math.abs(out)>1e-12){ctx.fillStyle='#ffd84d';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(out>0?'⊙':'⊗',ox,oy);ctx.textAlign='left';ctx.textBaseline='alphabetic';}}const [gx,gy]=map(snapshot.point,1),grx=value.radius/4*leftWidth,gry=value.radius/4*top;ctx.strokeStyle='#f8fafc';ctx.setLineDash([4*dpr,3*dpr]);ctx.beginPath();ctx.ellipse(gx,gy,grx,gry,0,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.strokeStyle='#84f5c5';ctx.lineWidth=2*dpr;ctx.beginPath();if(normalAxis===2)ctx.ellipse(gx,gy,grx,gry,0,0,Math.PI*2);else{ctx.moveTo(gx-grx,gy);ctx.lineTo(gx+grx,gy);}ctx.stroke();if(normalAxis===2)arrow(gx+grx,gy,0,-7*dpr*(value.normal[2]>=0?1:-1),'#84f5c5');ctx.fillStyle='#e2e8f0';ctx.fillText(`구 R=${value.radius} / 루프 ${value.normal[2]>=0?'+z CCW':'−z CW'} (${snapshot.plane.toUpperCase()} 투영)`,leftWidth+8*dpr,top-6*dpr);const barTop=top+22*dpr,barHeight=Math.max(18,(h-barTop-22*dpr)/2),drawBars=(values,y,label,color)=>{ctx.fillStyle='#cbd5e1';ctx.fillText(label,8*dpr,y-4*dpr);if(!values?.length)return;const max=Math.max(1e-20,...values.map(Math.abs)),bw=w/values.length;values.forEach((entry,index)=>{const height=entry/max*barHeight*.42;ctx.fillStyle=entry>=0?color:'#4f91ff';ctx.fillRect(index*bw,y+barHeight/2-Math.max(0,height),Math.max(1,bw-1),Math.abs(height));});ctx.strokeStyle='#64748b';ctx.beginPath();ctx.moveTo(0,y+barHeight/2);ctx.lineTo(w,y+barHeight/2);ctx.stroke();};drawBars(value.flux.surfaceContributions,barTop,'실제 32768 구면표본 방위각별 E·n dS 기여','#ff8058');drawBars(value.loop.pathContributions,barTop+barHeight,'실제 256 루프표본 F·dl 기여 / 법선 '+(value.normal[2]>0?'+z':'−z'),'#84f5c5');ctx.fillStyle='#94a3b8';ctx.fillText(`전기 div/curl 색 기준 ±0.002 V/m² · 수치잔차이며 source 밖 해석값 0 · ${snapshot.plane.toUpperCase()} 투영`,8*dpr,h-5*dpr);}
-  function correctCalculusGeometry(snapshot){if(!calculusDisplay||calculusDisplay.revision!==snapshot.revision||pg.draft)return;const canvas=$('#em-c-visual'),ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height,dpr=Math.min(1.5,devicePixelRatio||1),top=h*.62,left=w*.5,axes=snapshot.plane==='xy'?[0,1]:snapshot.plane==='xz'?[0,2]:[1,2],normalAxis=snapshot.plane==='xy'?2:snapshot.plane==='xz'?1:0,map=point=>[left+(point[axes[0]]+2)/4*left,(2-point[axes[1]])/4*top],value=calculusDisplay;ctx.fillStyle='#07101f';ctx.fillRect(left,0,left,top);ctx.strokeStyle='#334155';ctx.strokeRect(left,0,left,top);ctx.fillStyle='#e2e8f0';ctx.font=`${Math.max(10,11*dpr)}px sans-serif`;ctx.fillText(`div / curl · ${value.differentialMode==='analytic'?'해석값':'수치잔차'}`,left+8*dpr,16*dpr);for(const item of value.grid){const [x,y]=map(item.point),scale=value.mode==='electric'?.002:Math.max(1e-12,3*Math.abs(value.alpha)),t=Math.max(-1,Math.min(1,item.divergence/scale));ctx.fillStyle=t>=0?`rgba(255,80,50,${.12+.6*Math.abs(t)})`:`rgba(60,120,255,${.12+.6*Math.abs(t)})`;ctx.fillRect(x-left/10,y-top/10,left/5,top/5);const out=item.curl[normalAxis];if(Math.abs(out)>1e-12){ctx.fillStyle='#ffd84d';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(out>0?'⊙':'⊗',x,y);ctx.textAlign='left';ctx.textBaseline='alphabetic';}}const [cx,cy]=map(snapshot.point),rx=value.radius/4*left,ry=value.radius/4*top;ctx.strokeStyle='#f8fafc';ctx.setLineDash([4*dpr,3*dpr]);ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);const length=norm3(value.normal),n=value.normal.map(v=>v/length),seed=Math.abs(n[2])<.9?[0,0,1]:[0,1,0],cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],raw=cross(seed,n),rawLength=norm3(raw),e1=raw.map(v=>v/rawLength),e2=cross(n,e1),points=[];for(let index=0;index<=48;index++){const angle=2*Math.PI*index/48;points.push(snapshot.point.map((v,axis)=>v+value.radius*(e1[axis]*Math.cos(angle)+e2[axis]*Math.sin(angle))));}ctx.strokeStyle='#84f5c5';ctx.lineWidth=2*dpr;ctx.beginPath();points.forEach((point,index)=>{const p=map(point);if(index)ctx.lineTo(...p);else ctx.moveTo(...p);});ctx.stroke();const a=map(points[6]),b=map(points[7]);if(Math.hypot(b[0]-a[0],b[1]-a[1])>2){const angle=Math.atan2(b[1]-a[1],b[0]-a[0]),head=4*dpr;ctx.beginPath();ctx.moveTo(...b);ctx.lineTo(b[0]-head*Math.cos(angle-.55),b[1]-head*Math.sin(angle-.55));ctx.moveTo(...b);ctx.lineTo(b[0]-head*Math.cos(angle+.55),b[1]-head*Math.sin(angle+.55));ctx.stroke();}const normalText=`(${value.normal.map(v=>v.toPrecision(3)).join(',')})`;ctx.fillStyle='#e2e8f0';ctx.fillText(`구 R=${value.radius} / 실제 loop n=${normalText} · ${snapshot.plane.toUpperCase()} 투영`,left+8*dpr,top-6*dpr);const barTop=top+22*dpr,barHeight=Math.max(18,(h-barTop-22*dpr)/2);ctx.fillStyle='#07101f';ctx.fillRect(0,barTop+barHeight-16*dpr,w,16*dpr);ctx.fillStyle='#cbd5e1';ctx.fillText(`실제 256 루프표본 F·dl 기여 / n=${normalText}`,8*dpr,barTop+barHeight-4*dpr);ctx.fillStyle='#07101f';ctx.fillRect(0,h-16*dpr,w,16*dpr);ctx.fillStyle='#94a3b8';ctx.fillText(value.differentialMode==='analytic'?`물리 해석 div/curl=0 · 수치잔차는 별도 선택 · ${snapshot.plane.toUpperCase()} 투영`:`전기 div/curl 색 기준 ±0.002 V/m² · 수치잔차 · source 밖 해석값 0 · ${snapshot.plane.toUpperCase()} 투영`,8*dpr,h-5*dpr);}
-  // The 25x25 potential/E grid is cheap (625 evaluations, validated once) and is computed inside the single frame render,
-  // so a state change costs one render instead of a placeholder render + a second render after an extra rAF.
-  function ensurePlaygroundSlice(snapshot){
-    if(cachedPlaygroundSlice?.revision===snapshot.revision)return;
-    try{const fixed=planeFixed(snapshot.plane,snapshot.point),options={grid:25,span:2,jacobian:false},current=pointChargePlaneSample(snapshot.sources,snapshot.plane,fixed,options),comparison=pg.comparison?pointChargePlaneSample(pg.comparison.sources,snapshot.plane,fixed,options):null,sharedMax=Math.max(current.maxAbsPotential,comparison?.maxAbsPotential??0),range=playgroundLegend.mode==='fixed'?{min:playgroundLegend.min,max:playgroundLegend.max}:{min:-sharedMax,max:sharedMax};cachedPlaygroundSlice={revision:snapshot.revision,current,comparison,sharedMax,range};}catch{cachedPlaygroundSlice=null;}
-  }
-  function renderPlayground(dirty=DIRTY_ALL){
-    if(destroyed||!s.active||!isPlayground)return;const snapshot=playgroundSnapshot();ensurePlaygroundSlice(snapshot);const result=snapshot.result,valid=result.status==='valid',shownVector=valid?(playgroundVectorMode==='gradV'?result.gradV:playgroundVectorMode==='minusGradV'?result.gradV.map(value=>-value):result.E):[0,0,0],sample=cachedPlaygroundSlice?.revision===snapshot.revision?cachedPlaygroundSlice.current:null;
-    view.render({camera:s.camera,scene:{kind:'playground',sources:snapshot.sources,selectedId:pg.selectedId},point:snapshot.point,vector:shownVector,fieldLines:[],gridVectors:playgroundGridVectors(sample)});if(!(dirty&DIRTY_PANELS))return;renderPlaygroundSlice(snapshot);renderCalculusPanel(snapshot);correctCalculusGeometry(snapshot);
-    $('#em-result-state').textContent=valid?(pg.previous?'입력 미확정 · 이전 값 표시':'현재 측정'):(result.reason||result.status);$('#em-result-state').className=pg.previous?'previous':'';
-    $('#em-vector-value').textContent=valid?`E ${vectorText(result.E,'V/m')}`:'모델 제외영역 · 미정';$('#em-magnitude-value').textContent=valid?`|E|=${siText(norm3(result.E),'V/m')}`:'미정';$('#em-potential-value').textContent=valid?siText(result.potential,'V'):'미정';$('#em-gradient-value').textContent=valid?`∇V ${vectorText(result.gradV,'V/m')} · −∇V=E`:'미정';setIntegrationRow(root,'');
-    const comparison=$('#em-comparison-value');comparison.hidden=!pg.comparison;if(pg.comparison){const old=pg.comparison.result;comparison.textContent=old.status==='valid'&&valid?`이동 전 → 현재: V ${siText(old.potential,'V')} → ${siText(result.potential,'V')} · |E| ${siText(norm3(old.E),'V/m')} → ${siText(norm3(result.E),'V/m')}`:'이동 전 또는 현재 측정점이 모델 제외영역에 있습니다.';}
-    $('#em-line-endings').textContent='';$('#em-slice-note').textContent=playgroundLegendText();$('#em-wave-info').hidden=true;$('#em-error').hidden=!pg.error;$('#em-error').textContent=pg.error?`${pg.error}${pg.previous?' · 마지막으로 확정된 값을 표시합니다.':''}`:'';syncPlaygroundControls();
-  }
-  const playgroundLegendText=()=>`빨강 +q · 파랑 −q · 십자 측정점 · 흰 테두리 선택 · 화살표 ${playgroundVectorMode} 방향 · 배경색 전위 V${pg.comparison?' (이동 전과 같은 색 범위)':''}`;
-  function refreshPlayground({defer=false}={}){playground.invalidateAsync();cachedPlaygroundSlice=null;if(calculusDisplay&&calculusDisplay.revision!==pg.revision)$('#em-c-result').textContent='다시 계산 필요 · 장면이 바뀌어 이전 결과를 잠갔습니다.';$('#em-c-result').title='';if(defer)requestRender(DIRTY_ALL);else{cancelFrame();renderPlayground();}}
-  function evaluateCalculus(){
-    try{
-      const {mode,differentialMode,alpha,h,radius,normal}=calculusSettings();
-      if(h<.0002||h>.1)throw new Error('이 화면의 미분 h는 0.0002…0.1 m여야 합니다. h/2 수렴 비교도 계산하므로 0.0002 m 이상을 입력하세요.');
-      if(radius<.05||radius>5)throw new Error('구/루프 반경은 0.05…5 m여야 합니다.');
-      if(!norm3(normal))throw new Error('루프 법선은 0일 수 없습니다.');
-      if(pg.probe.some(value=>Math.abs(value)+Math.max(h,radius)>20))throw new Error('검사 기하가 좌표 ±20 m 범위를 벗어납니다.');
-      const sourceSnapshot=structuredClone(pg.sources),probe=[...pg.probe],field=mode==='electric'?createPointChargeEvaluator(sourceSnapshot):mathField(mode,alpha),sources=mode==='electric'?sourceSnapshot:[],numeric=differential3D(field,probe,h,sources),analytic=mode==='electric'&&differentialMode==='analytic',half=analytic?null:differential3D(field,probe,h/2,sources),differential=analytic&&numeric.status==='valid'?{...numeric,divergence:0,curl:[0,0,0],analytic:true}:numeric,flux=sphereFlux(field,probe,radius,sources),loop=loopCirculation(field,probe,radius,normal,sources),unit=mode==='electric'?'V/m':'arb.',units=mode==='electric'?{d:'V/m²',phi:'V·m',circ:'V'}:{d:'arb./m',phi:'arb.·m²',circ:'arb.·m'},grid=[];
-      for(let row=0;row<5;row++)for(let column=0;column<5;column++){const a=-1.6+.8*column,b=1.6-.8*row,point=pg.plane==='xy'?[a,b,probe[2]]:pg.plane==='xz'?[a,probe[1],b]:[probe[0],a,b],value=differential3D(field,point,h,sources);if(value.status==='valid')grid.push({point,divergence:analytic?0:value.divergence,curl:analytic?[0,0,0]:value.curl});}
-      calculusDisplay={revision:pg.revision,mode,differentialMode,alpha,h,radius,normal:[...normal],differential,numeric,half,flux,loop,grid,unit,field};const sci=(value,u)=>siText(value,u,4),noiseTitles=[],noisy=(result,label)=>{if(result.noise)noiseTitles.push(`${label}: ${result.title}`);return result.text;};
-      const differentialText=differential.status==='valid'?(analytic?`source 밖 물리 해석값 div=0 · curl=(0,0,0) V/m² · 수치잔차 보기와 분리`:`div ${noisy(noiseAwareText(differential.divergence,differential.noiseScale,v=>sci(v,units.d)),'div')} · curl ${noisy(noiseAwareVectorText(differential.curl,differential.noiseScale,v=>vectorText(v,units.d)),'curl')} · h/2 Δdiv ${half.status==='valid'?sci(Math.abs(differential.divergence-half.divergence),units.d):half.reason}`):`미분 제외: ${differential.reason}`;
-      $('#em-c-result').textContent=`${differentialText} · Φ ${flux.status==='valid'?noisy(noiseAwareText(flux.flux,flux.noiseScale,v=>sci(v,units.phi)),'Φ'):flux.reason} (${flux.samples??0}, ${flux.converged?'수렴':'미수렴/제외'}, Δ ${flux.difference==null?'—':sci(flux.difference,units.phi)}) · ∮F·dl ${loop.status==='valid'?noisy(noiseAwareText(loop.circulation,loop.noiseScale,v=>sci(v,units.circ)),'∮F·dl'):loop.reason} (${loop.samples??0}, ${loop.converged?'수렴':'미수렴/제외'}, Δ ${loop.difference==null?'—':sci(loop.difference,units.circ)})`;$('#em-c-result').title=noiseTitles.join('\n');
-      renderPlayground();
-    }catch(error){calculusDisplay=null;$('#em-c-result').textContent=`입력 오류: ${error.message}`;$('#em-c-result').title='';renderPlayground();}
-  }
-  async function traceLines(model, token){
-    if(model.kind==='wave')return[];diagnostics.lineRuns+=1; const mobile=matchMedia('(max-width: 760px)').matches,count=mobile?8:16,maxSteps=mobile?64:128,lines=[];diagnostics.lastLines={kind:model.kind,count,maxSteps,sourceTerms:model.kind==='loop'?count*maxSteps*64:0};publishDiagnostics();
-    let sliceStarted=performance.now();
-    for(let seed=0;seed<count;seed++){let p=[1.25*Math.cos(2*Math.PI*seed/count),1.25*Math.sin(2*Math.PI*seed/count),model.kind==='loop'?.3:0],points=[p],reason='최대 step';
-      for(let step=0;step<maxSteps;step++){if(token!==lineTask||!s.active)return null;let result;try{result=visualMeasurement(model,p,0);}catch{reason='입력 오류';break;}if(result.status!=='valid'){reason='제외영역';break;}const field=activeVector(result),n=norm3(field);if(!n||!Number.isFinite(n)){reason='영점';break;}p=p.map((x,i)=>x+scale3(field,.055/n)[i]);points.push(p);if(norm3(p)>3){reason='장면 경계';break;}if((step+1)%32===0||performance.now()-sliceStarted>=8){await new Promise(resolve=>requestAnimationFrame(resolve));sliceStarted=performance.now();}}
-      lines.push({points,reason});
-    } return lines;
-  }
-  // Field lines depend only on the model (never on the measurement point), so an unchanged key keeps the cached/running trace.
-  const lineKey=snapshot=>JSON.stringify([snapshot.model,matchMedia('(max-width: 760px)').matches]);
-  function scheduleLines(){
-    const snapshot=s.lastValid;
-    if(!s.active||!snapshot){++lineTask;cachedLines=[];cachedLinesKey=null;pendingLinesKey=null;return;}
-    const key=lineKey(snapshot);if(key===cachedLinesKey||key===pendingLinesKey)return;
-    const token=++lineTask;cachedLines=[];cachedLinesKey=null;pendingLinesKey=null;
-    if(snapshot.model.kind==='wave'){cachedLinesKey=key;render();return;}
-    pendingLinesKey=key;
-    traceLines(snapshot.model,token).then(lines=>{if(token===lineTask)pendingLinesKey=null;if(!lines||token!==lineTask||!s.active)return;if(snapshot!==s.lastValid&&(!s.lastValid||lineKey(s.lastValid)!==key))return;cachedLines=lines;cachedLinesKey=key;render();});
-  }
-  const slicePoint=(slice,point,a,b)=>slice==='xy'?[a,b,point[2]]:slice==='xz'?[a,point[1],b]:[point[0],a,b];
-  function sliceValue(snapshot,p){
-    const result=visualMeasurement(snapshot.model,p,snapshot.model.kind==='wave'?snapshot.timeCycles/snapshot.model.frequency:0);
-    return result.status==='valid'?(Number.isFinite(result.potential)?result.potential:norm3(activeVector(result))):NaN;
-  }
-  async function sampleSlice(snapshot,slice,token){
-    diagnostics.sliceRuns+=1;publishDiagnostics();const grid=snapshot.model.kind==='loop'?16:32,values=[];let max=0,sliceStarted=performance.now(),sourceTerms=0;
-    const lambda=snapshot.model.kind==='wave'?C/snapshot.model.frequency:1,displayPoint=snapshot.model.kind==='wave'?snapshot.point.map(value=>value/lambda):snapshot.point;
-    for(let index=0;index<grid*grid;index++){
-      if(token!==sliceTask||!s.active)return null;
-      const i=index%grid,j=Math.floor(index/grid),a=-2+4*i/(grid-1),b=2-4*j/(grid-1),display=slicePoint(slice,displayPoint,a,b),p=snapshot.model.kind==='wave'?display.map(value=>value*lambda):display;
-      let value;try{value=sliceValue(snapshot,p);}catch{value=NaN;}values.push(value);if(Number.isFinite(value))max=Math.max(max,Math.abs(value));
-      if(snapshot.model.kind==='loop')sourceTerms+=64;
-      if(snapshot.model.kind!=='wave'&&((index+1)%32===0||performance.now()-sliceStarted>=8)){await new Promise(resolve=>requestAnimationFrame(resolve));sliceStarted=performance.now();}
+    if (target.dataset.emView) { threeD.setView(target.dataset.emView); return; }
+    if (target.dataset.emPgAdd) { addSource(Number(target.dataset.emPgAdd)); requestRender(); return; }
+    if (target.id === 'em-pg-add-finite') { addSource('finite'); requestRender(); return; }
+    if (target.id === 'em-pg-add-infinite') { addSource('infinite'); requestRender(); return; }
+    if (target.id === 'em-pg-undo') { editor.undo(); requestRender(); return; }
+    if (target.id === 'em-pg-redo') { editor.redo(); requestRender(); return; }
+    if (target.id === 'em-pg-reset') { resetCurrent(); return; }
+    if (target.id === 'em-play') {
+      if (s.playing) stopPlayback();
+      else { s.playing = true; lastTick = performance.now(); playFrame = requestAnimationFrame(tick); }
+      requestRender();
     }
-    diagnostics.lastSlice={kind:snapshot.model.kind,grid,locations:grid*grid,sourceTerms};publishDiagnostics();return {snapshot,slice,grid,values,max};
-  }
-  // The legacy slice depends on model + plane + the coordinate along the plane normal (+ time for waves), not on the in-plane point.
-  const sliceKey=(snapshot,slice)=>JSON.stringify([snapshot.model,slice,slice==='xy'?snapshot.point[2]:slice==='xz'?snapshot.point[1]:snapshot.point[0],snapshot.model.kind==='wave'?snapshot.timeCycles:0]);
-  function scheduleSlice(){
-    const snapshot=s.lastValid,slice=s.slice;
-    if(!s.active||!snapshot){++sliceTask;pendingSliceKey=null;return;}
-    const key=sliceKey(snapshot,slice);if(key===cachedSliceKey||key===pendingSliceKey)return;
-    const token=++sliceTask;pendingSliceKey=key;
-    sampleSlice(snapshot,slice,token).then(sample=>{if(token===sliceTask)pendingSliceKey=null;if(!sample||token!==sliceTask||!s.active)return;if((snapshot!==s.lastValid&&(!s.lastValid||sliceKey(s.lastValid,s.slice)!==key))||slice!==s.slice)return;cachedSlice={...sample,key};cachedSliceKey=key;renderSlice(s.lastValid);});
-  }
-  function renderSlice(snapshot){const canvas=$('#em-slice'),ctx=canvas.getContext('2d'),dpr=Math.min(1.5,devicePixelRatio||1),w=Math.max(2,Math.round(canvas.clientWidth*dpr)),h=Math.max(2,Math.round(canvas.clientHeight*dpr));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}ctx.clearRect(0,0,w,h);const sample=cachedSlice?.key===sliceKey(snapshot,s.slice)?cachedSlice:null;if(!sample){ctx.fillStyle='#111827';ctx.fillRect(0,0,w,h);ctx.fillStyle='#cbd5e1';ctx.font=`${Math.max(11,12*dpr)}px sans-serif`;ctx.fillText('단면 계산 중',10*dpr,20*dpr);return;}const {grid,values,max}=sample;for(let j=0;j<grid;j++)for(let i=0;i<grid;i++){const val=values[j*grid+i],t=Number.isFinite(val)&&max?Math.max(-1,Math.min(1,val/max)):0;ctx.fillStyle=Number.isFinite(val)?`rgb(${Math.round(35+190*Math.max(0,t))},${Math.round(45+80*(1-Math.abs(t)))},${Math.round(55+190*Math.max(0,-t))})`:'#111827';ctx.fillRect(i*w/grid,j*h/grid,Math.ceil(w/grid),Math.ceil(h/grid));}ctx.strokeStyle='#fff';ctx.lineWidth=2;const lambda=snapshot.model.kind==='wave'?C/snapshot.model.frequency:1,point=snapshot.model.kind==='wave'?snapshot.point.map(value=>value/lambda):snapshot.point,coord=s.slice==='xy'?[point[0],point[1]]:s.slice==='xz'?[point[0],point[2]]:[point[1],point[2]];ctx.strokeRect((coord[0]+2)/4*w-4,(2-coord[1])/4*h-4,8,8);}
-  function render(dirty=DIRTY_ALL){if(destroyed||!s.active)return;if(isPlayground){renderPlayground(dirty);return;}const snapshot=s.lastValid;if(!snapshot)return;const result=snapshot.result,isWave=snapshot.model.kind==='wave',vector=result.status==='valid'?activeVector(result):null,lines=cachedLines,wave=isWave&&result.status==='valid'?{timeCycles:snapshot.timeCycles,wavelength:result.wavelength,E:result.E,B:result.B,c:C}:null;view.render({camera:s.camera,scene:snapshot.model,point:snapshot.point,vector:isWave?[0,0,0]:(vector??[0,0,0]),fieldLines:lines,wave});if(!(dirty&DIRTY_PANELS))return;renderSlice(snapshot);$('#em-result-state').textContent=result.status==='valid'?(s.previous?'입력 미확정 · 이전 값 표시':'현재 측정'):(result.reason||result.status);$('#em-result-state').className=s.previous?'previous':'';$('#em-vector-value').textContent=isWave&&wave?`E ${vectorText(result.E,'V/m')} · B ${vectorText(result.B,'T')}`:vector?(result.E?vectorText(result.E,'V/m'):vectorText(result.B,'T')):'모델 제외영역 · 미정';$('#em-magnitude-value').textContent=isWave&&wave?`|E|=${siText(norm3(result.E),'V/m')} · |B|=${siText(norm3(result.B),'T')}`:vector?siText(norm3(vector),result.E?'V/m':'T'):'미정';$('#em-potential-value').textContent=Number.isFinite(result.potential)?siText(result.potential,'V'):'해당 없음';$('#em-gradient-value').textContent='해당 없음';$('#em-comparison-value').hidden=true;setIntegrationRow(root,snapshot.model.kind==='loop'&&vector?`${result.converged?'수렴':'근사 미수렴'} · N=${result.samples} · Δ=${siText(result.difference??0,'T')}`:'');$('#em-line-endings').textContent=lines.length?`장선 ${lines.length}개 · ${[...new Set(lines.map(l=>l.reason))].join(', ')}${snapshot.model.kind==='loop'?' · N=64 방향 시각화 근사':''}`:snapshot.model.kind==='wave'?'장선 대신 파동 E/B 방향 표시':'장선 계산 중';if(isWave&&result.status==='valid'){const f=snapshot.model.frequency;$('#em-wave-info').hidden=false;$('#em-wave-info').textContent=`분홍 E · 노랑 B · λ=${siText(result.wavelength,'m')} · T=${siText(result.period,'s')} · t=${siText(snapshot.timeCycles/f,'s')} · r/λ=(${snapshot.point.map(x=>plainText(x/result.wavelength)).join(', ')}) · 표시 속도 ${plainText(s.displayCyclesPerSecond)} 주기/초`;}else $('#em-wave-info').hidden=true;}
-  function syncWaveCoordinates(){const wave=s.models.wave,lambda=C/wave.frequency;root.querySelectorAll('[data-em-wave-point]').forEach((input,i)=>{input.value=(s.point[i]/lambda).toPrecision(5);});}
-  function update(){
-    $('#em-stage-edit-tools').hidden=!isPlayground;$('#em-legacy-slice-tools').hidden=isPlayground;
-    $('#em-3d-details').open=!isPlayground;
-    $('#em-edit-title').textContent=isPlayground?'전하를 움직여 전기장 보기':'단면 · 측정점 이동';
-    $('#em-edit-help').textContent=isPlayground?'전하를 끌어 이동 · 빈 곳을 클릭하면 측정점이 이동합니다.':'단면의 빈 곳을 클릭해 측정점을 이동하세요. 3D에서 빈 공간을 끌면 카메라가 회전합니다.';
-    if(isPlayground){root.querySelectorAll('[data-em-scene]').forEach(button=>button.classList.toggle('active',button.dataset.emScene==='playground'));$('#em-scene-title').textContent='전하 자유실험실';$('#em-playground-controls').hidden=false;$('#em-model-fields').hidden=true;$('#em-apply').hidden=true;$('#em-wave-controls').hidden=true;$('#em-wave-coordinates').hidden=true;$('#em-slice-note').textContent=playgroundLegendText();['x','y','z'].forEach((axis,index)=>$(`[data-em-point="${axis}"]`).value=pg.probe[index]);refreshPlayground();return;}$('#em-playground-controls').hidden=true;$('#em-model-fields').hidden=false;$('#em-apply').hidden=false;const model=s.models[s.sceneName];$('#em-model-fields').innerHTML=modelForm(s.sceneName,model);root.querySelectorAll('[data-em-scene]').forEach(b=>b.classList.toggle('active',b.dataset.emScene===s.sceneName));$('#em-scene-title').textContent=labels[s.sceneName];$('#em-wave-controls').hidden=s.sceneName!=='wave';$('#em-wave-coordinates').hidden=s.sceneName!=='wave';$('#em-slice-note').textContent=s.sceneName==='loop'?'고리 단면은 16×16 위치·고정 N=64 방향 시각화 근사입니다. 측정값의 적응 수렴과 구분됩니다.':'단면 색은 장면 내부 상대값입니다. 전기 장면은 V, 자기·파동 장면은 벡터 크기이며 장면 사이 절대 색 비교가 아닙니다.';if(s.sceneName==='wave')syncWaveCoordinates();const valid=store.evaluate();$('#em-error').hidden=Boolean(valid);$('#em-error').textContent=s.error||'';scheduleLines();scheduleSlice();render();}
-  function applyModel(){const raw={};root.querySelectorAll('[data-em-model]').forEach(input=>raw[input.dataset.emModel]=input.value);try{const fields=deriveFields(s.sceneName,raw,s.models[s.sceneName]);if(s.sceneName==='wave'&&s.point.some(value=>Math.abs(value/(C/fields.frequency))>2))throw new Error('파동 측정점은 각 축에서 −2λ…2λ 범위여야 합니다.');const valid=store.apply(fields);if(!valid)throw new Error(s.error);if(s.sceneName==='wave')syncWaveCoordinates();$('#em-error').hidden=true;scheduleLines();scheduleSlice();render();}catch(error){s.error=error.message;s.previous=Boolean(s.lastValid);$('#em-error').hidden=false;$('#em-error').textContent=`입력 오류: ${error.message} · 마지막 유효 장면은 이전값으로 유지됩니다.`;render();}}
-  function stop(){if(raf!==null){cancelAnimationFrame(raf);raf=null;}store.stop();$('#em-play').textContent='재생';}
-  function suspend(){diagnostics.suspends+=1;lineTask+=1;sliceTask+=1;pendingLinesKey=null;pendingSliceKey=null;cancelFrame();stop();view.cancelPointers();if(pg.drag)playground.cancelDrag();playgroundSliceDrag=null;publishDiagnostics();}
-  function resume(){if(!destroyed&&s.active&&!document.hidden){if(isPlayground){renderPlayground();}else{scheduleLines();scheduleSlice();render();}}}
-  function tick(now){if(!s.active||document.hidden||!s.playing){raf=null;return;}if(now-lastFrame>=1000/30){const dt=Math.min(.1,(now-lastFrame)/1000||0);lastFrame=now;store.setTime((s.timeCycles+dt*s.displayCyclesPerSecond)%2);$('#em-time').value=s.timeCycles;scheduleSlice();render();}raf=requestAnimationFrame(tick);}
-  root.addEventListener('click',event=>{
-    if(event.target.id==='em-course-open'){switchCourse(true);return;}
-    const scene=event.target.closest('[data-em-scene]');if(scene){if(pg.drag)playground.cancelDrag();playgroundSliceDrag=null;isPlayground=scene.dataset.emScene==='playground';if(!isPlayground)store.setScene(scene.dataset.emScene);update();return;}
-    if(isPlayground){
-      const selected=event.target.closest('[data-em-source-select]');if(selected){playground.select(selected.dataset.emSourceSelect);renderPlayground();return;}
-      if(event.target.matches('[data-em-pg-add]')){playground.add(Number(event.target.dataset.emPgAdd)*1e-9,[0,0,0]);refreshPlayground();return;}
-      if(event.target.id==='em-pg-add-finite'||event.target.id==='em-pg-add-infinite'){
-        // New lines lie in the selected editing plane so their handles do not overlap in 2D.
-        const direction=pg.plane==='yz'?[0,1,0]:[1,0,0];
-        if(event.target.id==='em-pg-add-finite')playground.addFiniteLine(1e-9,direction.map(v=>-.75*v),direction.map(v=>.75*v));
-        else playground.addInfiniteLine(1e-9,[0,0,0],direction);
-        refreshPlayground();return;
-      }
-      if(event.target.id==='em-pg-clone'){playground.cloneSelected();refreshPlayground();return;}if(event.target.id==='em-pg-delete'){playground.removeSelected();refreshPlayground();return;}
-      if(event.target.id==='em-pg-apply'){playground.applyDraft();refreshPlayground();return;}if(event.target.id==='em-pg-cancel'){playground.cancelDraft();refreshPlayground();return;}
-      if(event.target.id==='em-pg-undo'){playground.undo();refreshPlayground();return;}if(event.target.id==='em-pg-redo'){playground.redo();refreshPlayground();return;}
-      if(event.target.id==='em-pg-compare'){playground.captureComparison();refreshPlayground();return;}if(event.target.id==='em-pg-clear-compare'){playground.clearComparison();refreshPlayground();return;}
-      if(event.target.id==='em-c-evaluate'){evaluateCalculus();return;}
-      if(event.target.id==='em-d-save'){saveEMProject();return;}if(event.target.id==='em-d-load'){$('#em-d-file').click();return;}if(event.target.id==='em-d-apply-example'){try{applyEMProject(makeExampleProject($('#em-d-example').value,projectSnapshot()));}catch(error){$('#em-d-status').textContent=`예제 오류: ${error.message}`;}return;}
+  }, listen);
+
+  function resetCurrent() {
+    plane.cancel();
+    lab.view = { span: 3, offset: [0, 0] };
+    if (lab.scene === 'playground') {
+      editor.reset();
+      lab.gauss = null;
+      if (lab.chips.gauss) plane.placeGauss();
+    } else {
+      stopPlayback();
+      s.models[lab.scene] = structuredClone(DEFAULT_SCENES[lab.scene]);
+      store.setScene(lab.scene);
+      scenesPanel.show(lab.scene);
+      lab.error = '';
     }
-    if(event.target.id==='em-apply'){applyModel();return;}if(event.target.matches('[data-em-view]')){const name=event.target.dataset.emView;Object.assign(s.camera,name==='x'?{yaw:0,pitch:0}:name==='y'?{yaw:Math.PI/2,pitch:0}:name==='z'?{yaw:0,pitch:Math.PI/2-.001}:{yaw:-.7,pitch:.45,distance:7});render(DIRTY_SCENE);return;}if(event.target.id==='em-play'){if(s.playing)stop();else{s.playing=true;event.target.textContent='정지';lastFrame=performance.now();raf=requestAnimationFrame(tick);}return;}if(event.target.id==='em-step'){stop();store.setTime((s.timeCycles+.05)%2);$('#em-time').value=s.timeCycles;scheduleSlice();render();}
-  },listen);
-  root.addEventListener('input',event=>{
-    if(isPlayground&&event.target.matches('#em-d-legend-min,#em-d-legend-max')){try{const next=currentLegend();if(next.mode==='fixed'&&!(next.min<next.max))throw new Error('범례 min은 max보다 작아야 합니다.');playgroundLegend=next;refreshPlayground();}catch(error){$('#em-d-status').textContent=`범례 입력 오류: ${error.message}`;}return;}
-    if(isPlayground&&event.target.matches('#em-c-alpha,#em-c-h,#em-c-radius,#em-c-normal-x,#em-c-normal-y,#em-c-normal-z')){if(calculusDisplay){$('#em-c-result').textContent='다시 계산 필요 · 입력이 바뀌어 이전 결과를 잠갔습니다.';$('#em-c-result').title='';calculusDisplay={...calculusDisplay,revision:-1};renderPlayground();}return;}
-    if(isPlayground&&event.target.matches('[data-em-pg-draft]')){playground.setDraft(event.target.dataset.emPgDraft,event.target.value);renderPlayground();return;}
-    if(event.target.matches('[data-em-model]')){store.setDraft(event.target.dataset.emModel,event.target.value);s.previous=Boolean(s.lastValid);const empty=event.target.tagName!=='SELECT'&&!String(event.target.value).trim();s.error=empty?'빈값 또는 공백은 실제 0과 구별됩니다.':'입력 적용 전: 마지막 유효 장면을 표시합니다.';$('#em-error').hidden=false;$('#em-error').textContent=s.error;render();}if(event.target.id==='em-time'){store.setTime(event.target.value);scheduleSlice();render();}if(event.target.id==='em-speed'){s.displayCyclesPerSecond=parseEMNumber(event.target.value);$('#em-speed-label').textContent=`${s.displayCyclesPerSecond.toFixed(1)} 주기/실제초`;}
-  },listen);
-  root.addEventListener('change',event=>{
-    if(isPlayground){
-      if(event.target.id==='em-d-legend'){try{playgroundLegend=currentLegend();refreshPlayground();}catch(error){$('#em-d-status').textContent=`범례 입력 오류: ${error.message}`;}return;}
-      if(event.target.matches('#em-c-field-mode,#em-c-differential-mode')){if(calculusDisplay){$('#em-c-result').textContent='다시 계산 필요 · 입력이 바뀌어 이전 결과를 잠갔습니다.';$('#em-c-result').title='';calculusDisplay={...calculusDisplay,revision:-1};renderPlayground();}return;}
-      if(event.target.matches('[data-em-source-enabled]')){playground.setEnabled(event.target.dataset.emSourceEnabled,event.target.checked);refreshPlayground();return;}if(event.target.matches('[data-em-source-visible]')){playground.setVisible(event.target.dataset.emSourceVisible,event.target.checked);refreshPlayground();return;}
-      if(event.target.id==='em-pg-plane'){playground.setPlane(event.target.value);refreshPlayground();return;}if(event.target.id==='em-pg-vector'){playgroundVectorMode=event.target.value;renderPlayground();return;}
-      if(event.target.id==='em-slice-select'){playground.setPlane(event.target.value);refreshPlayground();return;}
-      if(event.target.matches('[data-em-point]')){try{const point=['x','y','z'].map(axis=>parseEMNumber($(`[data-em-point="${axis}"]`).value));playground.setProbe(point,{recordHistory:true});}catch(error){pg.error=error.message;pg.previous=true;}refreshPlayground();return;}
-    }
-    if(event.target.id==='em-slice-select'){s.slice=event.target.value;scheduleSlice();render();}if(event.target.matches('[data-em-point]')){try{const p=['x','y','z'].map(axis=>parseEMNumber($(`[data-em-point="${axis}"]`).value));if(s.sceneName==='wave'&&p.some(value=>Math.abs(value/(C/s.models.wave.frequency))>2))throw new Error('파동 측정점은 각 축에서 −2λ…2λ 범위여야 합니다.');const valid=store.setPoint(p);if(!valid)throw new Error(s.error);if(s.sceneName==='wave')syncWaveCoordinates();$('#em-error').hidden=true;scheduleLines();scheduleSlice();render();}catch(error){s.error=error.message;s.previous=Boolean(s.lastValid);$('#em-error').hidden=false;$('#em-error').textContent=`측정점 입력 오류: ${error.message} · 마지막 유효 장면은 이전값으로 유지됩니다.`;render();}}if(event.target.matches('[data-em-wave-point]')){try{const normalized=['x','y','z'].map(axis=>parseEMNumber($(`[data-em-wave-point="${axis}"]`).value));if(normalized.some(value=>Math.abs(value)>2))throw new Error('정규화 좌표는 −2…2 범위여야 합니다.');const lambda=C/s.models.wave.frequency,p=normalized.map(value=>value*lambda),valid=store.setPoint(p);if(!valid)throw new Error(s.error);['x','y','z'].forEach((axis,i)=>$(`[data-em-point="${axis}"]`).value=p[i].toPrecision(7));$('#em-error').hidden=true;scheduleLines();scheduleSlice();render();}catch(error){s.error=error.message;s.previous=Boolean(s.lastValid);$('#em-error').hidden=false;$('#em-error').textContent=`파동 좌표 입력 오류: ${error.message} · 마지막 유효 장면은 이전값으로 유지됩니다.`;render();}}
-  },listen);
-  $('#em-d-file').addEventListener('change',async event=>{const file=event.target.files?.[0],generation=++emLoadGeneration;event.target.value='';if(!file)return;try{if(file.size>1048576)throw new Error('파일은 UTF-8 1 MiB 이하여야 합니다.');const source=await file.text();if(generation!==emLoadGeneration)return;applyEMProject(parseEMProject(source));}catch(error){if(generation===emLoadGeneration)$('#em-d-status').textContent=`열기 오류: ${error.message} · 현재 장면은 바뀌지 않았습니다.`;}},listen);
-  const sliceCurrentGeometry=()=>{const rect=$('#em-slice').getBoundingClientRect(),width=pg.comparison?rect.width/2:rect.width,left=pg.comparison?rect.left+width:rect.left;return{rect,width,left};};
-  const sliceWorldPoint=(event,fixedPoint)=>{const {rect,width,left}=sliceCurrentGeometry();if(event.clientX<left||event.clientX>left+width)return null;const a=-2+4*(event.clientX-left)/width,b=2-4*(event.clientY-rect.top)/rect.height;return pg.plane==='xy'?[a,b,fixedPoint[2]]:pg.plane==='xz'?[a,fixedPoint[1],b]:[fixedPoint[0],a,b];};
-  $('#em-slice').addEventListener('pointerdown',event=>{if(!isPlayground||(event.button!==0&&event.pointerType!=='touch'))return;const canvas=event.currentTarget,{rect,width,left}=sliceCurrentGeometry(),axes=pg.plane==='xy'?[0,1]:pg.plane==='xz'?[0,2]:[1,2];if(event.clientX<left)return;let target=null,best=Infinity;for(const source of pg.sources.filter(item=>item.visible!==false)){const candidates=source.type==='finite-line'?[{handle:'start',position:source.start},{handle:'end',position:source.end},{handle:'body',position:sourceCenter(source)}]:source.type==='infinite-line'?[{handle:'body',position:source.position},{handle:'direction',position:source.position.map((v,i)=>v+source.direction[i]*source.displayLength/2)}]:[{handle:'body',position:source.position}];for(const candidate of candidates){const x=(candidate.position[axes[0]]+2)/4*width+left,y=(2-candidate.position[axes[1]])/4*rect.height+rect.top,d=Math.hypot(event.clientX-x,event.clientY-y);if(d<best){best=d;target={source,...candidate};}}}if(!target||best>22)return;event.preventDefault();playground.select(target.source.id);const hit=sliceWorldPoint(event,target.position);if(!hit||!playground.beginDrag(target.source.id,pg.plane,target.handle,hit)){renderPlayground();return;}playgroundSliceDrag={pointerId:event.pointerId,origin:[...target.position],moved:false};canvas.setPointerCapture?.(event.pointerId);refreshPlayground();},listen);
-  $('#em-slice').addEventListener('pointermove',event=>{if(!playgroundSliceDrag||event.pointerId!==playgroundSliceDrag.pointerId)return;event.preventDefault();const point=sliceWorldPoint(event,playgroundSliceDrag.origin);if(!point)return;playgroundSliceDrag.moved=true;playground.previewDrag(point);refreshPlayground({defer:true});},listen);
-  const finishSliceDrag=(event,cancelled)=>{if(!playgroundSliceDrag||event.pointerId!==playgroundSliceDrag.pointerId)return;const canvas=$('#em-slice'),drag=playgroundSliceDrag,point=sliceWorldPoint(event,drag.origin);playgroundSliceDrag=null;if(cancelled||!point)playground.cancelDrag();else playground.commitDrag(point);suppressPlaygroundSliceClick=true;setTimeout(()=>{suppressPlaygroundSliceClick=false;},0);try{if(canvas.hasPointerCapture?.(event.pointerId))canvas.releasePointerCapture(event.pointerId);}catch{}refreshPlayground();};
-  $('#em-slice').addEventListener('pointerup',event=>finishSliceDrag(event,false),listen);$('#em-slice').addEventListener('pointercancel',event=>finishSliceDrag(event,true),listen);$('#em-slice').addEventListener('lostpointercapture',event=>finishSliceDrag(event,true),listen);
-  $('#em-slice').addEventListener('click',event=>{if(suppressPlaygroundSliceClick)return;if(isPlayground){const p=sliceWorldPoint(event,pg.probe);if(!p)return;playground.setProbe(p,{recordHistory:true});['x','y','z'].forEach((axis,index)=>$(`[data-em-point="${axis}"]`).value=p[index].toPrecision(7));refreshPlayground();return;}const r=event.currentTarget.getBoundingClientRect(),a=-2+4*(event.clientX-r.left)/r.width,b=2-4*(event.clientY-r.top)/r.height,snapshot=s.lastValid,lambda=snapshot.model.kind==='wave'?C/snapshot.model.frequency:1,current=snapshot.model.kind==='wave'?s.point.map(value=>value/lambda):s.point,display=s.slice==='xy'?[a,b,current[2]]:s.slice==='xz'?[a,current[1],b]:[current[0],a,b],p=snapshot.model.kind==='wave'?display.map(value=>value*lambda):display,valid=store.setPoint(p);if(!valid){s.previous=Boolean(s.lastValid);$('#em-error').hidden=false;$('#em-error').textContent=`단면 입력 오류: ${s.error}`;render();return;}['x','y','z'].forEach((axis,i)=>$(`[data-em-point="${axis}"]`).value=p[i].toPrecision(7));if(s.sceneName==='wave')syncWaveCoordinates();$('#em-error').hidden=true;scheduleLines();scheduleSlice();render();},listen);
-  $('#em-canvas').addEventListener('keydown',event=>{if(!s.active)return;const key=event.key;if(key==='Escape'&&isPlayground&&(pg.drag||pg.draft)){event.preventDefault();if(pg.drag)playground.cancelDrag();else playground.cancelDraft();playgroundSliceDrag=null;refreshPlayground();return;}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','-','Home'].includes(key)){event.preventDefault();if(key==='Home')Object.assign(s.camera,{yaw:-.7,pitch:.45,distance:7});else if(key==='ArrowLeft')s.camera.yaw-=.1;else if(key==='ArrowRight')s.camera.yaw+=.1;else if(key==='ArrowUp')s.camera.pitch=Math.min(1.45,s.camera.pitch+.1);else if(key==='ArrowDown')s.camera.pitch=Math.max(-1.45,s.camera.pitch-.1);else s.camera.distance=Math.max(2,Math.min(20,s.camera.distance+(key==='+'?-.5:.5)));requestRender(DIRTY_SCENE);}},listen);
-  root.addEventListener('keydown',event=>{if(!s.active)return;if(event.key==='Escape'&&isPlayground&&(pg.drag||pg.draft)){event.preventDefault();if(pg.drag)playground.cancelDrag();else playground.cancelDraft();playgroundSliceDrag=null;refreshPlayground();}},listen);
-  const visibility=()=>{if(document.hidden)suspend();else resume();};document.addEventListener('visibilitychange',visibility,listen);window.addEventListener('blur',suspend,listen);window.addEventListener('focus',resume,listen);
-  $('#em-3d-details').addEventListener('toggle',()=>{if(s.active)requestRender(DIRTY_ALL);},listen);
-  window.addEventListener('resize',()=>{if(s.active)requestRender(DIRTY_ALL);},listen);
-  function switchCourse(value){
-    if(courseActive===value)return;courseActive=value;
-    $('#em-course-root').hidden=!value;
-    for(const selector of ['.em-controls','.em-stage','.em-results'])$(selector).hidden=value;
-    if(value){suspend();store.setActive(false);requestCourse();}
-    else{course?.deactivate();store.setActive(true);resume();}
+    plane.invalidate();
+    requestRender();
   }
-  function activateCourseIfNeeded(){if(!destroyed&&courseActive&&workspaceActive&&course)course.activate();}
-  function showCourseStatus(failed){
+
+  root.addEventListener('input', event => {
+    if (event.target.id === 'em-time') { stopPlayback(); store.setTime(event.target.value); requestRender(); return; }
+    if (event.target.id === 'em-gauss-radius' && lab.gauss) {
+      lab.gauss = { ...lab.gauss, radius: Number(event.target.value) };
+      requestRender();
+    }
+  }, listen);
+
+  root.addEventListener('change', event => {
+    if (event.target.id !== 'em-pg-plane') return;
+    plane.cancel();
+    getMode().setPlane(event.target.value);
+    if (lab.gauss && lab.scene === 'playground') {
+      const center = lab.gauss.center.slice();
+      center[planeNormal(pg.plane)] = modes.sandbox.fixed();
+      lab.gauss = { ...lab.gauss, center };
+    }
+    requestRender();
+  }, listen);
+
+  // ---- lifecycle -------------------------------------------------------------------------------------------------
+
+  function suspend() {
+    diagnostics.suspends += 1;
+    if (frameId !== null) { cancelAnimationFrame(frameId); frameId = null; }
+    stopPlayback();
+    plane.cancel();
+    threeD.cancel();
+  }
+  function resume() { if (!destroyed && s.active && !document.hidden) requestRender(); }
+  document.addEventListener('visibilitychange', () => (document.hidden ? suspend() : resume()), listen);
+  window.addEventListener('blur', suspend, listen);
+  window.addEventListener('focus', resume, listen);
+
+  function switchCourse(value) {
+    if (courseActive === value) return;
+    courseActive = value;
+    $('#em-course-root').hidden = !value;
+    $('#em-lab').hidden = value;
+    if (value) { suspend(); store.setActive(false); requestCourse(); }
+    else { course?.deactivate(); store.setActive(true); resume(); }
+  }
+  function activateCourseIfNeeded() { if (!destroyed && courseActive && workspaceActive && course) course.activate(); }
+  function showCourseStatus(failed) {
     courseStatus?.remove();
-    const node=document.createElement('div');node.className='workspace-loading';node.setAttribute('role',failed?'alert':'status');
-    const text=document.createElement('p');text.textContent=failed?'전자기학 문제 풀이를 불러오지 못했습니다. 연결을 확인한 뒤 다시 시도하세요. 계속 실패하면 작업을 저장하고 페이지를 새로고침하세요.':'불러오는 중…';node.append(text);
-    if(failed){const retry=document.createElement('button');retry.type='button';retry.textContent='다시 시도';retry.addEventListener('click',requestCourse);node.append(retry);}
-    $('#em-course-root').prepend(node);courseStatus=node;
+    const node = document.createElement('div');
+    node.className = 'workspace-loading';
+    node.setAttribute('role', failed ? 'alert' : 'status');
+    const text = document.createElement('p');
+    text.textContent = failed
+      ? '전자기학 문제 풀이를 불러오지 못했습니다. 연결을 확인한 뒤 다시 시도하세요. 계속 실패하면 작업을 저장하고 페이지를 새로고침하세요.'
+      : '불러오는 중…';
+    node.append(text);
+    if (failed) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = '다시 시도';
+      retry.addEventListener('click', requestCourse);
+      node.append(retry);
+    }
+    $('#em-course-root').prepend(node);
+    courseStatus = node;
   }
-  function requestCourse(){
-    if(course){activateCourseIfNeeded();return;}
-    if(coursePending)return;
+  function requestCourse() {
+    if (course) { activateCourseIfNeeded(); return; }
+    if (coursePending) return;
     showCourseStatus(false);
-    const pending=coursePending=loadEMCourseModule().then(module=>{
-      if(destroyed)return;
-      courseStatus?.remove();courseStatus=null;
-      course=module.createEMCourseController($('#em-course-root'),{onClose:()=>switchCourse(false)});
-      coursePending=null;activateCourseIfNeeded();
-    }).catch(()=>{if(coursePending===pending)coursePending=null;if(!destroyed)showCourseStatus(true);});
+    const pending = coursePending = loadEMCourseModule().then(module => {
+      if (destroyed) return;
+      courseStatus?.remove();
+      courseStatus = null;
+      course = module.createEMCourseController($('#em-course-root'), { onClose: () => switchCourse(false) });
+      coursePending = null;
+      activateCourseIfNeeded();
+    }).catch(() => {
+      if (coursePending === pending) coursePending = null;
+      if (!destroyed) showCourseStatus(true);
+    });
   }
-  $('#em-course-open').addEventListener('pointerenter',prefetchEMCourse,listen);$('#em-course-open').addEventListener('focus',prefetchEMCourse,listen);
-  publishDiagnostics();update();
-  return {activate(){workspaceActive=true;if(courseActive){if(course)course.activate();else requestCourse();return;}store.setActive(true);if(isPlayground){renderPlayground();}else{scheduleLines();scheduleSlice();render();}},deactivate(){workspaceActive=false;course?.deactivate();suspend();store.setActive(false);},inspect(){return{...store.inspect(),playground:playground.inspect(),playgroundActive:isPlayground,courseActive,course:course?course.inspect():null,diagnostics:structuredClone(diagnostics)};},destroy(){if(destroyed)return;destroyed=true;course?.destroy();suspend();events.abort();store.destroy();view.dispose();root.dataset.emDestroyed='true';}};
+  $('#em-course-open').addEventListener('pointerenter', prefetchEMCourse, listen);
+  $('#em-course-open').addEventListener('focus', prefetchEMCourse, listen);
+
+  const resizeWatcher = new ResizeObserver(() => { if (lab.tab === '3d') requestRender(); });
+  resizeWatcher.observe($('#em-canvas'));
+  events.signal.addEventListener('abort', () => resizeWatcher.disconnect(), { once: true });
+
+  scenesPanel.show(null);
+  return {
+    activate() {
+      workspaceActive = true;
+      if (courseActive) { if (course) course.activate(); else requestCourse(); return; }
+      store.setActive(true);
+      render();
+    },
+    deactivate() {
+      workspaceActive = false;
+      course?.deactivate();
+      suspend();
+      store.setActive(false);
+    },
+    inspect() {
+      return {
+        ...store.inspect(), playground: editor.inspect(), playgroundActive: lab.scene === 'playground',
+        tab: lab.tab, scene: lab.scene, chips: { ...lab.chips }, gauss: lab.gauss ? structuredClone(lab.gauss) : null,
+        view: structuredClone(lab.view), courseActive, course: course ? course.inspect() : null,
+        diagnostics: { ...diagnostics, plane: { ...plane.stats } },
+      };
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      course?.destroy();
+      suspend();
+      events.abort();
+      palette.destroy();
+      store.destroy();
+      threeD.destroy();
+      root.dataset.emDestroyed = 'true';
+    },
+  };
 }

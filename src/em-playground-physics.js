@@ -100,7 +100,9 @@ export function finiteLineChargeField(source, point) {
 }
 
 export function infiniteLineChargeField(source, point) {
-  const delta = point.map((value, axis) => value - source.position[axis]), axial = delta.reduce((sum, value, axis) => sum + value * source.direction[axis], 0), rhoVector = delta.map((value, axis) => value - axial * source.direction[axis]), rho = vectorLength(rhoVector);
+  const delta = point.map((value, axis) => value - source.position[axis]);
+  const axial = delta.reduce((sum, value, axis) => sum + value * source.direction[axis], 0);
+  const rhoVector = delta.map((value, axis) => value - axial * source.direction[axis]), rho = vectorLength(rhoVector);
   if (rho <= EXCLUSION_METERS) return { status: 'excluded', reason: `무한 선전하 ${source.id}의 1 mm 모델 제외영역`, sourceId: source.id };
   const factor = K * source.lambda;
   return { status: 'valid', E: rhoVector.map(value => 2 * factor * value / (rho * rho)), potential: -2 * factor * Math.log(rho / source.sRef) };
