@@ -136,21 +136,88 @@ test('Lorentz orbit: proton, 1e6 m/s, 0.1 T → r = mv/(qB), ω_c = qB/m, T = 2�
   assert.equal(val(result, 'work'), 0);
   near(val(result, 'kinetic'), 0.5 * m * 1e12, 1e-12);
   near(val(result, 'force'), q * 1e6 * 0.1, 1e-12);
-  // phase π: the far side of the circle; phase 2π: back at the start
-  near(val(run('force-lorentz', {}, Math.PI), 'x'), 2 * val(result, 'radius'), 1e-12);
-  assert.ok(Math.abs(val(run('force-lorentz', {}, 2 * Math.PI), 'x')) < 1e-12);
-  // at the quarter point (r, r) the force points to the center (r, 0): −y
+  // the particle starts at the origin moving along +x; phase π: the far side of the circle (diameter below, −y); phase 2π: back at the start
+  near(val(run('force-lorentz', {}, Math.PI), 'y'), -2 * val(result, 'radius'), 1e-12);
+  assert.ok(Math.abs(val(run('force-lorentz', {}, 2 * Math.PI), 'y')) < 1e-12 * val(result, 'radius'));
+  // at the quarter point (r, −r) the force points to the center (0, −r): −x
   const quarter = run('force-lorentz', {}, Math.PI / 2);
-  assert.ok(val(quarter, 'Fy') < 0 && Math.abs(val(quarter, 'Fx')) < 1e-12 * val(quarter, 'force'));
+  assert.ok(val(quarter, 'Fx') < 0 && Math.abs(val(quarter, 'Fy')) < 1e-12 * val(quarter, 'force'));
   near(Math.hypot(val(quarter, 'Fx'), val(quarter, 'Fy')), val(quarter, 'force'), 1e-12);
   // negative charge mirrors the orbit; a stationary particle feels nothing
-  near(val(run('force-lorentz', { chargeE: -1 }, Math.PI), 'x'), -2 * val(result, 'radius'), 1e-12);
+  near(val(run('force-lorentz', { chargeE: -1 }, Math.PI), 'y'), 2 * val(result, 'radius'), 1e-12);
   const rest = run('force-lorentz', { speed: 0 });
   assert.equal(rest.status, 'valid');
   assert.equal(val(rest, 'radius'), 0);
   assert.equal(val(rest, 'force'), 0);
   // an electron (m = 5.4858e-4 u) in the same field circles ~1836 times faster
   near(val(run('force-lorentz', { mass: 5.485799e-4 * AMU, chargeE: -1 }), 'omegaC') / val(result, 'omegaC'), 1.007276 / 5.485799e-4, 1e-12);
+});
+
+test('Lorentz + E×B: v_d = E/B, straight line at E = vB (proton 1e6 m/s, 0.1 T, E = 1e5 V/m)', () => {
+  const def = getExperiment('force-lorentz'), m = 1.007276 * AMU, q = E_CHARGE;
+  assert.ok(def.answerKeys.includes('vd') && def.answerKeys.includes('straightE'));
+  const base = run('force-lorentz');
+  assert.equal(val(base, 'vd'), 0);
+  near(val(base, 'straightE'), 1e5, 1e-12, 'E = vB');
+  const T = 2 * Math.PI * m / (q * 0.1), straight = { Ey: 1e5 };
+  const end = run('force-lorentz', straight, 2 * Math.PI);
+  assert.equal(end.region, 'straight');
+  near(val(end, 'vd'), 1e6, 1e-12, 'v_d = E/B');
+  assert.equal(val(end, 'radius'), 0);
+  assert.ok(Math.abs(val(end, 'y')) < 1e-9 * 1e6 * T, 'no y change');
+  near(val(end, 'x'), 1e6 * T, 1e-12);
+  for (const s of [0.3, 1.7, 4]) {
+    const r = run('force-lorentz', straight, s);
+    assert.ok(Math.abs(val(r, 'y')) < 1e-9 * 1e6 * T && Math.abs(val(r, 'Fx')) < 1e-9 * q * 1e5 && Math.abs(val(r, 'Fy')) < 1e-9 * q * 1e5);
+    near(val(r, 'vx'), 1e6, 1e-12);
+  }
+  const profile = def.profile({ ...defaults(def), ...straight }, 81)[0];
+  assert.ok(profile.points.every(point => Math.abs(point.value) < 1e-9 * 1e6 * T));
+  assert.ok(run('force-lorentz', straight).notes.some(note => note.includes('E = vB') && note.includes('v_d = E/B') && note.includes('직진')));
+  assert.ok(run('force-lorentz', { Ey: 5e4 }).notes.some(note => note.includes('드리프트')));
+  assert.ok(run('force-lorentz').notes.some(note => note.includes('v_d = E/B') && note.includes('순수 원운동')));
+});
+
+test('Lorentz + E×B: trochoid = drift + gyration, drift independent of the sign of q, E does work', () => {
+  const m = 1.007276 * AMU, q = E_CHARGE, T = 2 * Math.PI * m / (q * 0.1), half = { Ey: 5e4 };
+  const proton = run('force-lorentz', half, 2 * Math.PI), electron = run('force-lorentz', { ...half, chargeE: -1 }, 2 * Math.PI);
+  near(val(proton, 'vd'), 5e5, 1e-12);
+  near(val(proton, 'radius'), m * 5e5 / (q * 0.1), 1e-12, 'r uses |v − v_d|');
+  near(val(proton, 'x'), 5e5 * T, 1e-12, 'one period moves the guiding center by v_d T');
+  assert.ok(Math.abs(val(proton, 'y')) < 1e-9 * 5e5 * T);
+  near(val(electron, 'vd'), 5e5, 1e-12);
+  near(val(electron, 'x'), 5e5 * T, 1e-12);
+  // faster than the drift: v_d < v keeps going forward; slower than the drift: the loops are cycloid with v_d > v
+  near(val(run('force-lorentz', { Ey: 3e5 }), 'radius'), m * 2e6 / (q * 0.1), 1e-12);
+  // at rest the E field alone starts a cycloid with radius m v_d/(qB)
+  const rest = run('force-lorentz', { speed: 0, Ey: 1e5 }, Math.PI);
+  near(val(rest, 'radius'), m * 1e6 / (q * 0.1), 1e-12);
+  near(val(rest, 'y'), 2 * val(rest, 'radius'), 1e-12); // starts along +y (the E direction), then drifts toward +x
+  // E is non-zero: the field does work, the speed changes; the power is q E v_y and the energy theorem holds along the path
+  const mid = run('force-lorentz', half, Math.PI / 2);
+  near(val(mid, 'work'), q * 5e4 * val(mid, 'vy'), 1e-12);
+  assert.notEqual(val(mid, 'work'), 0);
+  assert.equal(val(run('force-lorentz'), 'work'), 0);
+  // every sweep point agrees with F = q(E + v×B) at that point
+  for (const s of [0.4, 1.9, 3.3, 5.5]) {
+    const r = run('force-lorentz', half, s), fx = q * val(r, 'vy') * 0.1, fy = q * (5e4 - val(r, 'vx') * 0.1);
+    near(val(r, 'Fx'), fx, 1e-12); near(val(r, 'Fy'), fy, 1e-12);
+  }
+  // beyond 10 % of c (drift included) the non-relativistic warning stays
+  assert.ok(run('force-lorentz', { Ey: 1e6, B0: 0.01 }).notes.some(note => note.includes('비상대론')));
+  assert.ok(!run('force-lorentz').notes.some(note => note.includes('비상대론')));
+  assert.equal(run('force-lorentz', { Ey: 2e6 }).status, 'invalid');
+});
+
+test('Lorentz verify rows: RK4 vs closed form for several E, E=0 radius formula, E=vB straight line', () => {
+  const def = getExperiment('force-lorentz');
+  for (const over of [{}, { Ey: 5e4 }, { Ey: 1e5 }, { Ey: -3e5 }, { Ey: 1e6, chargeE: -2, mass: 5.485799e-4 * AMU }, { speed: 0, Ey: 1e5 }]) {
+    const rows = def.verify({ ...defaults(def), ...over });
+    assert.ok(rows.length >= 10, JSON.stringify(over));
+    for (const row of rows) assert.equal(row.status, 'pass', `${JSON.stringify(over)}: ${row.label}`);
+    assert.ok(rows.some(row => row.label.includes('E=0') && row.label.includes('반지름 공식')));
+    assert.ok(rows.some(row => row.label.includes('E=vB') && row.label.includes('y 변화')));
+  }
 });
 
 // ---- 8.2 wire + loop ----------------------------------------------------------------------------------------------------------

@@ -9,36 +9,47 @@ const TOPIC = 'forces';
 const WEEK = 6;
 const hr = Math.hypot;
 
-// ---- 1. Lorentz force: circular orbit ------------------------------------------------------------------------------------
+// ---- 1. Lorentz force: circular orbit, with an optional uniform E ⟂ B (E×B drift) -----------------------------------------
 const lorentzParameters = [
   parameter('chargeE', '전하 q (기본전하 e의 배수, 부호 포함)', '1', '1', 1, 1, -10, 10),
   parameter('mass', '입자 질량 m', 'kg', 'u', AMU, 1.007276 * AMU, 5.485799e-4 * AMU, 500 * AMU),
-  parameter('speed', '속력 v (B에 수직으로 입사)', 'm/s', 'm/s', 1, 1e6, 0, 2.9e7),
+  parameter('speed', '속력 v (B에 수직, +x 방향으로 입사)', 'm/s', 'm/s', 1, 1e6, 0, 2.9e7),
   parameter('B0', '자속밀도 B (+z 방향, 단위 T = Wb/m²)', 'T', 'T', 1, 0.1, 1e-6, 20),
+  parameter('Ey', '전기장 E_y (+y 방향, E ⟂ B; 0이면 순수 자기장)', 'V/m', 'V/m', 1, 0, -1e6, 1e6),
 ];
 
+// E = E_y ŷ, B = B ẑ, start at the origin with v = v x̂. Drift velocity v_d = E×B/B² = (E_y/B) x̂. In the frame moving with v_d the particle
+// circles at speed |v − v_d| with the same ω_c, so x = v_d t + (u₀/ω_c) sin(Ωt), y = −s (u₀/ω_c)(1 − cos Ωt), u₀ = v − v_d, phase Ωt = ω_c t.
 function lorentzOrbit(p) {
-  const q = p.chargeE * E_CHARGE, absq = Math.abs(q), omega = absq * p.B0 / p.mass;
-  return { q, omega, radius: p.mass * p.speed / (absq * p.B0), sign: Math.sign(q) };
+  const q = p.chargeE * E_CHARGE, absq = Math.abs(q), omega = absq * p.B0 / p.mass, vd = p.Ey / p.B0, u0 = p.speed - vd;
+  return { q, omega, vd, u0, radius: p.mass * Math.abs(u0) / (absq * p.B0), sign: Math.sign(q),
+    straight: p.Ey !== 0 && Math.abs(u0) <= 1e-9 * Math.abs(vd), peak: Math.abs(vd) + Math.abs(u0) };
 }
 
+const sci = value => value.toExponential(3);
+
 function lorentzCompute(p, phase) {
-  const { q, omega, radius, sign } = lorentzOrbit(p), v = p.speed, B = p.B0;
-  // Start at the origin moving along +y: x = s r (1 - cos(Ωt)), y = r sin(Ωt), center at (s r, 0).
-  const x = sign * radius * (1 - Math.cos(phase)), y = radius * Math.sin(phase);
-  const vx = sign * v * Math.sin(phase), vy = v * Math.cos(phase);
-  const fx = q * vy * B, fy = -q * vx * B;
-  const kinetic = 0.5 * p.mass * v * v;
-  const notes = ['v ⟂ B이므로 F·v = 0: 자기력은 일을 하지 않아 운동에너지(속력)는 일정하고 방향만 바뀝니다.',
-    '정지 입자(v=0)는 F = q v×B = 0 이라 자기력을 받지 않습니다.',
-    q > 0 ? 'q>0: +z 쪽에서 볼 때 시계 방향으로 돕니다(각속도 −qB/m ẑ).' : 'q<0: +z 쪽에서 볼 때 반시계 방향으로 돕니다.'];
-  if (v > SPEED_LIMIT_RATIO * C) notes.push('v가 광속의 10 %를 넘어 비상대론 공식은 근사입니다.');
+  const { q, omega, vd, u0, radius, sign, straight, peak } = lorentzOrbit(p), v = p.speed, B = p.B0, E = p.Ey;
+  const x = (vd * phase + u0 * Math.sin(phase)) / omega, y = -sign * (u0 / omega) * (1 - Math.cos(phase));
+  const vx = vd + u0 * Math.cos(phase), vy = -sign * u0 * Math.sin(phase);
+  const fx = q * vy * B, fy = q * (E - vx * B);
+  const kinetic = 0.5 * p.mass * (vx * vx + vy * vy), power = E === 0 ? 0 : q * E * vy;
+  const notes = E === 0
+    ? ['v ⟂ B이므로 F·v = 0: 자기력은 일을 하지 않아 운동에너지(속력)는 일정하고 방향만 바뀝니다.',
+      '정지 입자(v=0)는 F = q v×B = 0 이라 자기력을 받지 않습니다.']
+    : ['E ≠ 0: 전기력 qE는 일을 하므로 속력이 변합니다(F·v = qE·v_y). 자기력만 일을 하지 않습니다.',
+      '드리프트 속도 v_d = E×B/B²는 전하의 부호와 질량에 무관하게 같은 방향입니다. 사이클로트론 운동은 이 속도로 움직이는 좌표계에서의 원운동입니다.'];
+  notes.push(q > 0 ? 'q>0: +z 쪽에서 볼 때 시계 방향으로 돕니다(각속도 −qB/m ẑ).' : 'q<0: +z 쪽에서 볼 때 반시계 방향으로 돕니다.');
+  notes.push(`v_d = E/B = ${sci(vd)} m/s (E×B/B² 방향 +x). E = vB(= ${sci(v * B)} V/m)이면 직진, 아니면 드리프트: `
+    + (E === 0 ? '지금은 E=0이라 순수 원운동입니다.' : straight ? '지금은 E = vB라 직진합니다(전기력과 자기력이 상쇄).' : '지금은 드리프트하며 나아가는 사이클로이드형 궤도입니다.'));
+  if (peak > SPEED_LIMIT_RATIO * C) notes.push('입자 속력(드리프트 포함)이 광속의 10 %를 넘어 비상대론 공식은 근사입니다.');
   return {
-    region: v === 0 ? 'at-rest' : 'orbit', vectors: { B: [0, 0, B] },
-    scalars: [scalar('radius', '궤도 반지름 r = mv/(|q|B)', radius, 'm'), scalar('omegaC', '사이클로트론 각진동수 ω_c = |q|B/m', omega, 'rad/s'),
+    region: v === 0 && E === 0 ? 'at-rest' : straight ? 'straight' : E === 0 ? 'orbit' : 'drift', vectors: { B: [0, 0, B], ...(E === 0 ? {} : { E: [0, E, 0] }) },
+    scalars: [scalar('radius', '회전 반지름 r = m|v−v_d|/(|q|B) (E=0이면 mv/(|q|B))', radius, 'm'), scalar('omegaC', '사이클로트론 각진동수 ω_c = |q|B/m', omega, 'rad/s'),
       scalar('frequency', '사이클로트론 주파수 f_c', omega / TWO_PI, 'Hz'), scalar('period', '주기 T = 2πm/(|q|B)', TWO_PI / omega, 's'),
-      scalar('kinetic', '운동에너지 ½mv² (일정)', kinetic, 'J'), scalar('kineticEv', '운동에너지 ½mv²', kinetic / E_CHARGE, 'eV'),
-      scalar('force', '자기력 크기 |q|vB', Math.abs(q) * v * B, 'N'), scalar('work', '자기력의 일률 F·v', 0, 'W'),
+      scalar('vd', '드리프트 속도 v_d = E/B (+x 방향)', vd, 'm/s'), scalar('straightE', '직진 조건 E = vB (+y 방향)', v * B, 'V/m'),
+      scalar('kinetic', '운동에너지 ½mv² (현재 위치, E=0이면 일정)', kinetic, 'J'), scalar('kineticEv', '운동에너지 ½mv² (현재 위치)', kinetic / E_CHARGE, 'eV'),
+      scalar('force', '힘 크기 |F| (E=0이면 |q|vB)', Math.hypot(fx, fy), 'N'), scalar('work', '힘의 일률 F·v (E=0이면 0)', power, 'W'),
       scalar('phase', '궤도 위상 Ωt', phase, 'rad'), scalar('x', '위치 x', x, 'm'), scalar('y', '위치 y', y, 'm'),
       scalar('vx', '속도 v_x', vx, 'm/s'), scalar('vy', '속도 v_y', vy, 'm/s'), scalar('Fx', '힘 F_x', fx, 'N'), scalar('Fy', '힘 F_y', fy, 'N')],
     notes,
@@ -46,60 +57,77 @@ function lorentzCompute(p, phase) {
 }
 
 function lorentzVerify(p) {
-  const method = 'independent RK4 integration of m dv/dt = q v×B, 4000 steps per period';
-  const { q, omega, radius, sign } = lorentzOrbit(p), B = p.B0, qm = q / p.mass, period = TWO_PI / omega, steps = 4000, dt = period / steps;
-  const f = s => [s[2], s[3], qm * s[3] * B, -qm * s[2] * B];
-  const axpy = (s, k, h) => s.map((value, i) => value + h * k[i]);
-  let state = [0, 0, 0, p.speed];
-  const at = {};
-  for (let i = 1; i <= steps; i++) {
-    const k1 = f(state), k2 = f(axpy(state, k1, dt / 2)), k3 = f(axpy(state, k2, dt / 2)), k4 = f(axpy(state, k3, dt));
-    state = state.map((value, j) => value + dt / 6 * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]));
-    if (i === steps / 4 || i === steps / 2 || i === steps) at[i] = state;
-  }
-  const tol = 1e-9, abs = 1e-9 * radius + 1e-300, kinetic = 0.5 * p.mass * p.speed ** 2;
+  const method = 'independent RK4 integration of m dv/dt = q(E + v×B), 4000 steps per period';
+  const { q, omega, vd, u0, sign } = lorentzOrbit(p), B = p.B0, qm = q / p.mass, period = TWO_PI / omega, steps = 4000, dt = period / steps;
+  const integrate = Ey => {
+    const f = s => [s[2], s[3], qm * s[3] * B, qm * (Ey - s[2] * B)];
+    const axpy = (s, k, h) => s.map((value, i) => value + h * k[i]);
+    let state = [0, 0, p.speed, 0];
+    const at = {};
+    for (let i = 1; i <= steps; i++) {
+      const k1 = f(state), k2 = f(axpy(state, k1, dt / 2)), k3 = f(axpy(state, k2, dt / 2)), k4 = f(axpy(state, k3, dt));
+      state = state.map((value, j) => value + dt / 6 * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]));
+      if (i === steps / 4 || i === steps / 2 || i === steps) at[i] = state;
+    }
+    return at;
+  };
+  const at = integrate(p.Ey), free = integrate(0), line = integrate(p.speed * B);
+  const tol = 1e-9, reach = (Math.abs(u0) + Math.abs(vd) * TWO_PI) / omega, abs = tol * reach + 1e-300, rv = p.mass * p.speed / (Math.abs(q) * B);
+  const kinetic = 0.5 * p.mass * p.speed ** 2, closed = th => [(vd * th + u0 * Math.sin(th)) / omega, -sign * (u0 / omega) * (1 - Math.cos(th))];
+  const [x4, y4] = closed(Math.PI / 2), [x2, y2] = closed(Math.PI), [x1, y1] = closed(TWO_PI);
   return [
-    checkRow('x(T/4) = ±r', method, at[steps / 4][0], sign * radius, 'm', tol, abs),
-    checkRow('y(T/4) = r', method, at[steps / 4][1], radius, 'm', tol, abs),
-    checkRow('x(T/2) = ±2r (지름 반대편)', method, at[steps / 2][0], 2 * sign * radius, 'm', tol, abs),
-    checkRow('한 주기 뒤 x = 0 (닫힌 궤도)', method, at[steps][0], 0, 'm', tol, abs),
-    checkRow('한 주기 뒤 운동에너지 불변', method, 0.5 * p.mass * (at[steps][2] ** 2 + at[steps][3] ** 2), kinetic, 'J', 1e-9, 1e-300),
+    checkRow('x(T/4) (해석해 v_d t + (u₀/ω)sin)', method, at[steps / 4][0], x4, 'm', tol, abs),
+    checkRow('y(T/4) (해석해)', method, at[steps / 4][1], y4, 'm', tol, abs),
+    checkRow('x(T/2) (해석해)', method, at[steps / 2][0], x2, 'm', tol, abs),
+    checkRow('y(T/2) (해석해; E=0이면 지름 ∓2r)', method, at[steps / 2][1], y2, 'm', tol, abs),
+    checkRow('한 주기 뒤 x = v_d T (E=0이면 0: 닫힌 궤도)', method, at[steps][0], x1, 'm', tol, abs),
+    checkRow('한 주기 뒤 y = 0', method, at[steps][1], y1, 'm', tol, abs),
+    checkRow('한 주기 뒤 운동에너지 불변', method, 0.5 * p.mass * (at[steps][2] ** 2 + at[steps][3] ** 2), kinetic, 'J', 1e-9, 1e-9 * 0.5 * p.mass * (p.speed + Math.abs(vd)) ** 2 + 1e-300),
+    checkRow('E=0일 때 지름 |y(T/2)| = 2mv/(|q|B) (반지름 공식)', method + ' with E = 0', Math.abs(free[steps / 2][1]), 2 * rv, 'm', tol, 1e-9 * rv + 1e-300),
+    checkRow('E=vB일 때 y(T) = 0 (직선, y 변화 없음)', method + ' with E = vB', line[steps][1], 0, 'm', tol, 1e-9 * (rv + p.speed * period) + 1e-300),
+    checkRow('E=vB일 때 x(T) = vT (등속 직진)', method + ' with E = vB', line[steps][0], p.speed * period, 'm', tol, 1e-9 * p.speed * period + 1e-300),
   ];
 }
 
 const lorentz = defineLecture({
-  id: 'force-lorentz', title: '로런츠 힘 — 균일 B 속 원운동', topic: TOPIC, week: WEEK, sections: ['8.1'],
-  description: '자기장에 수직으로 입사한 하전입자의 원궤도: r = mv/(qB), ω_c = qB/m, 주기. 이온 임플랜터에서 질량 선택에 쓰는 원리입니다. 임의 배치로 보기: 평면 ▸ 자기.',
-  answers: ['radius','omegaC','frequency','period'], coordinateScalars: ['phase','x','y'],
+  id: 'force-lorentz', title: '로런츠 힘 — 균일 B 속 원운동, E×B 드리프트', topic: TOPIC, week: WEEK, sections: ['8.1'],
+  description: '자기장에 수직으로 입사한 하전입자의 원궤도: r = mv/(qB), ω_c = qB/m, 주기. 이온 임플랜터에서 질량 선택에 쓰는 원리입니다. 전기장 E_y를 더하면 E×B 드리프트 v_d = E/B가 겹치고 E = vB에서 직진합니다. 임의 배치로 보기: 평면 ▸ 자기.',
+  answers: ['radius', 'omegaC', 'frequency', 'period', 'vd', 'straightE'], coordinateScalars: ['phase', 'x', 'y'],
   parameters: lorentzParameters, probeDefault: [0, 0, Math.PI / 2],
   view: { kind: 'xy-curve', plane: 'xy', extent: 1, probeAxes: [0, 1], coordinate: coordinate('Ωt', 'rad', '궤도 위상'),
     curve: { xLabel: 'x', xUnit: 'm', yLabel: 'y', yUnit: 'm', equal: true, marker: { x: 'x', y: 'y' }, sweep: () => [0, TWO_PI] } },
   validate: p => (p.chargeE === 0 ? '전하가 0이면 힘이 없어 궤도가 직선입니다. 0이 아닌 q를 입력하세요.' : ''),
   compute: lorentzCompute, profile: (p, count) => {
-    const points = linspace(0, TWO_PI, count).map(phase => lorentzCompute(p, phase).scalars).map(s => ({ coordinate: s[9].value, value: s[10].value }));
+    const points = linspace(0, TWO_PI, count).map(phase => lorentzCompute(p, phase).scalars)
+      .map(s => ({ coordinate: s.find(item => item.key === 'x').value, value: s.find(item => item.key === 'y').value }));
     return [series('orbit', '궤도 y(x)', 'm', 'x', 'm', points)];
   },
   verify: lorentzVerify,
-  assumptions: ['시간에 따라 변하지 않는 균일 B(+z)와 E=0. 입자는 처음에 원점에서 +y 방향으로 속력 v로 출발(v ⟂ B)합니다.',
-    '비상대론(v ≪ c). 복사 손실과 입자 사이의 힘, B의 비균일은 무시합니다.',
-    '프리셋은 양성자(m = 1.007276 u, q = +e)가 0.1 T에서 1×10⁶ m/s로 움직이는 이온 임플랜터형 예: r ≈ 0.1044 m, f_c ≈ 1.525 MHz (강의 숫자가 아니라 이 앱에서 계산한 값).'],
-  validity: ['q ≠ 0, B > 0, 0 ≤ v ≤ 2.9×10⁷ m/s. v=0이면 r=0이고 힘이 0입니다.', '위상 Ωt는 한 주기 2π마다 같은 점으로 돌아옵니다.'],
+  assumptions: ['시간에 따라 변하지 않는 균일 B(+z)와 균일 E(+y, E ⟂ B; 기본 E=0). 입자는 처음에 원점에서 +x 방향으로 속력 v로 출발(v ⟂ B)합니다.',
+    '비상대론(v ≪ c). 복사 손실과 입자 사이의 힘, B·E의 비균일은 무시합니다.',
+    '프리셋은 양성자(m = 1.007276 u, q = +e)가 0.1 T에서 1×10⁶ m/s로 움직이는 이온 임플랜터형 예: r ≈ 0.1044 m, f_c ≈ 1.525 MHz (강의 숫자가 아니라 이 앱에서 계산한 값). E = vB = 1×10⁵ V/m를 주면 직진합니다.'],
+  validity: ['q ≠ 0, B > 0, 0 ≤ v ≤ 2.9×10⁷ m/s, |E| ≤ 10⁶ V/m. v=0, E=0이면 r=0이고 힘이 0입니다.', '위상 Ωt는 한 주기 2π마다 같은 점(E≠0이면 v_d T만큼 옮겨진 점)으로 돌아옵니다.'],
   singularities: ['특이점은 없습니다. q=0은 입력 오류로 처리하고 값을 보정하지 않습니다.'],
-  formulas: [{ label: '로런츠 힘', text: 'F = q(E + v×B)', unit: 'N' }, { label: '반지름', text: 'r = m v/(|q| B)', unit: 'm' },
-    { label: '사이클로트론 진동수', text: 'ω_c = |q| B/m; T = 2π m/(|q| B)', unit: 'rad/s' }, { label: '일', text: 'F·v = q (v×B)·v = 0', unit: 'W' }],
+  formulas: [{ label: '로런츠 힘', text: 'F = q(E + v×B)', unit: 'N' }, { label: '반지름', text: 'r = m |v − v_d|/(|q| B)  (E=0: r = m v/(|q| B))', unit: 'm' },
+    { label: '사이클로트론 진동수', text: 'ω_c = |q| B/m; T = 2π m/(|q| B)', unit: 'rad/s' }, { label: '드리프트 속도', text: 'v_d = E×B/B² (크기 E/B)', unit: 'm/s' },
+    { label: '직진 조건', text: 'E = v B  (q(E + v×B) = 0)', unit: 'V/m' }, { label: '일', text: '자기력: F·v = q (v×B)·v = 0', unit: 'W' }],
   references: [hayt('8.1', 'Force on a moving charge'), REF.motion],
   symbolic: {
-    title: '균일 자기장 속 하전입자의 원운동 — 기호 풀이',
-    givens: [['q', '입자 전하 (부호 포함)', 'C', 'q ≠ 0'], ['m', '입자 질량', 'kg', 'm > 0'], ['v', 'B에 수직인 속력', 'm/s', 'v ≥ 0'], ['B', '+z 방향 자속밀도', 'T', 'B > 0']],
-    laws: [['로런츠 힘 (자기항)', 'F = q v×B'], ['뉴턴 제2법칙', 'm dv/dt = q v×B']],
-    steps: [['힘은 속도에 수직', 'F·v = 0', '일을 하지 않으므로 속력 v가 일정하고 방향만 바뀝니다.'],
-      ['구심력 조건', 'm v²/r = |q| v B', '원운동의 구심력을 자기력이 공급합니다.'],
+    title: '균일 자기장(+전기장) 속 하전입자의 운동 — 기호 풀이',
+    givens: [['q', '입자 전하 (부호 포함)', 'C', 'q ≠ 0'], ['m', '입자 질량', 'kg', 'm > 0'], ['v', 'B에 수직인 속력', 'm/s', 'v ≥ 0'], ['B', '+z 방향 자속밀도', 'T', 'B > 0'],
+      ['E', '+y 방향 전기장 (E ⟂ B)', 'V/m', '기본 E = 0']],
+    laws: [['로런츠 힘', 'F = q(E + v×B)'], ['뉴턴 제2법칙', 'm dv/dt = q(E + v×B)']],
+    steps: [['자기력은 속도에 수직', 'F_B·v = 0', '자기력은 일을 하지 않아 E=0이면 속력 v가 일정하고 방향만 바뀝니다.'],
+      ['구심력 조건 (E=0)', 'm v²/r = |q| v B', '원운동의 구심력을 자기력이 공급합니다.'],
       ['반지름', 'r = m v/(|q| B)', 'v가 크거나 m이 크면 크게 돌고 B가 크면 작게 돕니다.'],
-      ['각진동수와 주기', 'ω_c = v/r = |q| B/m; T = 2π m/(|q| B)', '주기는 v에 무관합니다: 질량 선택(질량분석)의 근거.']],
-    answers: [['반지름 r', 'r = m v/(|q| B)', 'm', 'q>0이면 +z에서 볼 때 시계 방향'], ['사이클로트론 각진동수', 'ω_c = |q| B/m', 'rad/s'],
-      ['주기', 'T = 2π m/(|q| B)', 's'], ['자기력이 한 일', 'W = F·v dt = 0', 'J']],
-    conditions: ['v ⟂ B, 비상대론, E = 0'],
-    limitations: ['v가 B와 평행한 성분을 가지면 나선 운동이 되지만 이 실험은 v ⟂ B만 다룹니다.'],
+      ['각진동수와 주기', 'ω_c = v/r = |q| B/m; T = 2π m/(|q| B)', '주기는 v에 무관합니다: 질량 선택(질량분석)의 근거.'],
+      ['E×B 드리프트', 'v_d = E×B/B² = (E/B) x̂', 'v = v_d + u 로 놓으면 q(E + v_d×B) = 0이라 u는 B만 있는 원운동입니다.'],
+      ['직진 조건', 'E = v B  (v = v_d)', '이때 u = 0이라 입자는 등속 직진합니다(속도 선택기의 원리).']],
+    answers: [['반지름 r', 'r = m |v − v_d|/(|q| B)', 'm', 'E=0이면 r = m v/(|q| B); q>0이면 +z에서 볼 때 시계 방향'], ['사이클로트론 각진동수', 'ω_c = |q| B/m', 'rad/s'],
+      ['주기', 'T = 2π m/(|q| B)', 's'], ['드리프트 속도', 'v_d = E/B', 'm/s', 'E×B/B² 방향'], ['직진 조건', 'E = v B', 'V/m'],
+      ['자기력이 한 일', 'W = F_B·v dt = 0', 'J']],
+    conditions: ['v ⟂ B, E ⟂ B, 균일한 정적 E·B, 비상대론'],
+    limitations: ['v가 B와 평행한 성분을 가지면 나선 운동이 되지만 이 실험은 v ⟂ B만 다룹니다.', 'E가 B에 수직이 아닌 성분은 다루지 않습니다.'],
   },
 });
 
