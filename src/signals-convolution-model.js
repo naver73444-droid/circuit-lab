@@ -1,13 +1,16 @@
 // Lesson 2 (pure): convolution families, the three panes' curves at a given t, and DT frames.
 import { rectangleConvolution, exponentialConvolution, discreteConvolution } from './signals-course-model.js';
 import { customConvolutionAt, windowSignal } from './signals-expression.js';
-import { controlDefaults, formatNumber, midpointRect, sampleCurve } from './signals-util.js';
+import { controlDefaults, formatNumber, jumpList, midpointRect, sampleCurve } from './signals-util.js';
 
 export const CONVOLUTION_FAMILIES = [
   { value: 'rect-rect', label: '직사각 ∗ 직사각' },
   { value: 'exp-rect', label: '지수 ∗ 직사각' },
   { value: 'tri-rect', label: '삼각 ∗ 직사각' },
   { value: 'exp-exp', label: '지수 ∗ 지수' },
+  { value: 'rc-step', label: 'RC h ∗ u(t) · 계단응답 (Ex 2.20)' },
+  { value: 'rc-pulse', label: 'RC h ∗ Π(t) · 펄스응답 (Ex 2.21)' },
+  { value: 'ex222', label: 'e^(−αt)[u(t)−u(t−2)] ∗ 두 펄스 (Ex 2.22)' },
   { value: 'dt-basic', label: '이산 [1,2,1] ∗ [1,1]' },
   { value: 'dt-diff', label: '이산 차분 [1,−1]' },
   { value: 'dt-avg', label: '이산 3점 평균' },
@@ -37,6 +40,29 @@ export function triangleCumulative(s, T) {
   return T / 2;
 }
 
+// Ex 2.21: x = Pi(t) through h = (1/tau) e^{-t/tau} u(t): rise 1-e^{-(t+1/2)/tau}, then (e^{1/2tau}-e^{-1/2tau}) e^{-t/tau}.
+export function rcPulseResponse(tau, t) {
+  if (t <= -0.5) return 0;
+  if (t <= 0.5) return 1 - Math.exp(-(t + 0.5) / tau);
+  return (Math.exp(1 / (2 * tau)) - Math.exp(-1 / (2 * tau))) * Math.exp(-t / tau);
+}
+// Ex 2.22: h = e^{-a t}[u(t)-u(t-2)], x = 1 on (0,1), -1 on (1,2): y = F(0,1) - F(1,2), F(A,B) = integral over the overlap.
+export function ex222Response(alpha, t) {
+  const slice = (A, B) => {
+    const lo = Math.max(A, t - 2);
+    const hi = Math.min(B, t);
+    return hi > lo ? (Math.exp(-alpha * (t - hi)) - Math.exp(-alpha * (t - lo))) / alpha : 0;
+  };
+  return slice(0, 1) - slice(1, 2);
+}
+// The numbered overlap case of the lecture (the pieces of y(t) that have their own formula).
+export function overlapCase(family, t) {
+  if (family === 'rc-step') return t <= 0 ? 1 : 2;
+  if (family === 'rc-pulse') return t <= -0.5 ? 1 : t <= 0.5 ? 2 : 3;
+  if (family === 'ex222') return t <= 0 ? 1 : t <= 1 ? 2 : t <= 2 ? 3 : t <= 3 ? 4 : t <= 4 ? 5 : 6;
+  return null;
+}
+
 // Exact y for exp(-a t)u(t) * rect(0..T2).
 export function expRectConvolution(t, a, T2) {
   if (t <= 0) return 0;
@@ -50,6 +76,8 @@ function convolutionControls(family) {
   if (family === 'tri-rect') return [width('T1', 'T₁ x 폭', 2), width('T2', 'T₂ h 폭', 1)];
   if (family === 'exp-rect') return [decay('alpha', 'α x 감쇠', 1), width('T2', 'T₂ h 폭', 1)];
   if (family === 'exp-exp') return [decay('alpha', 'α x 감쇠', 1), decay('beta', 'β h 감쇠', 2)];
+  if (family === 'rc-step' || family === 'rc-pulse') return [{ key: 'tau', label: 'τ = RC', min: 0.05, max: 2, step: 0.05, initial: 0.25, unit: 's' }];
+  if (family === 'ex222') return [decay('alpha', 'α h 감쇠', 1)];
   return [];
 }
 
@@ -81,6 +109,21 @@ function continuousSetup(family, p) {
     xEdges = [0];
     hEdges = [0, p.T2];
     end = p.T2 + 5 / p.alpha;
+  } else if (family === 'rc-step' || family === 'rc-pulse') {
+    const pulse = family === 'rc-pulse';
+    x = pulse ? (t) => midpointRect(t, -0.5, 0.5) : (t) => (t < 0 ? 0 : t === 0 ? 0.5 : 1);
+    h = (t) => expRight(t, 1 / p.tau) / p.tau;
+    y = pulse ? (t) => rcPulseResponse(p.tau, t) : (t) => (t <= 0 ? 0 : 1 - Math.exp(-t / p.tau));
+    xEdges = pulse ? [-0.5, 0.5] : [0];
+    hEdges = [0];
+    end = 1 + 6 * p.tau;
+  } else if (family === 'ex222') {
+    x = (t) => midpointRect(t, 0, 1) - midpointRect(t, 1, 2);
+    h = (t) => Math.exp(-p.alpha * t) * midpointRect(t, 0, 2);
+    y = (t) => ex222Response(p.alpha, t);
+    xEdges = [0, 1, 2];
+    hEdges = [0, 2];
+    end = 4;
   } else {
     x = (t) => expRight(t, p.alpha);
     h = (t) => expRight(t, p.beta);
@@ -89,7 +132,9 @@ function continuousSetup(family, p) {
     hEdges = [0];
     end = 8 / Math.min(p.alpha, p.beta);
   }
-  const cursor0 = family === 'exp-exp' ? 1 / Math.min(p.alpha, p.beta) : family === 'exp-rect' ? p.T2 : Math.min(p.T1, p.T2);
+  const cursor0 = family === 'exp-exp' ? 1 / Math.min(p.alpha, p.beta) : family === 'exp-rect' ? p.T2
+    : family === 'rc-step' ? 2 * p.tau : family === 'rc-pulse' ? 0.5 : family === 'ex222' ? 1 : Math.min(p.T1, p.T2);
+  const wide = family === 'rc-pulse' ? { lo: -1.1, hi: end } : family === 'ex222' ? { lo: -1, hi: 5 } : null;
   return {
     discrete: false,
     family,
@@ -98,8 +143,8 @@ function continuousSetup(family, p) {
     y,
     xEdges,
     hEdges,
-    domain: { min: -0.1 * end, max: 1.1 * end, step: end / 200, unit: 's' },
-    axis: { lo: -0.2 * end, hi: 1.2 * end },
+    domain: wide ? { min: wide.lo + 0.1, max: wide.hi, step: (wide.hi - wide.lo) / 200, unit: 's' } : { min: -0.1 * end, max: 1.1 * end, step: end / 200, unit: 's' },
+    axis: wide ?? { lo: -0.2 * end, hi: 1.2 * end },
     cursor0,
   };
 }
@@ -163,9 +208,10 @@ export function continuousFrame(setup, t, count = 400) {
   const movedEdges = setup.hEdges.map((edge) => t - edge);
   return {
     // h(t - tau): the flipped, shifted impulse response
-    moving: sampleCurve((tau) => setup.h(t - tau), lo, hi, count, movedEdges),
+    moving: sampleCurve((tau) => setup.h(t - tau), lo, hi, count, movedEdges, { gaps: true }),
+    movingJumps: jumpList((tau) => setup.h(t - tau), movedEdges, lo, hi),
     // h(-tau): where the flipped copy starts (t = 0)
-    flipped: sampleCurve((tau) => setup.h(-tau), lo, hi, count, setup.hEdges.map((edge) => -edge)),
+    flipped: sampleCurve((tau) => setup.h(-tau), lo, hi, count, setup.hEdges.map((edge) => -edge), { gaps: true }),
     product: sampleCurve((tau) => setup.x(tau) * setup.h(t - tau), lo, hi, count, [...setup.xEdges, ...movedEdges]),
     y: setup.y(t),
   };
@@ -194,7 +240,8 @@ export function describeConvolution(setup, t) {
     const used = frame.terms.filter((term) => term.product !== 0).map((term) => formatNumber(term.product));
     return `n=${n}: ${used.length ? used.join(' + ') : '0'} = y[${n}] = ${formatNumber(frame.sum)}`;
   }
-  return `t=${formatNumber(t)} s: 겹친 곱의 면적 y(t)=${formatNumber(setup.y(t))}`;
+  const k = overlapCase(setup.family, t);
+  return `t=${formatNumber(t)} s${k ? ` (Case ${k})` : ''}: 겹친 곱의 면적 y(t)=${formatNumber(setup.y(t))}`;
 }
 
 // ---- lesson description consumed by the controller -------------------------------------------
@@ -204,6 +251,9 @@ const FORMULAS = {
   'tri-rect': 'y(t)=F(t)−F(t−T₂); F(s)=∫₀ˢ x(τ)dτ',
   'exp-rect': 'y(t)=[e^(−α max(0,t−T₂))−e^(−αt)]/α, t>0',
   'exp-exp': 'y(t)=[e^(−αt)−e^(−βt)]/(β−α)·u(t), α≠β',
+  'rc-step': 'y(t)=(1−e^(−t/RC))u(t); h=(1/RC)e^(−t/RC)u(t)',
+  'rc-pulse': 'y(t)=1−e^(−(t+1/2)/RC), −1/2<t≤1/2; y(t)=[e^(1/2RC)−e^(−1/2RC)]e^(−t/RC), t>1/2',
+  ex222: 'y(t)=F(0,1)−F(1,2); F(A,B)=∫_{max(A,t−2)}^{min(B,t)} e^(−α(t−λ))dλ',
 };
 
 export const convolutionLesson = {
@@ -226,10 +276,10 @@ export const convolutionLesson = {
     if (family === 'custom') return '입력한 식의 유한창 근사입니다. x와 h는 ±T 창 밖에서 0, 적분은 중점 합입니다.';
     if (family === 'custom-dt') return '직접 입력한 유한 수열의 합성곱입니다. 지지 밖 표본은 0입니다.';
     if (isDiscreteFamily(family)) return 'h를 뒤집어 n만큼 옮긴 뒤 겹친 표본끼리 곱해 더한 값이 y[n]입니다.';
-    return 'h(t−τ)가 x(τ) 위를 지나가며, 곱의 면적이 아래 y(t)의 높이가 됩니다. 겹침이 없으면 0입니다.';
+    return '뒤집기→이동→곱→적분: h(t−λ)가 x(λ) 위를 지나가며 곱의 면적이 y(t)입니다. 겹침이 없으면 0, τ는 RC 시정수입니다.';
   },
   formula(family) {
     if (isDiscreteFamily(family)) return 'y[n]=Σₖ x[k] h[n−k]';
-    return `y(t)=∫ x(τ) h(t−τ) dτ${FORMULAS[family] ? `; ${FORMULAS[family]}` : ''}`;
+    return `y(t)=x(t)*h(t)=∫ x(λ) h(t−λ) dλ${FORMULAS[family] ? `; ${FORMULAS[family]}` : ''}`;
   },
 };

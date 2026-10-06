@@ -75,7 +75,7 @@ test('default markers lie inside each support', () => {
     const { min, max } = markerDomain(value);
     const marker = defaultMarker(value);
     assert.ok(marker >= min && marker <= max, value);
-    assert.equal(isDiscrete(value), value === 'seq');
+    assert.equal(isDiscrete(value), value === 'seq' || value === 'up');
   }
 });
 

@@ -1,6 +1,7 @@
 // Lesson 6 (pure): sampling a cosine, its alias, and the spectrum replicas at k*fs +- f0.
 import { samplingAlias } from './signals-course-model.js';
 import { controlDefaults, formatNumber } from './signals-util.js';
+import { dtPeriod, normalizedFrequency } from './signals-axis.js';
 
 export const SAMPLING_AXIS = 30; // Hz, half-width of the spectrum plot
 const TAU = 2 * Math.PI;
@@ -59,6 +60,14 @@ export function describeSampling({ f0, fs }) {
   return `fₛ=${hz(fs)} < 2f₀=${hz(2 * f0)}: 알리아싱 · f_alias=${hz(aliasHz)} (f₀=${hz(f0)}로 복원되지 않음)`;
 }
 
+// Ch 1.4 relation between the CT tone and its DT sinusoid: Omega0 = w0 Ts, F0 = f0 / fs, period N = k / F0 (rational F0 only).
+export function describeNormalized({ f0, fs }) {
+  const { F0, Omega0 } = normalizedFrequency(f0, fs);
+  const period = dtPeriod(F0);
+  const tail = period.periodic ? `DT 주기 N=k/F₀=${period.N} 표본` : 'F₀가 무리수라 DT 신호는 비주기';
+  return `Ω₀=ω₀Tₛ=${formatNumber(Omega0)} rad, F₀=f₀/fₛ=${formatNumber(F0)} (Ω₀=2πF₀) · ${tail}`;
+}
+
 // ---- lesson description consumed by the controller -------------------------------------------
 
 export const samplingLesson = {
@@ -67,7 +76,7 @@ export const samplingLesson = {
   initialFamily: 'cos',
   controls: samplingControls,
   scrub: false,
-  read: () => 'fₛ를 낮춰 2f₀ 아래로 내려 보세요. 같은 표본을 지나는 더 느린 사인이 생기고, 스펙트럼 복제가 기저대역으로 겹쳐 들어옵니다.',
+  read: () => '[이후 진도·참고] fₛ를 2f₀ 아래로 내리면 같은 표본을 지나는 더 느린 사인(alias)이 생기고 스펙트럼 복제가 기저대역에 겹칩니다.',
   formula: () => 'x[n]=cos(2πf₀n/fₛ+φ); f_alias=|((f₀+fₛ/2) mod fₛ)−fₛ/2|; fₛ>2f₀',
-  describe: ({ params }) => describeSampling(params),
+  describe: ({ params }) => `${describeSampling(params)} · ${describeNormalized(params)}`,
 };

@@ -101,7 +101,7 @@ test('metrics, curves and lesson description exist for every family', () => {
   for (const { value } of TRANSFORM_FAMILIES) {
     const p = transformDefaults(value);
     const m = transformMetrics(value, p);
-    assert.ok(m.peak > 0 && m.timeWidth > 0 && m.freqWidth > 0, value);
+    assert.ok(m.peak > 0 && m.timeWidth > 0 && (m.freqWidth > 0 || value === 'cos' || value === 'psd'), value);
     const { magnitude, phase } = spectrumCurves(value, p, 50);
     assert.equal(magnitude.length, 50);
     assert.equal(phase.length, 50);

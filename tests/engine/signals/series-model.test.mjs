@@ -95,10 +95,10 @@ test('spectrum lines list DC and 25 harmonics with the tri wave odd-only', () =>
 
 test('lesson controls: N integer 1..25, duty only for the pulse', () => {
   const pulse = seriesLesson.controls('pulse');
-  assert.deepEqual(pulse.map((c) => c.key), ['N', 'D']);
+  assert.deepEqual(pulse.map((c) => c.key), ['N', 'T0', 'D', 'spec', 'axis']);
   assert.equal(pulse[0].min, 1);
   assert.equal(pulse[0].max, 25);
-  assert.deepEqual(seriesLesson.controls('saw').map((c) => c.key), ['N']);
+  assert.deepEqual(seriesLesson.controls('saw').map((c) => c.key), ['N', 'T0', 'spec', 'axis']);
   assert.match(seriesLesson.describe({ family: 'pulse', params: { N: 25, D: 0.5 } }), /넘침/);
   assert.match(seriesLesson.describe({ family: 'tri', params: { N: 5 } }), /넘침 없음/);
   assert.throws(() => seriesCoefficients('nope'));

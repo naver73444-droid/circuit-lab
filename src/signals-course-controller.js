@@ -17,21 +17,32 @@ import { seriesLesson } from './signals-series-model.js';
 import { transformLesson } from './signals-transform-model.js';
 import { rocLesson } from './signals-roc-model.js';
 import { samplingLesson } from './signals-sampling-model.js';
+import { opsLesson } from './signals-ops-model.js';
+import { ltiLesson } from './signals-lti-model.js';
+import { freqLesson } from './signals-freq-model.js';
 import { createTimeView } from './signals-time-view.js';
 import { createConvolutionView } from './signals-convolution-view.js';
 import { createSeriesView } from './signals-series-view.js';
 import { createTransformView } from './signals-transform-view.js';
 import { createRocView } from './signals-roc-view.js';
 import { createSamplingView } from './signals-sampling-view.js';
+import { createOpsView } from './signals-ops-view.js';
+import { createLtiView } from './signals-lti-view.js';
+import { createFreqView } from './signals-freq-view.js';
 
-const REGISTRY = {
+// id -> [lesson (pure model), createView]; the order of SIGNALS_LESSONS is the tab order.
+export const SIGNALS_REGISTRY = {
   time: [timeLesson, createTimeView],
+  ops: [opsLesson, createOpsView],
+  lti: [ltiLesson, createLtiView],
   convolution: [convolutionLesson, createConvolutionView],
   series: [seriesLesson, createSeriesView],
   fourier: [transformLesson, createTransformView],
+  freq: [freqLesson, createFreqView],
   roc: [rocLesson, createRocView],
   sampling: [samplingLesson, createSamplingView],
 };
+const REGISTRY = SIGNALS_REGISTRY;
 
 export function createSignalsCourseController(host) {
   if (!host || typeof host.querySelector !== 'function') throw new TypeError('신호 학습 패널 host가 필요합니다.');
@@ -162,8 +173,15 @@ export function createSignalsCourseController(host) {
     ui.dynamic.replaceChildren();
     ui.sliders.clear();
     for (const spec of lesson.controls(state.family, state.params)) {
-      const wrap = el('label', { class: 'sg-ctl' }, ui.dynamic);
+      const wrap = el('label', { class: spec.options ? 'sg-ctl sg-choice' : 'sg-ctl' }, ui.dynamic);
       el('span', { class: 'sg-name' }, wrap, spec.label);
+      if (spec.options) {
+        // choice control (axis, scale, mode): a select whose value is the option index
+        const input = el('select', { 'data-signals-param': spec.key, 'data-signals-choice': '', 'aria-label': spec.label }, wrap);
+        for (const option of spec.options) el('option', { value: option.value }, input, option.label);
+        ui.sliders.set(spec.key, { spec, input, output: null });
+        continue;
+      }
       const output = el('output', { 'aria-live': 'off' }, wrap);
       const input = el('input', {
         type: 'range', min: spec.min, max: spec.max, step: spec.step, 'data-signals-param': spec.key,
@@ -190,8 +208,9 @@ export function createSignalsCourseController(host) {
     for (const { spec, input, output } of ui.sliders.values()) {
       const value = state.params[spec.key];
       if (Number(input.value) !== value) input.value = String(value);
-      output.textContent = formatQuantity(value, spec.unit);
-      input.setAttribute('aria-valuetext', output.textContent);
+      const text = spec.options ? spec.options.find((o) => o.value === value)?.label ?? '' : formatQuantity(value, spec.unit);
+      if (output) output.textContent = text;
+      input.setAttribute('aria-valuetext', text);
     }
     const spec = cursorSpec(state);
     if (ui.scrub && spec) {

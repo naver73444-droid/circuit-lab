@@ -4,7 +4,7 @@ export const SIGNALS_STYLE = `
 .sg{box-sizing:border-box;max-width:1180px;margin:0 auto;padding:clamp(10px,2.2vw,22px);color:var(--text);font:14px/1.55 system-ui,"Malgun Gothic",sans-serif}
 .sg *{box-sizing:border-box}
 .sg [hidden]{display:none!important}
-.sg-tabs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;margin:0 0 12px}
+.sg-tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px;margin:0 0 12px}
 .sg-tabs button{min-height:40px;padding:4px 6px;font-size:13px;line-height:1.25;border-radius:10px;overflow-wrap:anywhere}
 .sg-tabs button[aria-current=step]{background:var(--selection);border-color:var(--accent);font-weight:650}
 .sg-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:0 0 8px}
@@ -52,6 +52,7 @@ export const SIGNALS_STYLE = `
 .sg-svg .dt.hollow{fill:var(--canvas);stroke:var(--c);stroke-width:1.5}
 .sg-svg .ref{stroke:var(--c);stroke-width:1.5;fill:none}
 .sg-svg .ref.dash{stroke-dasharray:5 4}
+.sg-svg .ref.faint{opacity:.55}
 .sg-svg .ref.thick{stroke-width:2.6}
 .sg-svg .handle{fill:var(--canvas);stroke:var(--c);stroke-width:2.6;cursor:grab}
 .sg-svg .c1{--c:var(--accent)}
@@ -84,8 +85,8 @@ export const SIGNALS_STYLE = `
 .sg-legend .c4{--c:var(--warning)}
 .sg-legend .c5{--c:var(--danger)}
 @media(max-width:700px){
-.sg-tabs{grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;margin-bottom:8px}
-.sg-tabs button{min-height:40px;padding:2px 2px;font-size:12px}
+.sg-tabs{grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:8px}
+.sg-tabs button{min-height:36px;padding:2px 2px;font-size:12px}
 .sg-head{display:none}
 .sg-controls{display:block;padding:6px 10px 8px}
 .sg-ctl{grid-template-columns:6.4em minmax(0,1fr) 6em;align-items:center;gap:0 8px;min-height:34px}
@@ -94,6 +95,9 @@ export const SIGNALS_STYLE = `
 .sg-ctl>input[type=range]{grid-column:2;margin:0}
 .sg-ctl>output{grid-column:3}
 .sg-ctl select{grid-column:2/-1}
+.sg-ctl.sg-choice{display:inline-grid;vertical-align:top;width:calc(50% - 9px);margin:2px 8px 2px 0;grid-template-columns:minmax(0,1fr);gap:0}
+.sg-ctl.sg-choice>*{grid-row:auto;grid-column:1}
+.sg-ctl.sg-choice select{grid-column:1}
 .sg-scrub{grid-template-columns:auto minmax(0,1fr) 6em}
 .sg-scrub>.sg-name{display:none}
 .sg-scrub>input[type=range]{grid-column:2}

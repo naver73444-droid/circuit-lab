@@ -1,7 +1,7 @@
 // Lesson 2 view: one SVG, three stacked panes sharing the time axis:
 // (1) x(tau) with the flipped, shifted h(t-tau); (2) their product (area shaded); (3) y accumulating up to the cursor.
 import { createLegend, createPane, createSurface, svgEl } from './signals-plot.js';
-import { clamp, formatNumber, niceTicks, sampleCurve } from './signals-util.js';
+import { clamp, formatNumber, jumpList, niceTicks, sampleCurve } from './signals-util.js';
 import {
   cachedSetup, continuousFrame, convolutionFrame, flippedImpulse, outputCurve, isCustomFamily,
 } from './signals-convolution-model.js';
@@ -58,6 +58,8 @@ export function createConvolutionView({ doc, parent, emit }) {
   ]);
 
   const xLine = p1.line('c1');
+  const xJumps = p1.jumps('c1');
+  const movingJumps = p1.jumps('c2');
   const xStems = p1.stems('c1');
   const flippedLine = p1.line('c2 faint dash');
   const movingLine = p1.line('c2');
@@ -98,6 +100,7 @@ export function createConvolutionView({ doc, parent, emit }) {
     const { family, params, cursor } = state;
     const empty = isCustomFamily(family) && !state.extra?.custom;
     for (const pane of panes) pane.root.setAttribute('visibility', empty ? 'hidden' : 'visible');
+    if (empty) for (const pane of panes) pane.clearAxes();
     emptyNote.setAttribute('visibility', empty ? 'visible' : 'hidden');
     if (empty) {
       emptyNote.setAttribute('x', surface.width / 2);
@@ -120,7 +123,7 @@ export function createConvolutionView({ doc, parent, emit }) {
       legendKey = discrete;
       legend.set(discrete
         ? ['x[k]', 'h[n−k] 뒤집어 이동', '곱 x[k]h[n−k] · 합 = y[n]', 'y[n] 출력', '막대는 겹치지 않게 좌우 ±0.12 비껴 그림']
-        : ['x(τ)', 'h(t−τ) 뒤집어 이동', '곱 · 면적', 'y(t) 출력', null]);
+        : ['x(λ)', 'h(t−λ) 뒤집어 이동', '곱 · 면적', 'y(t) 출력', null]);
     }
     const t = discrete ? Math.round(cursor) : cursor;
     cursors.forEach((line) => line.set(t));
@@ -130,10 +133,12 @@ export function createConvolutionView({ doc, parent, emit }) {
 
   function updateContinuous(setup, t) {
     const frame = continuousFrame(setup, t);
-    p1.setTitle('① x(τ)와 뒤집어 옮긴 h(t−τ)', 'start', true);
-    p2.setTitle('② 곱 x(τ)·h(t−τ) — 색칠한 넓이가 y(t)', 'start', true);
+    p1.setTitle('① x(λ)와 뒤집어(Flip) 옮긴(Shift) h(t−λ)', 'start', true);
+    p2.setTitle('② 곱(Multiply) x(λ)·h(t−λ) — 색칠한 넓이(Integrate)가 y(t)', 'start', true);
     p3.setTitle('③ y(t): t까지의 값이 쌓이는 중', 'start', true);
     xLine.set(sampleX(setup));
+    xJumps.set(jumpsX(setup));
+    movingJumps.set(frame.movingJumps);
     xStems.set([]); movingStems.set([]); productStems.set([]); outStems.set([]);
     movingLine.set(frame.moving);
     flippedLine.set(frame.flipped);
@@ -141,8 +146,8 @@ export function createConvolutionView({ doc, parent, emit }) {
     productArea.set(frame.product);
     const hEnd = Math.max(0, ...setup.hEdges) || (setup.axis.hi - setup.axis.lo) * 0.12;
     const topY = p1.y1 * 0.88;
-    flipLabel.setAt(-hEnd / 2, topY, 'h(−τ)', 'middle');
-    moveLabel.setAt(t - hEnd / 2, topY * 0.86, 'h(t−τ)', 'middle');
+    flipLabel.setAt(-hEnd / 2, topY, 'h(−λ)', 'middle');
+    moveLabel.setAt(t - hEnd / 2, topY * 0.86, 'h(t−λ)', 'middle');
     if (Math.abs(t) > (setup.axis.hi - setup.axis.lo) * 0.03) shiftArrow.set(0, p1.y0 * 0.45, t, p1.y0 * 0.45);
     else shiftArrow.hide();
     areaLabel.setAt(t, p2.y1 * 0.8, `y(${formatNumber(t)})=${formatNumber(frame.y)}`, t > (setup.axis.lo + setup.axis.hi) / 2 ? 'end' : 'start');
@@ -153,14 +158,16 @@ export function createConvolutionView({ doc, parent, emit }) {
     outLabel.setAt(t, frame.y, `y=${formatNumber(frame.y)}`, t > (setup.axis.lo + setup.axis.hi) / 2 ? 'end' : 'start', -10);
   }
 
-  const xCache = { setup: null, points: [] };
+  const xCache = { setup: null, points: [], jumps: [] };
   function sampleX(setup) {
     if (xCache.setup !== setup) {
       xCache.setup = setup;
-      xCache.points = sampleCurve(setup.x, setup.axis.lo, setup.axis.hi, 400, setup.xEdges);
+      xCache.points = sampleCurve(setup.x, setup.axis.lo, setup.axis.hi, 400, setup.xEdges, { gaps: true });
+      xCache.jumps = jumpList(setup.x, setup.xEdges, setup.axis.lo, setup.axis.hi);
     }
     return xCache.points;
   }
+  const jumpsX = (setup) => { sampleX(setup); return xCache.jumps; };
 
   function updateDiscrete(setup, n) {
     const frame = convolutionFrame(setup.x, setup.h, setup.xStart, setup.hStart, n);
@@ -168,6 +175,7 @@ export function createConvolutionView({ doc, parent, emit }) {
     p2.setTitle('② 곱 x[k]·h[n−k] — 모두 더하면 y[n]', 'start', true);
     p3.setTitle('③ y[n]: n까지의 값이 쌓이는 중', 'start', true);
     for (const line of [xLine, flippedLine, movingLine, productLine, fullCurve, accumulated]) line.set([]);
+    xJumps.set([]); movingJumps.set([]);
     productArea.set([]);
     xStems.set(setup.x.map((v, i) => [setup.xStart + i - 0.12, v]));
     movingStems.set(flippedImpulse(setup.h, setup.hStart, n).map(([k, v]) => [k + 0.12, v]));

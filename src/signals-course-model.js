@@ -3,13 +3,18 @@ import { midpointRect } from './signals-util.js';
 // Pure textbook-style numerics for the signals lessons (no DOM, no expression evaluation).
 // These are supported families, not a general symbolic algebra engine.
 
+// Order follows the course: Ch 1 signals (weeks 2-3), Ch 2 CT systems (3-5), Ch 4 Fourier (5-6). `later` lessons are ahead of the
+// material covered so far and stay as reference.
 export const SIGNALS_LESSONS = [
   { id: 'time', tab: '시간축', title: '시간축 변환 x(at−b)' },
+  { id: 'ops', tab: '신호 연산', title: '신호 연산 · 진폭 · 합곱 · 짝홀 · 에너지/전력' },
+  { id: 'lti', tab: 'LTI 응답', title: 'LTI 시스템 응답 · h=ds/dt · 인과/안정' },
   { id: 'convolution', tab: '컨볼루션', title: 'LTI 컨볼루션' },
   { id: 'series', tab: '푸리에 급수', title: '푸리에 급수 · 회전 페이저' },
   { id: 'fourier', tab: '푸리에 변환', title: '푸리에 변환 · 시간 ↔ 주파수' },
-  { id: 'roc', tab: 'Laplace / Z', title: '극점과 수렴영역(ROC)' },
-  { id: 'sampling', tab: '표본화', title: '표본화와 aliasing' },
+  { id: 'freq', tab: '주파수 응답', title: '주파수 응답 H(ω) · 정상상태 응답' },
+  { id: 'roc', tab: 'Laplace / Z (참고)', title: '극점과 수렴영역(ROC) · 이후 진도(참고)', later: true },
+  { id: 'sampling', tab: '표본화 (참고)', title: '표본화와 aliasing · 이후 진도(참고)', later: true },
 ];
 
 // ---------------------------------------------------------------- input parsing

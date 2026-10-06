@@ -79,8 +79,27 @@ export function createPane(doc, svg, { frame = true } = {}) {
   };
   pane.setDomain = (x0, x1, y0, y1) => Object.assign(pane, { x0, x1, y0, y1 });
   // above=true puts the title in the margin over the frame instead of inside it.
+  // A title wider than the pane is cut with an ellipsis (measured in the browser, re-measured only when text or width change).
+  let fitted = '';
   pane.setTitle = (text, align = 'start', above = false) => {
-    title.textContent = text;
+    const key = `${text}|${r1(pane.box.w)}`;
+    if (key !== fitted) {
+      title.textContent = text;
+      const max = pane.box.w - 12;
+      const measure = () => title.getComputedTextLength?.() ?? 0;
+      const full = measure();
+      if (full > max && max > 40) {
+        let lo = 1;
+        let hi = text.length;
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          title.textContent = `${text.slice(0, mid)}…`;
+          if (measure() <= max) lo = mid; else hi = mid - 1;
+        }
+        title.textContent = `${text.slice(0, lo)}…`;
+      }
+      fitted = full > 0 || !title.getComputedTextLength ? key : '';
+    }
     title.setAttribute('x', r1(align === 'end' ? pane.box.x + pane.box.w - 6 : pane.box.x + 6));
     title.setAttribute('y', r1(above ? pane.box.y - 7 : pane.box.y + 14));
     title.setAttribute('text-anchor', align);
@@ -148,6 +167,14 @@ export function createPane(doc, svg, { frame = true } = {}) {
     axisLineV.setAttribute('y1', r1(y)); axisLineV.setAttribute('y2', r1(y + h));
   };
 
+  // Hide every tick, grid line and axis of a pane (their explicit visibility would otherwise override a hidden parent).
+  pane.clearAxes = () => {
+    hideFrom(ticks.x, 0);
+    hideFrom(ticks.y, 0);
+    axisLine.setAttribute('visibility', 'hidden');
+    axisLineV.setAttribute('visibility', 'hidden');
+  };
+
   // ---- drawing primitives (data coordinates) ---------------------------------------------------
   const path = (cls, host = layer) => svgEl(doc, 'path', { class: cls }, host);
 
@@ -174,10 +201,11 @@ export function createPane(doc, svg, { frame = true } = {}) {
     return {
       node,
       set(points, base = 0) {
-        if (!points.length) { node.setAttribute('d', ''); return; }
-        let d = `M${r1(pane.px(points[0][0]))},${r1(pane.py(base))}`;
-        for (const [x, y] of points) d += `L${r1(pane.px(x))},${r1(pane.py(y))}`;
-        d += `L${r1(pane.px(points.at(-1)[0]))},${r1(pane.py(base))}Z`;
+        const solid = points.filter((q) => finite(q[1]));
+        if (!solid.length) { node.setAttribute('d', ''); return; }
+        let d = `M${r1(pane.px(solid[0][0]))},${r1(pane.py(base))}`;
+        for (const [x, y] of solid) d += `L${r1(pane.px(x))},${r1(pane.py(y))}`;
+        d += `L${r1(pane.px(solid.at(-1)[0]))},${r1(pane.py(base))}Z`;
         node.setAttribute('d', d);
       },
     };
@@ -203,6 +231,32 @@ export function createPane(doc, svg, { frame = true } = {}) {
           items[i].line.setAttribute('visibility', 'hidden');
           items[i].dot.setAttribute('visibility', 'hidden');
         }
+      },
+    };
+  };
+
+  // Jump discontinuities: open circles at both one-sided limits and a faint dotted link (value at the jump is undefined).
+  pane.jumps = (cls, radius = 3.8) => {
+    const items = [];
+    const item = (i) => items[i] ?? (items[i] = {
+      link: svgEl(doc, 'line', { class: `ref dot faint ${cls}`, visibility: 'hidden' }, layer),
+      a: svgEl(doc, 'circle', { class: `dt hollow ${cls}`, r: radius, visibility: 'hidden' }, layer),
+      b: svgEl(doc, 'circle', { class: `dt hollow ${cls}`, r: radius, visibility: 'hidden' }, layer),
+    });
+    return {
+      set(list) {
+        list.forEach(({ x, left, right, closed = null }, i) => {
+          const { link, a, b } = item(i);
+          const px = r1(pane.px(x));
+          for (const node of [link, a, b]) node.setAttribute('visibility', 'visible');
+          a.setAttribute('cx', px); a.setAttribute('cy', r1(pane.py(left)));
+          b.setAttribute('cx', px); b.setAttribute('cy', r1(pane.py(right)));
+          a.classList.toggle('hollow', closed !== 'left');
+          b.classList.toggle('hollow', closed !== 'right');
+          link.setAttribute('x1', px); link.setAttribute('x2', px);
+          link.setAttribute('y1', r1(pane.py(left))); link.setAttribute('y2', r1(pane.py(right)));
+        });
+        for (let i = list.length; i < items.length; i++) for (const node of Object.values(items[i])) node.setAttribute('visibility', 'hidden');
       },
     };
   };

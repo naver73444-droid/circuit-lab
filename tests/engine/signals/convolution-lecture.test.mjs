@@ -1,0 +1,88 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  CONVOLUTION_FAMILIES, convolutionSetup, continuousFrame, rcPulseResponse, ex222Response, overlapCase, describeConvolution, convolutionLesson,
+} from '../../../src/signals-convolution-model.js';
+
+const near = (a, b, tol = 1e-9) => assert.ok(Math.abs(a - b) <= tol, `${a} versus ${b}`);
+
+// y(t) = integral x(l) h(t-l) dl by the midpoint rule (independent of the closed forms)
+function numeric(setup, t, n = 60000) {
+  const { lo, hi } = setup.axis;
+  const h = (hi - lo) / n;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const l = lo + (i + 0.5) * h;
+    sum += setup.x(l) * setup.h(t - l) * h;
+  }
+  return sum;
+}
+
+test('lecture families are listed: Ex 2.20, 2.21, 2.22', () => {
+  const values = CONVOLUTION_FAMILIES.map((f) => f.value);
+  for (const v of ['rc-step', 'rc-pulse', 'ex222']) assert.ok(values.includes(v), v);
+});
+
+test('Ex 2.20: x = u(t), h = 4e^{-4t}u(t) (RC = 1/4) gives y = (1 - e^{-4t})u(t)', () => {
+  const setup = convolutionSetup('rc-step', { tau: 0.25 });
+  for (const t of [-0.5, 0.1, 0.5, 1.2]) {
+    near(setup.y(t), t <= 0 ? 0 : 1 - Math.exp(-4 * t));
+    near(numeric(setup, t), setup.y(t), 3e-3);
+  }
+  near(setup.h(0.5), 4 * Math.exp(-2));
+});
+
+test('Ex 2.21: x = Pi(t) through the RC: maximum 1 - e^{-1/RC} at t = 1/2 (0.9817 for RC = 1/4)', () => {
+  const setup = convolutionSetup('rc-pulse', { tau: 0.25 });
+  near(setup.y(0.5), 1 - Math.exp(-4));
+  near(setup.y(0.5), 0.9817, 1e-4);
+  for (const t of [-0.8, -0.3, 0.2, 0.5, 0.9, 2]) near(numeric(setup, t), setup.y(t), 4e-3);
+  // pieces: rise 1 - e^{-(t+1/2)/RC} (the slide misprints the case boundary), decay (e^{1/2RC} - e^{-1/2RC}) e^{-t/RC}
+  near(rcPulseResponse(0.25, 0), 1 - Math.exp(-2));
+  near(rcPulseResponse(0.25, 1), (Math.exp(2) - Math.exp(-2)) * Math.exp(-4));
+  near(rcPulseResponse(0.25, -0.6), 0);
+  assert.deepEqual([-0.7, -0.5, 0, 0.5, 0.6].map((t) => overlapCase('rc-pulse', t)), [1, 1, 2, 2, 3]);
+});
+
+test('Ex 2.22: h = e^{-t}[u(t)-u(t-2)] and x = Pi(t-0.5) - Pi(t-1.5): six overlap cases and the lecture values', () => {
+  const setup = convolutionSetup('ex222', { alpha: 1 });
+  // lecture (Fig 2.43): max 0.6321 at t=1, min -0.3996 at t=2, kink -0.2325 at t=3, 0 at t=4
+  near(setup.y(1), 0.6321, 1e-4);
+  near(setup.y(2), -0.3996, 1e-4);
+  near(setup.y(3), -0.2325, 1e-4);
+  near(setup.y(4), 0, 1e-12);
+  // the six cases computed from the definition
+  near(ex222Response(1, 0.5), 1 - Math.exp(-0.5)); // case 2: 1 - e^{-t}
+  near(ex222Response(1, 1.5), (2 * Math.E - 1) * Math.exp(-1.5) - 1); // case 3
+  near(ex222Response(1, 2.5), (2 * Math.E - Math.E ** 2) * Math.exp(-2.5) - Math.exp(-2)); // case 4
+  near(ex222Response(1, 3.5), Math.exp(-2) - Math.exp(2 - 3.5)); // case 5
+  assert.equal(ex222Response(1, 4.5), 0); // case 6
+  assert.equal(ex222Response(1, -1), 0); // case 1
+  for (const t of [0.4, 1.3, 2.2, 3.1, 3.8]) near(numeric(setup, t), setup.y(t), 4e-3);
+  assert.deepEqual([-1, 0.5, 1.5, 2.5, 3.5, 4.5].map((t) => overlapCase('ex222', t)), [1, 2, 3, 4, 5, 6]);
+  assert.match(describeConvolution(setup, 2.5), /\(Case 4\)/);
+  // another decay rate works too
+  const slow = convolutionSetup('ex222', { alpha: 0.4 });
+  for (const t of [0.7, 2.4]) near(numeric(slow, t), slow.y(t), 4e-3);
+});
+
+test('the flipped / moving copies carry their jump limits (u(0) is undefined: open circles, not a midpoint)', () => {
+  const setup = convolutionSetup('rc-pulse', { tau: 0.25 });
+  const frame = continuousFrame(setup, 0.3, 400);
+  assert.ok(frame.movingJumps.length >= 1);
+  for (const j of frame.movingJumps) assert.ok(Math.abs(j.left - j.right) > 1e-6);
+  assert.ok(frame.moving.some(([, y]) => Number.isNaN(y)), 'the polyline is cut at a jump');
+  assert.ok(frame.flipped.some(([, y]) => Number.isNaN(y)));
+});
+
+test('lessons text: variable lambda and the Flip-Shift-Multiply-Integrate procedure', () => {
+  assert.match(convolutionLesson.formula('rc-step'), /∫ x\(λ\) h\(t−λ\) dλ/);
+  assert.match(convolutionLesson.read('rect-rect'), /뒤집기→이동→곱→적분/);
+  for (const family of ['rc-step', 'rc-pulse', 'ex222']) {
+    const controls = convolutionLesson.controls(family, {});
+    assert.equal(controls.length, 1);
+    const spec = convolutionLesson.cursor(family, Object.fromEntries(controls.map((c) => [c.key, c.initial])), null);
+    assert.ok(spec.initial >= spec.min && spec.initial <= spec.max, family);
+    assert.doesNotMatch(convolutionLesson.describe({ family, params: Object.fromEntries(controls.map((c) => [c.key, c.initial])), cursor: spec.initial, extra: {} }), /NaN/);
+  }
+});

@@ -14,11 +14,13 @@ const integral = (fn, lo, hi, N = 30000) => {
   return sum * d;
 };
 
-test('six lessons in a fixed order with short tab labels', () => {
-  assert.deepEqual(SIGNALS_LESSONS.map((l) => l.id), ['time', 'convolution', 'series', 'fourier', 'roc', 'sampling']);
+test('nine lessons in course order with short tab labels; roc and sampling are marked as later material', () => {
+  assert.deepEqual(SIGNALS_LESSONS.map((l) => l.id), ['time', 'ops', 'lti', 'convolution', 'series', 'fourier', 'freq', 'roc', 'sampling']);
   for (const lesson of SIGNALS_LESSONS) {
-    assert.ok(lesson.tab.length <= 12 && lesson.title.length > 3);
+    assert.ok(lesson.tab.length <= 18 && lesson.title.length > 3);
   }
+  assert.deepEqual(SIGNALS_LESSONS.filter((l) => l.later).map((l) => l.id), ['roc', 'sampling']);
+  assert.ok(SIGNALS_LESSONS.filter((l) => l.later).every((l) => /참고/.test(l.title)));
 });
 
 test('time mapping handles negative scale, actual shift and CT boundaries', () => {

@@ -3,6 +3,9 @@
 // poles with a two-sided signal x = right-sided(p1) + left-sided(p2).
 import { clamp, controlDefaults, formatNumber, sampleCurve } from './signals-util.js';
 
+// This lesson is ahead of the 2-6 week course material (Ch 1, 2, 4): kept as a reference.
+export const LATER = '[이후 진도·참고] ';
+
 export const ROC_FAMILIES = [
   { value: 's-right', label: 'Laplace · 우측 신호 (인과)' },
   { value: 's-left', label: 'Laplace · 좌측 신호' },
@@ -204,9 +207,9 @@ export const rocLesson = {
     const z = isZ(family);
     const axis = z ? '단위원' : 'jω축';
     const side = sideOf(family);
-    if (side === 'two') return 'ROC는 두 극점 사이의 띠(고리)입니다. 극점 순서가 뒤바뀌면 ROC가 사라지고 변환이 존재하지 않습니다.';
+    if (side === 'two') return `${LATER}ROC는 두 극점 사이의 띠(고리)입니다. 극점 순서가 뒤바뀌면 ROC가 사라지고 변환이 존재하지 않습니다.`;
     const where = side === 'right' ? '바깥쪽' : '안쪽';
-    return `극점을 끌어 보세요. ROC는 극점에서 ${where}이고, ${axis}이 ROC에 들어오면 안정입니다. 같은 식도 ROC에 따라 다른 신호입니다.`;
+    return `${LATER}극점을 끌어 보세요. ROC는 극점에서 ${where}이고, ${axis}이 ROC에 들어오면 안정입니다. 같은 식도 ROC에 따라 다른 신호입니다.`;
   },
   formula: (family) => `${isZ(family) ? 'X(z)=Σₙ x[n] z^(−n)' : 'X(s)=∫ x(t) e^(−st) dt'}; ${PAIRS[family]}`,
   describe: ({ family, params }) => describeRoc(rocModel(family, params), family),
