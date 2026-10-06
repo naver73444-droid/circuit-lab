@@ -41,10 +41,13 @@ export function mutualInductance({ l1, l2, couplingMode = 'M', m, k }) {
 }
 
 // T and π equivalents for the "both currents INTO the dotted/top terminals" convention: signed coupling m = +M (dots same) or −M (opposite).
+// A π branch whose denominator (L2−m or L1−m) is zero has infinite inductance: it is an open branch and is returned as Infinity (flagged in pi.open), never as a missing number.
 export function tPiEquivalents({ l1, l2, M, sigma }) {
   const m = sigma * M, det = l1 * l2 - M * M, k = M / Math.sqrt(l1 * l2);
   const T = { La: l1 - m, Lb: l2 - m, Lc: m };
-  const pi = k >= 1 - 1e-12 || M === 0 ? null : { LA: det / (l2 - m), LB: det / (l1 - m), LC: det / m };
+  const branch = (den, ref) => (Math.abs(den) <= 1e-12 * ref ? Infinity : det / den);
+  const pi = k >= 1 - 1e-12 || M === 0 ? null : { LA: branch(l2 - m, Math.max(l1, l2)), LB: branch(l1 - m, Math.max(l1, l2)), LC: det / m };
+  if (pi) pi.open = { LA: pi.LA === Infinity, LB: pi.LB === Infinity };
   return { T, pi, piReason: pi ? '' : M === 0 ? 'M=0: 결합이 없어 π 등가가 없습니다.' : 'k=1: 이상 변압기 극한이라 π 등가가 없습니다.' };
 }
 
@@ -94,11 +97,10 @@ export function idealTransformer(p) {
     const n1 = positive(p.turns1, 'N1'), n2 = positive(p.turns2, 'N2'), n = n2 / n1, sign = dotSign(p.dots);
     if (p.i2Direction !== 'out' && p.i2Direction !== 'in') throw new RangeError('I2 기준 방향은 out 또는 in이어야 합니다.');
     const z1 = finiteComplex(p.z1, 'Z1'), zl = finiteComplex(p.zl, 'ZL');
-    if (magnitude(zl) === 0) throw new RangeError('부하 ZL=0 은 1차 임피던스가 0이 되어 계산할 수 없습니다.');
     nonNegative(p.voltageRms, '전원 전압');
     const Vs = polar(p.voltageRms, p.voltageDeg ?? 0);
     const zin = scale(zl, 1 / (n * n)), total = add(z1, zin);
-    if (magnitude(total) === 0) throw new RangeError('Z1+ZL/n²=0 이라 I1을 정할 수 없습니다.');
+    if (magnitude(total) === 0) throw new RangeError('Z1+ZL/n²=0 이라 I1을 정할 수 없습니다 (ZL=0 이어도 Z1이 0이 아니면 계산됩니다).');
     const I1 = divide(Vs, total), V1 = multiply(I1, zin);
     const V2 = scale(V1, sign * n), loadCurrent = scale(I1, sign / n);
     const I2 = p.i2Direction === 'in' ? neg(loadCurrent) : loadCurrent;

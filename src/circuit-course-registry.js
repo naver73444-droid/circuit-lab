@@ -188,10 +188,11 @@ for(const experiment of EXPERIMENTS.filter(e=>e.id!=='problem')) {
   for(const example of experiment.examples){example.values.presentation='numeric';example.values.basis??='rms';}
 }
 // Lecture examples carry expect rows; this evaluates the example's numeric experiment and compares every row (display-basis numbers).
-export function verifyExample(id, index) {
+// `shown` is the result that is actually on screen (the form's own state); without it the example is recomputed from the defaults plus its own values.
+export function verifyExample(id, index, shown = null) {
   const experiment = getExperiment(id), example = experiment.examples[index];
   if (!example?.expect) return null;
-  const result = evaluateExperiment(id, { ...initialParameters(experiment), ...example.values });
+  const result = shown ?? evaluateExperiment(id, { ...initialParameters(experiment), ...example.values });
   if (result.status !== 'valid') return { status: 'invalid', reason: result.reason, rows: [], pass: false };
   const rows = verifyExpectations({ ...result, values: {} }, example.expect);
   return { status: 'valid', rows, pass: rows.every(r => r.pass) };
@@ -202,6 +203,16 @@ export function getExperiment(id) {
   return experiment;
 }
 export function initialParameters(experiment) { return Object.fromEntries(experiment.parameters.map(p => [p.key, p.initial])); }
+const draftNumber = n => String(Number(n.toPrecision(10)));
+const draftOf = (p, value) => (p.choices || p.text ? value : value === null ? '' : draftNumber(value / p.displayScale));
+// Form drafts (text) for parameters already written in the display basis.
+export function draftsOf(experiment, params) { return Object.fromEntries(experiment.parameters.map(p => [p.key, draftOf(p, params[p.key])])); }
+// Applying a lecture example: start from the complete default drafts and overwrite only what the example sets, so nothing typed or picked earlier (e.g. the acb sequence) survives.
+export function exampleDrafts(experiment, example, defaultDrafts) {
+  const drafts = { ...defaultDrafts };
+  for (const p of experiment.parameters) if (Object.hasOwn(example.values, p.key)) drafts[p.key] = draftOf(p, example.values[p.key]);
+  return drafts;
+}
 export function evaluateExperiment(id, p) {
   const experiment = getExperiment(id);
   try {
@@ -211,7 +222,12 @@ export function evaluateExperiment(id, p) {
       if (d.optionalIf?.(p) && p[d.key] === null) continue;
       if (d.choices) {
         if (!d.choices.some(([key]) => key === p[d.key])) throw new RangeError(d.label + ': 선택값을 확인하세요.');
-      } else if (!Number.isFinite(p[d.key]) || p[d.key] < d.min || p[d.key] > d.max) throw new RangeError(d.label + ': 허용 범위를 확인하세요.');
+      } else if (!Number.isFinite(p[d.key])) throw new RangeError(d.label + ': 허용 범위를 확인하세요.');
+      else {
+        // The limits are internal RMS values: a peak-basis amplitude is shown √2 times larger and must not be rejected for that alone.
+        const internal = d.amplitude && p.basis === 'peak' ? p[d.key] * Math.SQRT1_2 : p[d.key], slack = 1e-12 * Math.abs(internal);
+        if (internal < d.min - slack || internal > d.max + slack) throw new RangeError(d.label + ': 허용 범위를 확인하세요.');
+      }
     }
     const result=p.presentation === 'symbolic' ? symbolicCourseExperiment(id,p) : experiment.evaluate(p);
     if(result.status==='valid') {

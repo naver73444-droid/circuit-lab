@@ -255,8 +255,8 @@ export const MAXPOWER_TOOL = {
         metric('Pmax', fmt(r.pmaxClosed), 'W'),
         metric('지금 ZL', zText(r.zl), 'Ω'), metric('지금 P', fmt(pLoad), 'W'), metric('P / Pmax', fmt((r.fraction ?? 0) * 100), '%'), metric('효율 RL/(RTh+RL)', fmt(r.efficiency * 100), '%')],
       notes: ['최대전력 전달은 최대 효율이 아닙니다: 정합일 때 효율은 RL/(RTh+RL)=' + fmt(r.efficiency * 100) + ' %.', ...(r.derived ? ['VTh=Vs·Zp/(Zs+Zp), ZTh=Zo+Zs∥Zp'] : [])],
-      curves: [{ title: 'P(RL) · XL=' + fmt(r.zl.im) + ' Ω 고정', xLabel: 'RL (Ω)', yLabel: 'P (W)', points: r.curveR, mark: [r.zl.re, pLoad], best: [r.optimum.re, r.pBest] },
-        { title: 'P(XL) · RL=' + fmt(r.zl.re) + ' Ω 고정', xLabel: 'XL (Ω)', yLabel: 'P (W)', points: r.curveX, mark: [r.zl.im, pLoad], best: [r.optimum.im, r.pBest] }],
+      curves: [{ title: 'P(RL) · XL=' + fmt(r.zl.im) + ' Ω 고정', xLabel: 'RL (Ω)', yLabel: 'P (W)', points: r.curveR, mark: [r.zl.re, pLoad], best: r.curveBestR },
+        { title: 'P(XL) · RL=' + fmt(r.zl.re) + ' Ω 고정', xLabel: 'XL (Ω)', yLabel: 'P (W)', points: r.curveX, mark: [r.zl.im, pLoad], best: r.curveBestX }],
       phasors: [{ label: 'VTh', unit: 'V', z: r.vth }, { label: 'I (지금 ZL)', unit: 'A', z: r.iNow }] };
   }
 };

@@ -1,7 +1,7 @@
 // General three-phase model for the course: Y/Δ source, line impedance, Y/Δ load with per-phase Z, optional neutral wire.
 // Everything is RMS; a Δ source is replaced by its equivalent Y source (Vp/√3 ∠−30° for abc), a Δ load by its Y equivalent.
 import { complexPower, waveSample, SEQUENCE_OFFSETS, vanAngleOf } from './circuit-course-model.js';
-import { add, sub, multiply, divide, conjugate, magnitude, polar, sum, solveLinear, cz, inverse, neg } from './circuit-course-complex.js';
+import { add, sub, multiply, divide, conjugate, magnitude, polar, sum, solveLinear, cz, neg } from './circuit-course-complex.js';
 
 const finite = z => Number.isFinite(z.re) && Number.isFinite(z.im);
 const sconj = (V, I) => multiply(V, conjugate(I));
@@ -34,19 +34,23 @@ function deltaToY([zab, zbc, zca]) {
   return [divide(multiply(zab, zca), total), divide(multiply(zab, zbc), total), divide(multiply(zbc, zca), total)];
 }
 
-// Node method for a Y network with optional neutral: returns line currents, neutral shift V_Nn and the neutral wire current.
+// Y network with optional neutral, solved as one small linear system in [Ia, Ib, Ic, VnN] so that a series-resonant phase (Zℓ+Z=0) is a normal case:
+//   Zt_k I_k + VnN = V_k (k = a, b, c), and the neutral row: ΣI = 0 (no wire), VnN = 0 (ideal wire) or VnN = Zn ΣI (impedance wire).
+// No branch admittance is formed, so nothing divides by Zt_k. Only a truly singular network is rejected.
 function solveY(V, Zt, neutral, zn) {
-  const Y = Zt.map(inverse);
-  let shift;
-  if (neutral === 'ideal') shift = cz(0, 0);
-  else {
-    const yn = neutral === 'impedance' ? inverse(zn) : cz(0, 0);
-    const numerator = sum(V.map((v, i) => multiply(v, Y[i]))), denominator = add(sum(Y), yn);
-    if (magnitude(denominator) === 0) throw new RangeError('모든 가지의 어드미턴스 합이 0이라 중성점 전위를 정할 수 없습니다.');
-    shift = divide(numerator, denominator);
-  }
-  const I = V.map((v, i) => multiply(sub(v, shift), Y[i]));
-  return { I, shift };
+  const one = cz(1, 0), zero = cz(0, 0);
+  const rows = [0, 1, 2].map(k => [0, 1, 2].map(c => (c === k ? Zt[k] : zero)).concat([one]));
+  rows.push(neutral === 'ideal' ? [zero, zero, zero, one] : neutral === 'impedance' ? [zn, zn, zn, neg(one)] : [one, one, one, zero]);
+  const rhs = [V[0], V[1], V[2], zero];
+  const singular = () => new RangeError('선로·부하·중성선 임피던스 조합이 특이해 전류를 정할 수 없습니다 (연립방정식이 풀리지 않음).');
+  let x;
+  try { x = solveLinear(rows, rhs); } catch { throw singular(); }
+  if (!x.every(finite)) throw singular();
+  // A nearly singular pivot can slip through the exact-zero test: accept the solution only if it satisfies every equation.
+  const residual = Math.max(...rows.map((row, r) => magnitude(sub(sum(row.map((m, c) => multiply(m, x[c]))), rhs[r]))));
+  const bound = Math.max(...V.map(magnitude)) + Math.max(...x.map(magnitude)) * Math.max(...Zt.map(magnitude), 1);
+  if (!(residual <= 1e-9 * bound)) throw singular();
+  return { I: [x[0], x[1], x[2]], shift: x[3] };
 }
 
 // Independent mesh solution for a 3-wire Y network (two meshes through Za', Zb', Zc'); used as a cross-check.

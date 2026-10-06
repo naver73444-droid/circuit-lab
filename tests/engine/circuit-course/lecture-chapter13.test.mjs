@@ -94,7 +94,9 @@ test('ideal transformer: the four dot / reference cases give ±n and ±1/n, S1=S
     assert.equal(r.step, '승압');
   }
   assert.equal(idealTransformer({ ...base, dots: 'same', i2Direction: 'up' }).status, 'invalid');
-  assert.equal(idealTransformer({ ...base, dots: 'same', i2Direction: 'out', zl: z(0, 0) }).status, 'invalid');
+  // ZL=0 is a short circuit on the secondary: fine while Z1+ZL/n² is not zero (see review-fixes.test.mjs); only the total 0 is rejected
+  assert.equal(idealTransformer({ ...base, dots: 'same', i2Direction: 'out', zl: z(0, 0) }).status, 'valid');
+  assert.equal(idealTransformer({ ...base, dots: 'same', i2Direction: 'out', zl: z(0, 0), z1: z(0, 0) }).status, 'invalid');
   assert.equal(idealTransformer({ ...base, dots: 'same', i2Direction: 'out', turns1: 0 }).status, 'invalid');
   assert.equal(ok(idealTransformer({ ...base, turns2: 100, dots: 'same', i2Direction: 'out' })).step, '격리');
   assert.equal(ok(idealTransformer({ ...base, turns2: 50, dots: 'same', i2Direction: 'out' })).step, '강압');

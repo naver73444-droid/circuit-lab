@@ -329,6 +329,8 @@ export function validateCircuitStructure(circuit) {
       throw new CircuitError("BAD_COMPONENT", "부품 ID가 없거나 올바른 문자열이 아닙니다.");
     }
     if (["__proto__", "prototype", "constructor"].includes(component.id) || component.id.length > 128) throw new CircuitError("BAD_COMPONENT", "부품 ID가 예약어이거나 너무 깁니다.");
+    // "<id>#2" is the result key of a second winding current (secondaryCurrentKey), so a part id may not contain '#' or it could collide with it.
+    if (component.id.includes("#")) throw new CircuitError("BAD_COMPONENT", `부품 ID에는 '#'를 쓸 수 없습니다 (두 번째 권선 전류 결과 키와 겹칩니다): ${component.id}`);
     for (const key of ["x", "y", "rotation"]) if (component[key] !== undefined && !Number.isFinite(component[key])) throw new CircuitError("BAD_COMPONENT", `${component.id}의 ${key}은(는) 유한한 수여야 합니다.`);
     if (componentsById.has(component.id)) throw new CircuitError("BAD_COMPONENT", `부품 ID가 중복됩니다: ${component.id}`);
     if (!Object.hasOwn(TYPE_PINS, component.type)) throw new CircuitError("UNKNOWN_COMPONENT", `지원하지 않는 부품입니다: ${component.type}`);

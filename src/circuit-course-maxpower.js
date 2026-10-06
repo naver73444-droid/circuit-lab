@@ -40,11 +40,14 @@ export function maxPowerTransfer(p) {
     const pmaxClosed = vm * vm / (4 * zth.re); // RMS form of |VTh,peak|²/(8 RTh)
     const eta = zl.re / (zth.re + zl.re);
     // Curves: P vs R_L (X_L fixed at the slider) and P vs X_L (R_L fixed at the slider), both drawn around the optimum.
-    const rMax = Math.max(4 * zth.re, 2 * zl.re), xSpan = Math.max(2 * Math.abs(zth.im), 2 * Math.abs(zl.im), zth.re * 2);
+    // Each curve's own maximum depends on which variable it holds fixed: P(RL) at fixed XL peaks at RL=|ZTh+jXL|, P(XL) at fixed RL peaks at XL=−XTh.
+    const rBest = Math.hypot(zth.re, zth.im + zl.im), xBest = -zth.im;
+    const curveBestR = [rBest, powerAt(vth, zth, cz(rBest, zl.im)).pWatts], curveBestX = [xBest, powerAt(vth, zth, cz(zl.re, xBest)).pWatts];
+    const rMax = Math.max(4 * zth.re, 2 * zl.re, 2 * rBest), xSpan = Math.max(2 * Math.abs(zth.im), 2 * Math.abs(zl.im), zth.re * 2);
     const curveR = Array.from({ length: 121 }, (_, n) => { const r = rMax * n / 120; return [r, powerAt(vth, zth, cz(r, zl.im)).pWatts]; });
     const curveX = Array.from({ length: 121 }, (_, n) => { const x = -xSpan + 2 * xSpan * n / 120; return [x, powerAt(vth, zth, cz(zl.re, x)).pWatts]; });
     return { status: 'valid', vth, zth, zl, derived, optimum, pNow: now.pWatts, iNow: now.I, pBest: best.pWatts, pmaxClosed, vthRms: vm,
-      fraction: pmaxClosed === 0 ? null : now.pWatts / pmaxClosed, efficiency: eta, curveR, curveX,
+      fraction: pmaxClosed === 0 ? null : now.pWatts / pmaxClosed, efficiency: eta, curveR, curveX, curveBestR, curveBestX,
       sourceS: multiply(vth, conjugate(now.I)), vload: multiply(now.I, zl),
       checks: [{ label: '최대전력 공식 |VTh|²/(4RTh) − P(ZL=ZTh*)', actual: Math.abs(best.pWatts - pmaxClosed), expected: 0, unit: 'W', tol: 1e-9 * (pmaxClosed + 1e-12) }]
         .map(c => ({ ...c, pass: c.actual <= c.tol })) };

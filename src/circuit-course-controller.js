@@ -1,5 +1,5 @@
 import { preserveCourseFocus } from './course-focus.js';
-import { EXPERIMENTS, getExperiment, initialParameters, evaluateExperiment, verifyExample } from './circuit-course-registry.js';
+import { EXPERIMENTS, getExperiment, initialParameters, evaluateExperiment, verifyExample, draftsOf, exampleDrafts } from './circuit-course-registry.js';
 import { parseProblemQuantity } from './circuit-course-problem.js';
 import { createCircuitCourseView } from './circuit-course-view.js';
 import { createYDeltaTool } from './y-delta-tool-controller.js';
@@ -25,7 +25,7 @@ export function createCircuitCourseController(host) {
       params.basis = basis;
       for (const p of experiment.parameters) if (p.amplitude) params[p.key] *= basisFactor(basis);
     }
-    return { params, drafts: Object.fromEntries(experiment.parameters.map(p => [p.key, p.choices || p.text ? params[p.key] : params[p.key] === null ? '' : draftNumber(params[p.key] / p.displayScale)])),
+    return { params, drafts: draftsOf(experiment, params),
       result: evaluateExperiment(experiment.id, params), dirty: false, validationFailed: false, origin: 'manual-conditions', activeExample: -1 };
   }
   for (const experiment of EXPERIMENTS) states.set(experiment.id, newState(experiment));
@@ -35,7 +35,7 @@ export function createCircuitCourseController(host) {
     for (const p of getExperiment(id).parameters) if (p.choices || p.text) result[p.key] = state.drafts[p.key];
     return result;
   }
-  const verification = () => { const state = current(); return state.activeExample >= 0 && !state.dirty && !state.validationFailed ? verifyExample(id, state.activeExample)?.rows ?? null : null; };
+  const verification = () => { const state = current(); return state.activeExample >= 0 && !state.dirty && !state.validationFailed ? verifyExample(id, state.activeExample, state.result)?.rows ?? null : null; };
   function render() {
     const restoreFocus = preserveCourseFocus(host, ['data-circuit-course-key', 'data-circuit-course-experiment', 'data-circuit-course-mode', 'data-circuit-course-reset', 'data-circuit-course-example', 'data-circuit-course-basis']);
     const state = current();
@@ -140,9 +140,10 @@ export function createCircuitCourseController(host) {
       if (!example) return;
       // A lecture example is written in its own amplitude basis (peak for Ch.9–10, RMS later): the course toggle follows it.
       if (followsBasis(experiment) && example.values.basis) switchBasis(example.values.basis);
-      const state = current();
-      for (const p of experiment.parameters) if (Object.hasOwn(example.values, p.key)) state.drafts[p.key] = p.choices || p.text ? example.values[p.key] : example.values[p.key] === null ? ''
-        : draftNumber(example.values[p.key] / p.displayScale);
+      // The example becomes a complete state: defaults (in the basis just chosen) overwritten by the example's own values, never on top of earlier edits.
+      const state = newState(experiment);
+      states.set(id, state);
+      state.drafts = exampleDrafts(experiment, example, state.drafts);
       state.dirty = true; state.validationFailed = false; state.origin = id === 'problem' ? 'fictional-check' : 'example';
       render(); apply();
       state.activeExample = example.expect ? index : -1;

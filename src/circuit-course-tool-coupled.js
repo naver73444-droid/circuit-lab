@@ -1,13 +1,16 @@
 // Live tool definitions for Ch.13: coupled coils with T/π equivalents, and the transformer tool (ideal, rating, autotransformer, 3-phase bank). Pure, no DOM.
-import { scale } from './circuit-course-complex.js';
+import { scale, magnitude } from './circuit-course-complex.js';
 import { coupledCoils, idealTransformer, idealRating, autotransformer, threePhaseBank, BANK_CONNECTIONS } from './circuit-course-coupled.js';
 import { fmt, polarShort, short, zText } from './circuit-course-format.js';
 import { num, amp, choice, angleField, putPolar, metric } from './circuit-course-tool-common.js';
 
 const z = (re, im) => ({ re, im });
 const zField = (key, label, r, x, extra = {}) => [num(key + 'R', label + ' 저항 R', 'Ω', r, 0, 1e9, extra), num(key + 'X', label + ' 리액턴스 X', 'Ω', x, -1e9, 1e9, extra)];
+// A component that is only rounding noise next to the other one is shown as exactly 0 (a purely real winding power would otherwise print an angle like 5e-15°).
+const clean = w => { const m = magnitude(w), tiny = x => (Math.abs(x) <= 1e-12 * m ? 0 : x); return { re: tiny(w.re), im: tiny(w.im) }; };
 const unit = k => (k > 1 ? 'peak' : 'rms');
 const henry = L => (Math.abs(L) >= 1 || L === 0 ? short(L) + ' H' : short(L * 1e3) + ' mH');
+const piHenry = L => (L === Infinity ? '개방 (∞ H, 가지 없음)' : henry(L));
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 const byK = v => v.couplingMode === 'k';
@@ -52,7 +55,7 @@ export const COUPLED_TOOL = {
     putPolar(values, 'I1', r.I1, k); putPolar(values, 'I2', I2, k); putPolar(values, 'Vo', r.Vo, k);
     if (r.pi) Object.assign(values, { LA: r.pi.LA, LB: r.pi.LB, LC: r.pi.LC });
     const tRows = [['La = L1 ' + (r.dotSign > 0 ? '−' : '+') + ' M', henry(r.T.La)], ['Lb = L2 ' + (r.dotSign > 0 ? '−' : '+') + ' M', henry(r.T.Lb)], ['Lc = ' + (r.dotSign > 0 ? '+M' : '−M'), henry(r.T.Lc)]];
-    const piRows = r.pi ? [['LA = (L1L2−M²)/(L2∓M)', henry(r.pi.LA)], ['LB = (L1L2−M²)/(L1∓M)', henry(r.pi.LB)], ['LC = (L1L2−M²)/(±M)', henry(r.pi.LC)]] : [['π 등가', r.piReason]];
+    const piRows = r.pi ? [['LA = (L1L2−M²)/(L2∓M)', piHenry(r.pi.LA)], ['LB = (L1L2−M²)/(L1∓M)', piHenry(r.pi.LB)], ['LC = (L1L2−M²)/(±M)', piHenry(r.pi.LC)]] : [['π 등가', r.piReason]];
     return { status: 'valid', values, checks: r.checks, frequencyHz: r.frequencyHz,
       read: 'k=' + short(r.k) + ' · I1=' + polarShort(scale(r.I1, k)) + ' A, I2=' + polarShort(scale(I2, k)) + ' A (' + unit(k) + ') · 반사 임피던스 ZR=' + zText(r.reflected) + ' Ω → Zin=' + zText(r.zin) + ' Ω · w(' + fmt(v.timeSec) + ' s)='
         + fmt(wNow) + ' J',
@@ -62,7 +65,8 @@ export const COUPLED_TOOL = {
         { title: '직렬 연결', headers: ['연결', 'L'], rows: [['가극성(aiding) L1+L2+2M', henry(r.seriesAiding)], ['감극성(opposing) L1+L2−2M', henry(r.seriesOpposing)]] }],
       traces: [{ label: 'i1(t)', unit: 'A', phasor: r.I1 }, { label: 'i2(t)', unit: 'A', phasor: I2 }, { label: 'w(t)', unit: 'J', sample: r.energy }],
       phasors: [{ label: 'V', unit: 'V', z: r.V }, { label: 'Vo (ZL 양단)', unit: 'V', z: r.Vo }, { label: 'I1', unit: 'A', z: r.I1 }, { label: 'I2', unit: 'A', z: I2 }],
-      notes: ['반사 임피던스 (ωM)²/Z22 는 점 위치와 무관합니다 (M²). 점 위치는 I2의 부호와 에너지의 ±M i1 i2 항만 바꿉니다.', 'w = ½L1 i1² + ½L2 i2² ' + (r.energySign > 0 ? '+' : '−') + ' M i1 i2 (두 메시 전류 기준).'],
+      notes: ['반사 임피던스 (ωM)²/Z22 는 점 위치와 무관합니다 (M²). 점 위치는 I2의 부호와 에너지의 ±M i1 i2 항만 바꿉니다.', 'w = ½L1 i1² + ½L2 i2² ' + (r.energySign > 0 ? '+' : '−') + ' M i1 i2 (두 메시 전류 기준).',
+        ...(r.pi?.open.LA || r.pi?.open.LB ? ['π 등가에서 분모가 0인 가지(LA 또는 LB)는 인덕턴스가 무한대이므로 개방(가지 없음)입니다. 나머지 두 가지만 남습니다.'] : [])],
       figure: { kind: 'coupled', dots: v.dots, i2Ref: v.i2Ref } };
   }
 };
@@ -97,7 +101,8 @@ export const TRANSFORMER_TOOL = {
       expect: [{ key: 'ZinR', label: '반사 ZL/n²', value: 5, unit: 'Ω' }, { key: 'I1Mag', label: '|I1|', value: 11.09, unit: 'A' }, { key: 'I1Ang', label: '∠I1', value: 33.69, unit: '°' },
         { key: 'I2Mag', label: '|I2|', value: 5.545, unit: 'A' }, { key: 'I2Ang', label: '∠I2', value: -146.31, unit: '°', note: '교재: −5.545∠33.69° (같은 값)' }, { key: 'VoMag', label: '|Vo|', value: 110.9, unit: 'V' }, { key: 'VoAng',
           label: '∠Vo', value: -146.31, unit: '°', note: '교재: 110.9∠213.69°' },
-        { key: 'SMag', label: '|S소스|', value: 1330.8, unit: 'VA' }, { key: 'SAng', label: '∠S소스', value: -33.69, unit: '°' }] },
+        { key: 'S1Mag', label: '|S1|=|S2| (권선)', value: 615.38, unit: 'VA', note: '|I1|²·ZL/n² = 123·5, 위상 0 (순수 유효전력)' }, { key: 'S1Ang', label: '∠S1', value: 0, unit: '°', abs: 1e-9 },
+        { key: 'SMag', label: '|S전원|', value: 1330.8, unit: 'VA' }, { key: 'SAng', label: '∠S전원', value: -33.69, unit: '°' }] },
     { label: '이상 변압기 점 같은 쪽 (+n, +1/n) · 같은 회로', basis: 'rms', values: { mode: 'ideal', turns1: 1, turns2: 2, dots: 'same', i2Direction: 'out', voltage: 120, voltageDeg: 0, z1R: 4, z1X: -6, zlR: 20, zlX: 0 },
       expect: [{ key: 'VoAng', label: '∠Vo (V2=+nV1)', value: 33.69, unit: '°' }, { key: 'VoMag', label: '|Vo|', value: 110.9, unit: 'V' }, { key: 'I2Ang', label: '∠I2 (+I1/n)', value: 33.69, unit: '°' }] },
     { label: '예제 13.10 단권 승압 240 V → 252 V · I2=4 A', basis: 'rms', values: { mode: 'auto', autoMode: 'up', autoN1: 100, autoN2: 5, autoV1: 240, autoI2: 4 },
@@ -144,15 +149,16 @@ export const TRANSFORMER_TOOL = {
     const r = idealTransformer({ turns1: v.turns1, turns2: v.turns2, dots: v.dots, i2Direction: v.i2Direction, z1: z(v.z1R, v.z1X), zl: z(v.zlR, v.zlX), voltageRms: v.voltage, voltageDeg: v.voltageDeg });
     if (r.status !== 'valid') return r;
     const values = { n: r.n, ZinR: r.zin.re, ZinX: r.zin.im };
-    putPolar(values, 'I1', r.I1, k); putPolar(values, 'I2', r.I2, k); putPolar(values, 'Vo', r.V2, k); putPolar(values, 'S', r.Ssource, 1);
+    putPolar(values, 'I1', r.I1, k); putPolar(values, 'I2', r.I2, k); putPolar(values, 'Vo', r.V2, k); putPolar(values, 'S', r.Ssource, 1); const S1 = clean(r.S1), S2 = clean(r.S2);
+    putPolar(values, 'S1', S1, 1); putPolar(values, 'S2', S2, 1);
     const sgn = s => (s > 0 ? '+' : '−');
     return { status: 'valid', values, checks: r.checks,
       read: r.step + ' n=N2/N1=' + short(r.n) + ' · V2/V1=' + sgn(r.dotSign) + 'n, I2/I1=' + sgn(r.currentRatioSign) + '1/n · Zin=ZL/n²=' + zText(r.zin) + ' Ω · I1=' + polarShort(scale(r.I1, k)) + ' A, Vo=' + polarShort(scale(r.V2, k))
         + ' V (' + unit(k) + ')',
       metrics: [metric('권수비 n=N2/N1', short(r.n), r.step), metric('V2/V1', sgn(r.dotSign) + short(r.n)), metric('I2/I1', sgn(r.currentRatioSign) + '1/' + short(r.n)), metric('반사 Zin=ZL/n²', zText(r.zin), 'Ω'),
         metric('I1 (' + unit(k) + ')', polarShort(scale(r.I1, k)), 'A'), metric('I2 (' + unit(k) + ')', polarShort(scale(r.I2, k)), 'A'), metric('Vo=V2 (' + unit(k) + ')', polarShort(scale(r.V2, k)), 'V'),
-        metric('S1=S2 (소스 S=V I1*)', polarShort(r.Ssource), 'VA')],
+        metric('권선 S1=S2 (S1=V1 I1*)', polarShort(S1), 'VA'), metric('전원 S (S=V I1*, Z1 포함)', polarShort(r.Ssource), 'VA')],
       phasors: [{ label: 'V 전원', unit: 'V', z: r.Vs }, { label: 'V1', unit: 'V', z: r.V1 }, { label: 'V2=Vo', unit: 'V', z: r.V2 }, { label: 'I1', unit: 'A', z: r.I1 }, { label: 'I2', unit: 'A', z: r.I2 }],
-      notes: ['점 위치와 I2 기준 방향이 V2/V1, I2/I1 의 부호를 정합니다. 어느 경우에도 S1=S2 입니다 (전력 소비·저장 없음).'], figure: { kind: 'ideal', dots: v.dots, i2Direction: v.i2Direction, n: r.n } };
+      notes: ['점 위치와 I2 기준 방향이 V2/V1, I2/I1 의 부호를 정합니다. 어느 경우에도 권선 전력 S1=S2 입니다 (전력 소비·저장 없음). 전원이 내는 S는 직렬 Z1이 쓰는 몫을 더한 값이라 S1과 다릅니다.'], figure: { kind: 'ideal', dots: v.dots, i2Direction: v.i2Direction, n: r.n } };
   }
 };
