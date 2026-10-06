@@ -1,7 +1,9 @@
 // Save / open the sandbox as an EM file (separate from circuit files) and load a learning example.
-import { makeExampleProject, parseEMProject, serializeEMProject } from './em-playground-project.js';
+import { EM_PROJECT_FORMAT, EM_PROJECT_VERSION, makeExampleProject, parseEMProject, serializeEMProject } from './em-playground-project.js';
 
-export function createProjectPanel({ root, editor, store, calculus, onLoaded, signal }) {
+// `magnetic` (optional) is the magnetic mode of the workspace: read() gives { field, sources, selectedId, ampere, chips } and
+// write({ sources, selectedId, ampere, chips }) replaces it (clearing its undo history). Without it only the electric part is saved.
+export function createProjectPanel({ root, editor, store, calculus, magnetic = null, onLoaded, signal }) {
   const $ = selector => root.querySelector(selector), pg = editor.state;
   let generation = 0;
   const status = text => { $('#em-d-status').textContent = text; };
@@ -11,26 +13,33 @@ export function createProjectPanel({ root, editor, store, calculus, onLoaded, si
   const freshCarried = () => ({ comparison: null, vectorMode: 'E', legend: { mode: 'auto' } });
   let carried = freshCarried();
 
-  const snapshot = () => ({
-    format: 'circuit-lab-em-playground', version: 1,
-    world: {
-      sources: structuredClone(pg.sources), probe: [...pg.probe], plane: pg.plane, selectedId: pg.selectedId,
-      comparison: structuredClone(carried.comparison),
-    },
-    view: { camera: { ...store.state.camera }, vectorMode: carried.vectorMode },
-    calculus: calculus.settings(),
-    legend: structuredClone(carried.legend),
-  });
+  const snapshot = () => {
+    const { field = 'electric', ...mag } = magnetic?.read() ?? {};
+    return {
+      format: EM_PROJECT_FORMAT, version: EM_PROJECT_VERSION,
+      world: {
+        sources: structuredClone(pg.sources), probe: [...pg.probe], plane: pg.plane, selectedId: pg.selectedId,
+        comparison: structuredClone(carried.comparison),
+      },
+      view: { camera: { ...store.state.camera }, vectorMode: carried.vectorMode },
+      calculus: calculus.settings(),
+      legend: structuredClone(carried.legend),
+      field, magnetic: magnetic ? mag : undefined,
+    };
+  };
 
-  function apply(project) {
+  // A file replaces the whole workspace: both modes' undo histories are cleared. A learning example is a charge set-up only,
+  // so it leaves the magnetic mode (and its history) alone.
+  function apply(project, { withMagnetic = true } = {}) {
     editor.replaceWorld(project.world);
+    if (withMagnetic) magnetic?.write(project.magnetic);
     Object.assign(store.state.camera, project.view.camera);
     calculus.setSettings(project.calculus);
     carried = {
       comparison: structuredClone(project.world.comparison ?? null), vectorMode: project.view.vectorMode,
       legend: structuredClone(project.legend),
     };
-    onLoaded();
+    onLoaded(project);
   }
 
   $('#em-d-save').addEventListener('click', () => {
@@ -56,7 +65,7 @@ export function createProjectPanel({ root, editor, store, calculus, onLoaded, si
       const source = await file.text();
       if (mine !== generation) return;
       apply(parseEMProject(source));
-      status('불러왔습니다 · 되돌리기 기록은 비웠습니다.');
+      status('불러왔습니다 · 전기·자기 되돌리기 기록은 비웠습니다.');
     } catch (error) {
       if (mine === generation) status(`열기 오류: ${error.message} · 현재 장면은 바뀌지 않았습니다.`);
     }
@@ -66,7 +75,7 @@ export function createProjectPanel({ root, editor, store, calculus, onLoaded, si
     const name = event.target.value;
     event.target.value = '';
     if (!name) return;
-    try { apply(makeExampleProject(name, snapshot())); status('예제를 불러왔습니다.'); }
+    try { apply(makeExampleProject(name, snapshot()), { withMagnetic: false }); status('예제를 불러왔습니다.'); }
     catch (error) { status(`예제 오류: ${error.message}`); }
   }, { signal });
 

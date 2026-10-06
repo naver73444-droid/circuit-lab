@@ -1,9 +1,18 @@
-// EM sandbox file: a JSON document with the charges, sensor, camera and probe settings. Reading is strict:
-// every field is checked (no coercion), unknown keys that could poison objects are refused, and size is capped.
+// EM sandbox file: a JSON document with the charges, sensor, camera and probe settings, and (version 2) the magnetic mode:
+// the current sources, the Ampere loop, the display chips and which field (electric / magnetic) was showing.
+// Reading is strict: every field is checked (no coercion), unknown keys that could poison objects are refused, size is
+// capped, and one bad entry (an electric or a magnetic source) refuses the whole file with the reason: nothing is half-opened.
+// Version 1 files (charges only) still open: they carry no magnetic state, so that part is empty and the electric field shows.
+import { AMPERE_MAX, AMPERE_MIN, clampAmpere } from './em-ampere.js';
+import { CURRENT_TYPES, MAX_CURRENT_SOURCES, validateCurrentSources } from './em-current-field.js';
 import { validatePoint, validatePointSources } from './em-playground-physics.js';
 
 export const EM_PROJECT_FORMAT = 'circuit-lab-em-playground';
-export const EM_PROJECT_VERSION = 1;
+export const EM_PROJECT_VERSION = 2;
+export const EM_PROJECT_VERSIONS = Object.freeze([1, 2]);
+/** The display chips of the magnetic mode that a file stores (lines / contours are shared with the electric mode). */
+export const EM_MAGNETIC_CHIPS = Object.freeze(['lines', 'contours', 'mcolor', 'arrows', 'hfield', 'ampere', 'force']);
+export const EM_FIELDS = Object.freeze(['electric', 'magnetic']);
 export const EM_PROJECT_MAX_BYTES = 1048576;
 
 const clone = value => structuredClone(value);
@@ -53,6 +62,82 @@ function validateRawSources(value) {
       if (!isNumber(source.sRef) || !isNumber(source.displayLength)) throw new Error('무한선 sRef/displayLength는 유한한 숫자여야 합니다.');
     }
   }
+}
+
+// Same shape check for the magnetic sources; the first bad one refuses the file and the message names it.
+function validateRawCurrentSources(value) {
+  if (!Array.isArray(value) || value.length > MAX_CURRENT_SOURCES) throw new Error('자기 source 배열이 잘못되었습니다.');
+  value.forEach((source, index) => {
+    const label = `자기 원천 ${index + 1}`;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) throw new Error(`${label}: 객체가 아닙니다.`);
+    const named = `${label}(${typeof source.id === 'string' ? source.id : '?'})`;
+    try {
+      text(source.id, 'source ID', { min: 1, max: 64 });
+      if (typeof source.enabled !== 'boolean' || typeof source.visible !== 'boolean') throw new Error('enabled/visible은 boolean이어야 합니다.');
+      if (!CURRENT_TYPES.includes(source.type)) throw new Error('알 수 없는 source type입니다.');
+      if (source.type === 'sheet') {
+        if (!isNumber(source.K)) throw new Error('면전류 K는 유한한 숫자여야 합니다.');
+        numericVector(source.position, '면전류 기준점');
+        numericVector(source.normal, '면전류 법선');
+        numericVector(source.direction, '면전류 K 방향');
+        return;
+      }
+      if (!isNumber(source.current)) throw new Error('전류 I는 유한한 숫자여야 합니다.');
+      if (source.type === 'wire') {
+        numericVector(source.position, '도선 기준점');
+        numericVector(source.direction, '도선 방향');
+      } else if (source.type === 'segment') {
+        numericVector(source.start, '유한 도선 시작점');
+        numericVector(source.end, '유한 도선 끝점');
+      } else {
+        if (!isNumber(source.radius)) throw new Error('루프 반지름은 유한한 숫자여야 합니다.');
+        numericVector(source.position, '루프 중심');
+        numericVector(source.normal, '루프 법선');
+      }
+    } catch (error) { throw new Error(`${named}: ${error.message}`); }
+  });
+}
+
+function ampereLoop(value) {
+  if (value == null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('암페어 루프 객체가 잘못되었습니다.');
+  if (!['circle', 'rect'].includes(value.shape)) throw new Error('암페어 루프 모양이 잘못되었습니다.');
+  if (value.orientation !== 1 && value.orientation !== -1) throw new Error('암페어 루프 방향은 1 또는 -1이어야 합니다.');
+  for (const key of ['radius', 'halfWidth', 'halfHeight']) finite(value[key], `암페어 루프 ${key}`, AMPERE_MIN, AMPERE_MAX);
+  numericVector(value.center, '암페어 루프 중심');
+  const loop = {
+    shape: value.shape, center: validatePoint(value.center, '암페어 루프 중심'), radius: value.radius, halfWidth: value.halfWidth,
+    halfHeight: value.halfHeight, orientation: value.orientation,
+  };
+  // The loop must fit the plane view (clampAmpere's coordinate limit): a loop that would be moved is refused, not silently edited.
+  if (JSON.stringify(clampAmpere(loop)) !== JSON.stringify(loop)) throw new Error('암페어 루프가 지원 범위(크기·좌표)를 벗어났습니다.');
+  return loop;
+}
+
+function magneticChips(value) {
+  if (value == null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('자기 모드 표시 칩이 잘못되었습니다.');
+  const chips = {};
+  for (const key of EM_MAGNETIC_CHIPS) {
+    if (value[key] === undefined) continue;
+    if (typeof value[key] !== 'boolean') throw new Error(`자기 모드 표시 칩 ${key}는 boolean이어야 합니다.`);
+    chips[key] = value[key];
+  }
+  return chips;
+}
+
+const emptyMagnetic = () => ({ sources: [], selectedId: null, ampere: null, chips: null });
+
+/** The magnetic part of a version 2 file. `value` null (a version 1 file, or no magnetic part) gives the empty state. */
+function magnetic(value) {
+  if (value == null) return emptyMagnetic();
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('자기 모드 상태 객체가 잘못되었습니다.');
+  validateRawCurrentSources(value.sources);
+  let sources;
+  try { sources = validateCurrentSources(value.sources); } catch (error) { throw new Error(`자기 원천: ${error.message}`); }
+  const selectedId = value.selectedId == null ? null : text(value.selectedId, '자기 선택 ID', { min: 1, max: 64 });
+  if (selectedId && !sources.some(source => source.id === selectedId)) throw new Error('자기 선택 ID가 원천에 없습니다.');
+  return { sources, selectedId, ampere: ampereLoop(value.ampere), chips: magneticChips(value.chips) };
 }
 
 function inspectTree(value, depth = 0) {
@@ -108,7 +193,10 @@ function world(value) {
 export function normalizeEMProject(value) {
   inspectTree(value);
   if (value?.format !== EM_PROJECT_FORMAT) throw new Error('EM 전용 파일 식별자가 아닙니다.');
-  if (value.version !== EM_PROJECT_VERSION) throw new Error('지원하지 않는 EM 파일 version입니다.');
+  if (!EM_PROJECT_VERSIONS.includes(value.version)) throw new Error('지원하지 않는 EM 파일 version입니다.');
+  const withMagnetic = value.version >= 2; // a version 1 file has no magnetic part: it reads as the empty state, electric field
+  const field = withMagnetic && value.field != null ? (EM_FIELDS.includes(value.field) ? value.field : null) : 'electric';
+  if (!field) throw new Error('EM 필드 모드가 잘못되었습니다.');
   const vectorMode = ['E', 'gradV', 'minusGradV'].includes(value.view?.vectorMode) ? value.view.vectorMode : null;
   if (!vectorMode) throw new Error('EM 벡터 표시 모드가 잘못되었습니다.');
   const legendMode = ['auto', 'fixed'].includes(value.legend?.mode) ? value.legend.mode : null;
@@ -122,6 +210,7 @@ export function normalizeEMProject(value) {
   return {
     format: EM_PROJECT_FORMAT, version: EM_PROJECT_VERSION, world: world(value.world),
     view: { camera: camera(value.view.camera), vectorMode }, calculus: calculus(value.calculus), legend: { mode: legendMode, ...range },
+    field, magnetic: magnetic(withMagnetic ? value.magnetic : null),
   };
 }
 
@@ -172,5 +261,6 @@ export function makeExampleProject(name, base) {
       selectedId: example.sources[0]?.id ?? null, comparison: null,
     },
     calculus: example.calculus ? clone(example.calculus) : clone(base.calculus),
+    field: 'electric', // the examples are charge set-ups; the magnetic part of `base` is carried along untouched
   });
 }

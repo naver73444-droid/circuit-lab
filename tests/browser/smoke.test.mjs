@@ -3978,4 +3978,71 @@ describe("browser smoke", { timeout: 600000 }, () => {
     }
   });
 
+  // ---- the EM file carries the magnetic mode (version 2): sources, Ampere loop, chips, current field ------------------------------------------
+
+  test("EM file: a magnetic scene saved as JSON, reset and opened again restores the current sources, the Ampère readout, the chips, the magnetic mode and empty histories", async () => {
+    await openEM();
+    await click("#em-advanced summary");
+    await click('[data-em-field-mode="magnetic"]');
+    await until(`${L}.getEMState().field === "magnetic" && !document.getElementById("em-current-presets").hidden`, "the magnetic mode");
+    await click('[data-em-current-preset="wire-ampere"]');
+    await until(`!document.getElementById("em-ampere-readout").hidden && document.getElementById("em-ampere-state").textContent !== ""`, "the Ampère readout");
+    await click('[data-em-current-add="loop"]');
+    await click("#em-ampere-turn");
+    await click('[data-em-chip="hfield"]');
+    await until(`${L}.getEMState().current.sources.length === 2 && ${L}.getEMState().ampere.orientation === -1 && ${L}.getEMState().chips.hfield === true`, "the edited magnetic scene");
+    await settle();
+    const scene = () => ev(`(() => {
+      const s = ${L}.getEMState();
+      return {
+        field: s.field, sources: JSON.stringify(s.current.sources), selected: s.current.selectedId, ampere: JSON.stringify(s.ampere),
+        chips: JSON.stringify([s.chips.hfield, s.chips.ampere, s.chips.mcolor, s.chips.arrows, s.chips.force, s.chips.lines]),
+        readout: [...document.querySelectorAll("#em-ampere-lines p")].map((p) => p.textContent).join("|"), state: document.getElementById("em-ampere-state").textContent,
+      };
+    })()`);
+    const before = await scene();
+    assert.equal(before.field, "magnetic");
+    assert.ok(before.readout.length > 0 && before.state !== "", `the Ampère readout has content to compare: ${JSON.stringify(before)}`);
+
+    // Save: capture the file text instead of downloading it (the anchor click is a no-op for the moment).
+    const text = await ev(`(async () => {
+      const download = HTMLAnchorElement.prototype.click, create = URL.createObjectURL;
+      let blob = null;
+      HTMLAnchorElement.prototype.click = () => {};
+      URL.createObjectURL = (value) => { blob = value; return create.call(URL, value); };
+      try { document.getElementById("em-d-save").click(); } finally { HTMLAnchorElement.prototype.click = download; URL.createObjectURL = create; }
+      return blob ? await blob.text() : null;
+    })()`);
+    assert.ok(text, `the EM file was saved: ${await ev(`document.getElementById("em-d-status").textContent`)}`);
+    const file = JSON.parse(text);
+    assert.equal(file.version, 2);
+    assert.equal(file.field, "magnetic");
+    assert.equal(file.magnetic.sources.length, 2);
+    assert.equal(file.magnetic.ampere.shape, "circle");
+    assert.equal(file.magnetic.ampere.orientation, -1);
+    assert.equal(file.magnetic.chips.hfield, true);
+
+    // Reset the magnetic scene and go back to electric, so every restored value must come from the file.
+    await click("#em-pg-reset");
+    await click('[data-em-field-mode="electric"]');
+    await until(`${L}.getEMState().field === "electric" && ${L}.getEMState().current.sources.length === 1 && ${L}.getEMState().ampere?.orientation === 1`, "the reset electric workspace");
+
+    // Open: put the text in the file input like a chosen file.
+    await ev(`(() => {
+      const input = document.getElementById("em-d-file"), data = new DataTransfer();
+      data.items.add(new File([${JSON.stringify(text)}], "scene.json", { type: "application/json" }));
+      input.files = data.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await until(`${L}.getEMState().field === "magnetic" && /불러왔습니다/.test(document.getElementById("em-d-status").textContent)`, "the file to be opened in the magnetic mode");
+    await until(`!document.getElementById("em-ampere-readout").hidden && document.getElementById("em-ampere-state").textContent !== ""`, "the restored Ampère readout");
+    await settle();
+    const after = await scene();
+    assert.deepEqual(after, before, "sources, selection, Ampère loop, chips and the Ampère readout are exactly as saved");
+    assert.equal(JSON.parse(after.sources).length, 2, "two magnetic sources");
+    assert.equal(await ev(`document.querySelector('[data-em-field-mode="magnetic"]').getAttribute("aria-pressed")`), "true", "the 자기 switch shows the restored mode");
+    assert.equal(await ev(`${L}.getEMState().current.past.length + ${L}.getEMState().current.future.length + ${L}.getEMState().playground.past.length + ${L}.getEMState().playground.future.length`), 0, "both modes start with empty histories");
+    assert.equal(await ev(`document.getElementById("em-pg-undo").disabled`), true, "nothing to undo after opening");
+  });
+
 });

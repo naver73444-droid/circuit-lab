@@ -14,6 +14,7 @@ import { createInspector } from './em-inspector.js';
 import { createScenesPanel, sceneTitle } from './em-scenes-panel.js';
 import { createCalculusPanel } from './em-calculus-panel.js';
 import { createProjectPanel } from './em-project-panel.js';
+import { EM_MAGNETIC_CHIPS } from './em-playground-project.js';
 import { createPalette, watchReducedMotion } from './em-palette.js';
 import { freeSpot } from './em-source-edit.js';
 import { planeNormal } from './em-plane-geometry.js';
@@ -104,9 +105,29 @@ export function createEMController(root) {
   const calculus = createCalculusPanel({
     root, editor, isSandbox: () => lab.scene === 'playground' && lab.field === 'electric', getPalette, signal: events.signal, interaction,
   });
+  // The magnetic mode goes into the EM file too: sources, Ampere loop, the display chips and which field (전기 | 자기) was showing.
+  const magneticFile = {
+    read: () => ({
+      field: lab.field, sources: structuredClone(cs.sources), selectedId: cs.selectedId,
+      ampere: lab.ampere ? structuredClone(lab.ampere) : null,
+      chips: Object.fromEntries(EM_MAGNETIC_CHIPS.map(name => [name, lab.chips[name] === true])),
+    }),
+    write: ({ sources, selectedId, ampere, chips }) => {
+      currentEditor.replaceWorld({ sources, selectedId });
+      lab.ampere = ampere ? structuredClone(ampere) : null;
+      if (chips) EM_MAGNETIC_CHIPS.forEach(name => { if (name in chips) lab.chips[name] = chips[name]; });
+    },
+  };
   const project = createProjectPanel({
-    root, editor, store, calculus, signal: events.signal,
-    onLoaded: () => { lab.field = 'electric'; setScene('playground'); lab.gauss = null; if (lab.chips.gauss) plane.placeGauss(); requestRender(); },
+    root, editor, store, calculus, magnetic: magneticFile, signal: events.signal,
+    // A file or example is applied to the playground in its saved field (examples and version 1 files: 전기).
+    onLoaded: file => {
+      setScene('playground');
+      setFieldMode(file.field);
+      lab.gauss = null;
+      if (lab.chips.gauss) plane.placeGauss();
+      requestRender();
+    },
   });
 
   // ---- one render ------------------------------------------------------------------------------------------------

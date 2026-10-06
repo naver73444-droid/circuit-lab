@@ -3,7 +3,7 @@
 // `error`, undo records one step per drag, per burst of live edits to one source, and per add / remove / reset / preset.
 // The sensor and the viewed plane stay with the charge editor (they are view state shared by both field modes); this editor
 // only owns the sources, so switching between 전기 and 자기 hides one set without deleting it.
-import { validatePoint } from './em-playground-physics.js';
+import { PointChargeInputError, validatePoint } from './em-playground-physics.js';
 import {
   MAX_CURRENT_SOURCES, MAX_LOOP_RADIUS, MIN_LOOP_RADIUS, planeBasis, validateCurrentSources,
 } from './em-current-field.js';
@@ -127,6 +127,15 @@ export function createCurrentEditor(initial = {}) {
       record(before);
       mark();
       return state.selectedId;
+    },
+    /** Replace everything from a validated project file (the history is cleared, unlike load()). */
+    replaceWorld({ sources, selectedId = null }) {
+      const validated = validateCurrentSources(sources);
+      if (selectedId != null && !validated.some(source => source.id === selectedId)) throw new PointChargeInputError('선택 ID가 저장 전류 원천에 없습니다.');
+      Object.assign(state, { sources: validated, selectedId, drag: null, edit: null, error: null, past: [], future: [] });
+      Object.keys(counters).forEach(key => { delete counters[key]; });
+      mark();
+      return true;
     },
     /** Back to the default single wire. One undo step. */
     reset() { return editor.load(clone(DEFAULT_CURRENTS), DEFAULT_CURRENTS[0].id) !== null; },
