@@ -40,7 +40,9 @@ test('Ex 1.3(b): h(t) = x(-4t + 2) = x(a t - b) with a = -4, b = -2: [-1,-0.25] 
   const text = affineText(-4, -2);
   assert.equal(text.plain, 'x(−4t+2)');
   assert.equal(text.grouped, 'x(−4(t−0.5))');
-  assert.match(timeLesson.read('steps-r', { a: -4, b: -2 }), /x\(−4t\+2\) = x\(−4\(t−0\.5\)\) \(스케일→이동→반전\)/);
+  assert.equal(text.lecture, 'x(4[−t+0.5])'); // the lecture's bracket form
+  assert.match(timeLesson.read('steps-r', { a: -4, b: -2 }), /x\(−4t\+2\) = x\(−4\(t−0\.5\)\) = x\(4\[−t\+0\.5\]\) \(스케일→이동→반전\)/);
+  assert.equal(affineText(2, 5).lecture, null);
   assert.match(timeLesson.read('steps', { a: 2, b: 5 }), /x\(2t−5\) = x\(2\(t−2\.5\)\) \(스케일→이동\)/);
 });
 

@@ -1,6 +1,6 @@
 // Lesson 1 view: x(t) and y(t)=x(at-b) overlaid; a draggable marker maps tau -> t=(tau+b)/a.
 // CT jumps are drawn as open circles at both one-sided limits (u(0) is undefined); DT stems show u[0]=1 style values.
-import { createLegend, createPane, createSurface } from './signals-plot.js';
+import { createLegend, createPane, createSurface, phoneBudget } from './signals-plot.js';
 import { clamp, formatNumber, jumpList, sampleCurve } from './signals-util.js';
 import {
   TIME_SEQUENCE, baseSignal, baseEdges, transformedSignal, transformedEdges, stageSignals, timeAxisOf, valueRangeOf,
@@ -46,7 +46,7 @@ export function createTimeView({ doc, parent, emit }) {
   let legendKey = null;
 
   function layout(width) {
-    const height = width < 640 ? 270 : clamp(width * 0.36, 300, 380);
+    const height = width < 640 ? Math.min(270, phoneBudget(doc)) : clamp(width * 0.36, 300, 380);
     surface.resize(width, height);
     pane.setBox(46, 20, width - 46 - 14, height - 20 - 32);
   }

@@ -45,7 +45,8 @@ test('control strip: 1-3 sliders per example plus up to two choice selects (axis
       const sliders = controls.filter((c) => !c.options);
       const choices = controls.filter((c) => c.options);
       const fixed = id === 'convolution' && (isCustomFamily(family) || family.startsWith('dt-')); // scrubber only
-      assert.ok(sliders.length <= 3 && (sliders.length >= 1 || fixed) && choices.length <= 2, `${id}/${family}: ${sliders.length}+${choices.length}`);
+      const limit = id === 'lti' && family === 'forced' ? 4 : 3; // + the input amplitude A of the forced response
+      assert.ok(sliders.length <= limit && (sliders.length >= 1 || fixed) && choices.length <= 2, `${id}/${family}: ${sliders.length}+${choices.length}`);
       for (const c of choices) assert.ok(c.integer && c.min === 0 && c.max === c.options.length - 1 && c.options.length >= 2, `${id}/${family}/${c.key}`);
       for (const c of controls) {
         assert.ok(c.max > c.min && c.step > 0 && c.initial >= c.min && c.initial <= c.max, `${id}/${family}/${c.key}`);
@@ -211,4 +212,55 @@ test('series view: switching to the one-sided / power spectrum hides the phase p
   }
   view.update(state(0));
   assert.ok(drawnTicks().drawn > 5, 'the ticks come back with the phase pane');
+});
+
+// ---- frequency response view: dragging the |H| plot moves the input frequency (fake DOM that records the listeners) ----
+test('freq view: pressing and dragging the |H| plot emits the input frequency, the arrow keys step it, the train example has no drag', async () => {
+  const { createFreqView } = await import('../../src/signals-freq-view.js');
+  const listeners = new Map();
+  const recording = (tag) => {
+    const node = fakeNode(tag);
+    node.addEventListener = (type, fn) => { listeners.set(`${node.getAttribute('class') ?? tag}:${type}`, fn); };
+    return node;
+  };
+  const doc = { createElement: (tag) => fakeNode(tag), createElementNS: (ns, tag) => recording(tag), createTextNode: (text) => ({ data: text }) };
+  const emitted = [];
+  const view = createFreqView({ doc, parent: fakeNode('div'), emit: (patch) => emitted.push(patch) });
+  view.layout(900);
+  const state = (family, params) => ({ family, params });
+  const rc = state('rc', { fc: 80, fin: 20, phi: 0, axis: 0, scale: 0 });
+  view.update(rc);
+  const down = listeners.get('sg-svg sg-drag:pointerdown');
+  const move = listeners.get('sg-svg sg-drag:pointermove');
+  assert.ok(down && move, 'the svg listens to pointerdown/move');
+  const at = (x, y = 40) => ({ button: 0, clientX: x, clientY: y, pointerId: 1, preventDefault() {} });
+  down(at(700)); // right of the centre of the |H| plot (800 css px wide fake box, 900 user units)
+  assert.equal(emitted.length, 1);
+  const first = emitted[0].params.fin;
+  assert.ok(first > 20 && first <= 500 && first % 5 === 0, `fin ${first} is on the slider grid`);
+  move(at(600));
+  assert.ok(emitted[1].params.fin < first, 'dragging back left lowers the frequency');
+  down(at(400, 700)); // below the two response panes (the time pane): no frequency change
+  assert.equal(emitted.length, 2);
+  // keys: the model-side step of the slider
+  assert.deepEqual(view.onKey({ key: 'ArrowRight' }, rc), { params: { fin: 25 } });
+  assert.deepEqual(view.onKey({ key: 'ArrowLeft', shiftKey: true }, rc), { params: { fin: -30 } }); // clamped to the slider by the controller
+  assert.deepEqual(view.onKey({ key: 'End' }, rc), { params: { fin: 500 } });
+  assert.equal(view.onKey({ key: 'a' }, rc), null);
+  // the train example is not draggable
+  const train = state('train', { N: 20, d: 0.2, fc: 80, axis: 0 });
+  view.update(train);
+  down(at(700));
+  assert.equal(emitted.length, 2);
+  assert.equal(view.onKey({ key: 'ArrowRight' }, train), null);
+});
+
+test('symbols: duty cycle is d (not D), the convolution integration step is Δλ, the DT phase carries its rad unit', () => {
+  assert.equal(seriesLesson.controls('pulse', {}).find((c) => c.key === 'D').label, 'd 듀티 (τ/T₀)');
+  assert.match(seriesLesson.read('pulse'), /d=τ\/T₀/);
+  assert.match(seriesLesson.formula('pulse', {}), /c₀=d, cₖ=d sinc\(kd\)/);
+  assert.doesNotMatch(seriesLesson.formula('pulse0', {}), /sinc\(kD\)/);
+  assert.equal(CUSTOM_FIELDS.custom.find((f) => f.key === 'dt').label, '적분 간격 Δλ [s]');
+  const theta = LESSONS.ops.controls('dt-pi', {}).find((c) => c.key === 'theta');
+  assert.deepEqual([theta.label, theta.unit], ['θ 위상', 'π rad']);
 });

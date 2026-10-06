@@ -13,6 +13,9 @@ export function svgEl(doc, tag, attrs = {}, parent = null, text) {
   return node;
 }
 
+// Phone: the plot may use at most 55% of the viewport height, so the reading line stays near the first screen.
+export const phoneBudget = (doc) => Math.max(240, Math.round((doc.defaultView?.innerHeight || 844) * 0.55));
+
 let surfaceCounter = 0;
 const finite = (v) => Number.isFinite(v);
 

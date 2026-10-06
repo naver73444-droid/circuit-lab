@@ -84,6 +84,9 @@ test('readout says what happens: direction, compression, shift side', () => {
   assert.match(text, /좌우 반전/);
   assert.match(text, /압축/);
   assert.match(text, /왼쪽/);
+  // a < 0: the stage figure shifts before the reversal, so the sentence names both references
+  assert.match(describeTimeMap({ family: 'steps-r', a: -4, b: -2, tau: 1 }), /반전 전 0\.5 왼쪽 이동 → 반전 \(반전 후 기준으로는 0\.5 오른쪽\)/);
+  assert.match(text, /반전 전 0\.5 오른쪽 이동 → 반전 \(반전 후 기준으로는 0\.5 왼쪽\)/);
   assert.match(describeTimeMap({ family: 'tri', a: 2, b: 1, tau: 0.4 }), /오른쪽/);
   assert.match(describeTimeMap({ family: 'seq', a: 2, b: 0, tau: 1 }), /사라집니다|n=0.5|정수/);
   assert.match(describeTimeMap({ family: 'seq', a: 1, b: 2, tau: 1 }), /=3 /);

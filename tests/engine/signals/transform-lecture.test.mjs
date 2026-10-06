@@ -252,8 +252,8 @@ test('axis toggle: omega mode scales the frequency axes by 2 pi and uses the ome
   const b = w.panes[1].lines[0].pts[300];
   near(a[1], b[1], 1e-12);
   near(b[0] / a[0], TAU, 1e-9);
-  assert.match(transformLesson.formula('rect', { axis: 1 }), /X\(ω\)=A T sinc\(ωT\/2π\)/);
-  assert.match(transformLesson.formula('rect', { axis: 0 }), /X\(f\)=A T sinc\(fT\)/);
+  assert.match(transformLesson.formula('rect', { axis: 1 }), /X\(ω\)=Aτ sinc\(ωτ\/2π\)/);
+  assert.match(transformLesson.formula('rect', { axis: 0 }), /X\(f\)=Aτ sinc\(fτ\)/);
   assert.match(transformLesson.formula('sinc', { axis: 1 }), /2πx\(−ω\)/);
   assert.match(transformLesson.formula('cos', { axis: 1 }), /1↔2πδ\(ω\)/);
   assert.match(describeTransform('rect', { ...p, axis: 1 }), /rad\/s/);
@@ -285,4 +285,19 @@ test('every family draws finite frames; ranges and metrics exist', () => {
     assert.ok(timeRange(value, defaults(value)).hi > timeRange(value, defaults(value)).lo);
     assert.ok(freqRange(value, defaults(value)).hi > freqRange(value, defaults(value)).lo);
   }
+});
+
+test('Fourier transform: the carrier / cos / PSD / bandwidth sliders are Hz inside and read as omega (x 2 pi, rad/s) on the omega axis', () => {
+  for (const [family, key, label] of [['mod', 'f0', 'ω₀'], ['cos', 'f0', 'ω₀'], ['psd', 'f0', 'ω₀'], ['sinc', 'T', null], ['esd', 'fB', 'ω_B']]) {
+    const hz = transformLesson.controls(family, { axis: 0 }).find((c) => c.key === key);
+    const omega = transformLesson.controls(family, { axis: 1 }).find((c) => c.key === key);
+    if (!label) { assert.equal(omega.unit, hz.unit); continue; }
+    assert.equal(hz.unit, 'Hz');
+    assert.equal(omega.unit, 'rad/s');
+    near(omega.displayScale, 2 * Math.PI, 1e-12);
+    assert.match(omega.label, new RegExp(`^${label}`));
+    assert.deepEqual([hz.min, hz.max, hz.step, hz.initial], [omega.min, omega.max, omega.step, omega.initial]);
+  }
+  assert.match(transformLesson.formula('rect', { axis: 0 }), /X\(f\)=X\(ω\), ω=2πf/);
+  assert.equal(transformLesson.controls('rect', {}).find((c) => c.key === 'T').label, 'τ 폭');
 });

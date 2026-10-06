@@ -191,7 +191,7 @@ export const seriesLesson = {
       { key: 'T0', label: 'T₀ 주기', min: 0.5, max: 6, step: 0.5, initial: d.T0, unit: 's' },
     ];
     // step 1/60 holds 1/3, 0.1, 0.2, 0.3 and 0.5 exactly (the lecture duty cycles)
-    if (hasDuty(family)) list.push({ key: 'D', label: 'D 듀티 (τ/T₀)', min: 3 / 60, max: 57 / 60, step: 1 / 60, initial: d.D, unit: '' });
+    if (hasDuty(family)) list.push({ key: 'D', label: 'd 듀티 (τ/T₀)', min: 3 / 60, max: 57 / 60, step: 1 / 60, initial: d.D, unit: '' });
     list.push(choiceControl('spec', '스펙트럼', SPEC_OPTIONS, 0), freqAxisControl(0));
     return list;
   },
@@ -201,8 +201,8 @@ export const seriesLesson = {
   },
   scrub: true,
   read(family) {
-    if (family === 'pulse') return 'D=τ/T₀가 클수록 DC가 커지고 첫 영점은 k=1/D에 있습니다. 불연속 옆 부분합은 약 9% 넘침(Gibbs)으로 수렴합니다.';
-    if (family === 'pulse0') return '펄스를 0<t<DT₀로 옮겨도 |c_k|는 그대로이고 위상만 −πkD씩 선형으로 밀립니다. 시간 이동은 선형 위상입니다.';
+    if (family === 'pulse') return 'd=τ/T₀가 클수록 DC가 커지고 첫 영점은 k=1/d에 있습니다. 불연속 옆 부분합은 약 9% 넘침(Gibbs)으로 수렴합니다.';
+    if (family === 'pulse0') return '펄스를 0<t<dT₀로 옮겨도 |c_k|는 그대로이고 위상만 −πkd씩 선형으로 밀립니다. 시간 이동은 선형 위상입니다.';
     if (family === 'odd') return '홀대칭 구형파는 sin 항만, 홀수 고조파만 남습니다: b_k=4A/(πk). 부분합은 불연속 옆에서 약 9% 넘칩니다(수렴 후에도).';
     if (family === 'ramp') return '톱니 x=t/T₀는 c₀=1/2, c_k=j/(2πk): 순허수라 위상이 π/2로 일정하고 크기는 1/k로 줄어듭니다. 불연속에서 수렴값은 평균입니다.';
     if (family === 'saw') return 'k번째 벡터는 k배 빠르게 돌고 끝점의 높이가 파형입니다. N이 커지면 점프 옆 최댓값은 약 9% 넘침(Gibbs)으로 수렴합니다.';
@@ -214,8 +214,8 @@ export const seriesLesson = {
     const common = `x(t)≈c₀+Σ_{k=1}^{N} 2|cₖ| cos(kω₀t+φₖ), φₖ=arg cₖ, ω₀=2π/T₀=2πf₀, ${rate}`;
     const link = 'cₖ=(aₖ−jbₖ)/2; dₖ=2|cₖ|; c_{−k}=conj(c_k)';
     const wave = {
-      pulse: 'c₀=D, cₖ=D sinc(kD)=sin(πkD)/(πk)',
-      pulse0: 'cₖ=D sinc(kD) e^(−jπkD)',
+      pulse: 'c₀=d, cₖ=d sinc(kd)=sin(πkd)/(πk)',
+      pulse0: 'cₖ=d sinc(kd) e^(−jπkd)',
       odd: 'bₖ=4A/(πk) (k odd); aₖ=0; cₖ=−j2A/(πk)',
       ramp: 'c₀=1/2, cₖ=j/(2πk)',
       saw: 'cₖ=j(−1)^k/(πk)',

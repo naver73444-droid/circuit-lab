@@ -155,13 +155,16 @@ export function sequenceUpsample(x, start, L, b) {
   return points;
 }
 
-// x(a t - b) written the textbook way and as the grouped form x(a(t - b/a)).
+// x(a t - b) written the textbook way, as the grouped form x(a(t - b/a)) and, for a < 0, the lecture form x(|a|[-t + c]).
 export function affineText(a, b, v = 't') {
   const coef = a === 1 ? '' : a === -1 ? '−' : formatNumber(a);
   const offset = b === 0 ? '' : b > 0 ? `−${formatNumber(b)}` : `+${formatNumber(-b)}`;
-  if (b === 0) return { plain: `x(${coef}${v})`, grouped: `x(${coef}${v})` };
+  if (b === 0) return { plain: `x(${coef}${v})`, grouped: `x(${coef}${v})`, lecture: null };
   const group = `${v}${b / a > 0 ? '−' : '+'}${formatNumber(Math.abs(b / a))}`;
-  return { plain: `x(${coef}${v}${offset})`, grouped: `x(${coef}(${group}))` };
+  // a < 0: x(a t - b) = x(|a|[-t - b/|a|]) -- the reversal -t is written inside the bracket after scaling by |a|
+  const c = -b / Math.abs(a);
+  const lecture = a < 0 ? `x(${Math.abs(a) === 1 ? '' : formatNumber(Math.abs(a))}[−${v}${c >= 0 ? '+' : '−'}${formatNumber(Math.abs(c))}])` : null;
+  return { plain: `x(${coef}${v}${offset})`, grouped: `x(${coef}(${group}))`, lecture };
 }
 
 // Live sentence for the readout under the plot.
@@ -174,7 +177,11 @@ export function describeTimeMap({ family, a, b, tau, L }) {
   const parts = [];
   parts.push(a < 0 ? '좌우 반전' : '방향 유지');
   if (Math.abs(a) !== 1) parts.push(Math.abs(a) > 1 ? `폭 ×1/${formatNumber(Math.abs(a))} 압축` : `폭 ×${formatNumber(1 / Math.abs(a))} 확대`);
-  if (b !== 0) parts.push(`${formatNumber(Math.abs(b / a))}만큼 ${b / a > 0 ? '오른쪽' : '왼쪽'}`);
+  if (b !== 0 && a < 0) {
+    // the stage figure shifts BEFORE the reversal (g₂=g₁(t−b/|a|)); after the reversal the same move points the other way
+    const m = formatNumber(Math.abs(b / a));
+    parts.push(`반전 전 ${m} ${b > 0 ? '오른쪽' : '왼쪽'} 이동 → 반전 (반전 후 기준으로는 ${m} ${b > 0 ? '왼쪽' : '오른쪽'})`);
+  } else if (b !== 0) parts.push(`${formatNumber(Math.abs(b / a))}만큼 ${b / a > 0 ? '오른쪽' : '왼쪽'}`);
   if (discrete && !Number.isInteger(image)) {
     return `k=${tau} → n=${formatNumber(image)} 정수가 아니므로 이 표본은 사라집니다. (${parts.join(' · ')})`;
   }
@@ -224,7 +231,7 @@ export const timeLesson = {
     const text = affineText(a, b);
     const order = a < 0 ? '스케일→이동→반전' : '스케일→이동';
     const circles = isSteps(family) ? '채운 원은 구간 식이 값을 정한 끝, 열린 원은 그 반대쪽 극한입니다.' : '점프의 열린 원은 CT에서 u(0)처럼 그 점의 값을 정하지 않는다는 뜻입니다.';
-    return `${text.plain} = ${text.grouped} (${order}). ${circles}`;
+    return `${text.plain} = ${text.grouped}${text.lecture ? ` = ${text.lecture}` : ''} (${order}). ${circles}`;
   },
   formula(family, { a = 2, b = 1 } = {}) {
     if (family === 'up') return 'g[n]=x[n/L], n=Lk; g[n]=0, n≠Lk; y[n]=g[n−b]';

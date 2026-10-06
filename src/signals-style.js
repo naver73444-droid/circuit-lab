@@ -62,6 +62,7 @@ export const SIGNALS_STYLE = `
 .sg-svg .c5{--c:var(--danger)}
 .sg-svg .cm{--c:var(--muted)}
 .sg-read{margin:10px 2px 0;font-size:14px}
+.sg-hint{display:none;margin:2px 2px 0;font-size:12px;color:var(--muted)}
 .sg-live{margin:2px 2px 0;min-height:1.5em;font:13px var(--mono);color:var(--muted);overflow-wrap:anywhere}
 .sg-status{margin:4px 2px 0;min-height:1.4em;font-size:12px;color:var(--danger)}
 .sg-details{margin-top:8px;border-top:1px solid var(--line-soft)}
@@ -89,19 +90,21 @@ export const SIGNALS_STYLE = `
 .sg-tabs button{min-height:36px;padding:2px 2px;font-size:12px}
 .sg-head{display:none}
 .sg-controls{display:block;padding:6px 10px 8px}
-.sg-ctl{grid-template-columns:6.4em minmax(0,1fr) 6em;align-items:center;gap:0 8px;min-height:34px}
+.sg-ctl{grid-template-columns:6.4em minmax(0,1fr) 6em;align-items:center;gap:0 8px;min-height:40px}
 .sg-ctl>*{grid-row:1}
 .sg-ctl>.sg-name{grid-column:1;font-size:12px;line-height:1.2}
-.sg-ctl>input[type=range]{grid-column:2;margin:0}
+.sg-ctl>input[type=range]{grid-column:2;margin:0;height:42px}
 .sg-ctl>output{grid-column:3}
-.sg-ctl select{grid-column:2/-1}
+.sg-ctl select{grid-column:2/-1;min-height:40px}
 .sg-ctl.sg-choice{display:inline-grid;vertical-align:top;width:calc(50% - 9px);margin:2px 8px 2px 0;grid-template-columns:minmax(0,1fr);gap:0}
 .sg-ctl.sg-choice>*{grid-row:auto;grid-column:1}
-.sg-ctl.sg-choice select{grid-column:1}
+.sg-ctl.sg-choice select{grid-column:1;min-height:40px}
 .sg-scrub{grid-template-columns:auto minmax(0,1fr) 6em}
 .sg-scrub>.sg-name{display:none}
 .sg-scrub>input[type=range]{grid-column:2}
+.sg-scrub>button{min-height:40px}
 .sg-stage{min-height:200px;margin-top:8px}
 .sg-read{font-size:13px}
+.sg-hint:not([hidden]){display:block}
 }
 `;

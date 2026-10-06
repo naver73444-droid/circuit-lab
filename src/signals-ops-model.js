@@ -92,10 +92,11 @@ export function energyPower(family, p) {
 }
 
 // Running quantity shown in the lower pane: P_T for the periodic ones, E(T) for the exponential.
+// Both power examples use the lecture window P_T = (1/T) integral over [-T/2, T/2] of x^2 dt (length T).
 export function runningPower(family, p, T) {
   if (family === 'en-sin') {
     const w = TAU * p.f0;
-    return ((p.A * p.A) / 2) * (1 - (Math.cos(2 * p.theta) * Math.sin(2 * w * T)) / (2 * w * T));
+    return ((p.A * p.A) / 2) * (1 - (Math.cos(2 * p.theta) * Math.sin(w * T)) / (w * T));
   }
   throw new RangeError('이동 전력은 정현파에만 정의됩니다.');
 }
@@ -103,12 +104,23 @@ export function runningEnergy(p, T) {
   if (T <= 0) return 0;
   return p.alpha > 1e-12 ? ((p.A * p.A) * (1 - Math.exp(-2 * p.alpha * T))) / (2 * p.alpha) : p.A * p.A * T;
 }
-// P_T = (1/T) integral_0^T x^2 for the unit-period pulse train (A on (0,d) of every period).
+// P_T = (1/T) integral over [-T/2, T/2] of x^2 for the unit-period pulse train (A on (0,d) of every period).
+// F(s) = integral_0^s of the 0/1 indicator: floor(s) d + min(frac(s), d), valid for negative s too.
 export function trainPower(p, T) {
   if (T <= 0) return 0;
-  const whole = Math.floor(T + 1e-12);
-  const rest = T - whole;
-  return (p.A * p.A * (whole * p.d + Math.min(rest, p.d))) / T;
+  const cumulative = (s) => {
+    const whole = Math.floor(s + 1e-12);
+    return whole * p.d + Math.min(s - whole, p.d);
+  };
+  return (p.A * p.A * (cumulative(T / 2) - cumulative(-T / 2))) / T;
+}
+
+// First positive peak of A sin(2 pi f0 t + theta): 2 pi f0 t + theta = pi/2 (mod 2 pi), so t = (pi/2 - theta)/(2 pi f0) mod T0.
+// As a phasor in the cosine reference (sin(u) = cos(u - pi/2)) it is X = A at angle theta - pi/2.
+export function sinePeak(p) {
+  const T0 = 1 / p.f0;
+  const t = (((Math.PI / 2 - p.theta) / (TAU * p.f0)) % T0 + T0) % T0;
+  return { t, T0, phasorAngle: p.theta - Math.PI / 2 };
 }
 
 // Chain of the delta approximation q_a (width a, height 1/a): its integrals u_a and r_a, and the ideal limits.
@@ -221,7 +233,7 @@ function energyFrame(family, p) {
       panes: [
         { title: 'x(t)=A sin(2πf₀t+θ) · 점선: ±RMS=±A/√2', x: [lo, hi], y: [-p.A * 1.3, p.A * 1.3], yTicks: [-p.A, 0, p.A],
           lines: [{ cls: 'c1', pts: pts(x, lo, hi, 900) }], hlines: [{ cls: 'c4 dash', y: ep.rms }, { cls: 'c4 dash', y: -ep.rms }] },
-        { title: '이동 평균 전력 P_T=(1/2T)∫x² dt → A²/2', x: [0, hi], y: [0, p.A * p.A * 1.1], yTicks: [0, Number(ep.power.toPrecision(3))],
+        { title: '이동 평균 전력 P_T=(1/T)∫x² dt, 창 [−T/2, T/2] → A²/2', x: [0, hi], y: [0, p.A * p.A * 1.1], yTicks: [0, Number(ep.power.toPrecision(3))],
           lines: [{ cls: 'c2', pts: sampleCurve((T) => runningPower(family, p, Math.max(T, 1e-6)), 0, hi, 400) }], hlines: [{ cls: 'c4 dash', y: ep.power }] },
       ],
       legend: [{ cls: 'c1', text: 'x(t)' }, { cls: 'c4 dash', text: 'RMS · 극한 전력 A²/2' }, { cls: 'c2', text: 'P_T' }],
@@ -253,8 +265,8 @@ function energyFrame(family, p) {
     panes: [
       { title: `주기 T₀=1 s 펄스열 (A=${num(p.A)}, d=${num(p.d)}) · 점선: 평균 ⟨x⟩=Ad`, x: [lo, hi], y: [-0.15 * p.A, p.A * 1.3], yTicks: [0, Number(p.A.toPrecision(3))],
         lines: [{ cls: 'c1', pts: pts(x, lo, hi, 900, edgesT) }], hlines: [{ cls: 'c4 dash', y: ep.mean }], jumps: [jumpsOf('c1', x, edgesT, lo, hi)] },
-      { title: '이동 평균 전력 P_T=(1/T)∫₀ᵀ x² dt → A²d', x: [0, hi], y: [0, p.A * p.A * 1.1], yTicks: [0, Number(ep.power.toPrecision(3))],
-        lines: [{ cls: 'c2', pts: sampleCurve((T) => trainPower(p, T), 0.02, hi, 500, [1, 2, 3].flatMap((k) => [k, k + p.d])) }], hlines: [{ cls: 'c4 dash', y: ep.power }] },
+      { title: '이동 평균 전력 P_T=(1/T)∫x² dt, 창 [−T/2, T/2] → A²d', x: [0, hi], y: [0, p.A * p.A * 1.1], yTicks: [0, Number(ep.power.toPrecision(3))],
+        lines: [{ cls: 'c2', pts: sampleCurve((T) => trainPower(p, T), 0.02, hi, 500, [0, 1, 2, 3].flatMap((k) => [2 * k, 2 * k + 2 * p.d, 2 * k - 2 * p.d])) }], hlines: [{ cls: 'c4 dash', y: ep.power }] },
     ],
     legend: [{ cls: 'c1', text: 'x(t)' }, { cls: 'c4 dash', text: '평균 · 극한 전력' }, { cls: 'c2', text: 'P_T' }],
   };
@@ -344,7 +356,7 @@ function opsControls(family) {
   if (family === 'en-train') return [slider('A', 'A 높이', 0.5, 4, 0.5, 2), slider('d', 'd 듀티', 0.05, 0.95, 0.05, 0.3)];
   if (family === 'chain') return [slider('a', 'a 펄스 폭', 0.05, 1, 0.05, 0.5, 's')];
   if (family === 'chain-dt') return [{ key: 'n0', label: 'n₀ 임펄스 위치', min: -4, max: 4, step: 1, initial: 0, unit: '', integer: true }];
-  if (family === 'dt-pi') return [slider('m', 'm  (Ω₀=mπ)', 0.05, 1.95, 0.05, 0.2), slider('theta', 'θ/π', -1, 1, 0.1, 0.2)];
+  if (family === 'dt-pi') return [slider('m', 'm  (Ω₀=mπ)', 0.05, 1.95, 0.05, 0.2), slider('theta', 'θ 위상', -1, 1, 0.1, 0.2, 'π rad')];
   return [slider('omega', 'Ω₀ [rad]', 0.1, 3.1, 0.1, 0.2, 'rad')];
 }
 
@@ -368,7 +380,9 @@ const sentenceOf = {
     const e = Number.isFinite(ep.energy) ? `E=${num(ep.energy)}` : 'E=∞';
     const tail = ep.kind === 'energy' ? `P=0 → 에너지 신호` : `P=${num(ep.power)} · RMS=${num(ep.rms)} → 전력 신호`;
     const mean = family === 'en-train' ? ` · 평균 Ad=${num(ep.mean)}` : '';
-    return `${e}, ${tail}${mean}`;
+    const peak = family === 'en-sin' ? sinePeak(p) : null;
+    const phase = peak ? ` · 첫 양의 피크 t=(π/2−θ)/(2πf₀)=${num(peak.t)} s, 페이저(cos 기준) X=A∠(θ−π/2)=${num(p.A)}∠${num(peak.phasorAngle)} rad` : '';
+    return `${e}, ${tail}${mean}${phase}`;
   },
 };
 
@@ -401,10 +415,10 @@ export const opsLesson = {
   },
   formula(family) {
     if (family === 'amp') return 'g(t)=B x(t)+A';
-    if (family === 'sum') return 'g(t)=x₁(t)+x₂(t)';
-    if (family === 'prod') return 'g(t)=x₁(t) x₂(t)';
+    if (family === 'sum') return 'g(t)=x₁(t)+B x₂(t)';
+    if (family === 'prod') return 'g(t)=x₁(t) B x₂(t)';
     if (family.startsWith('eo-')) return 'x_e(t)=[x(t)+x(−t)]/2; x_o(t)=[x(t)−x(−t)]/2; x=x_e+x_o';
-    if (family === 'en-sin') return 'E_x=∫x²(t)dt; P_x=(1/T₀)∫x² dt; P_x=A²/2; X_RMS=√(P_x)=A/√2';
+    if (family === 'en-sin') return 'E_x=∫x²(t)dt; P_x=(1/T)∫_{−T/2}^{T/2} x² dt; P_x=A²/2; X_RMS=√(P_x)=A/√2';
     if (family === 'en-exp') return 'E_x=∫₀^∞ A² e^(−2αt)dt=A²/(2α); P_x=lim (1/T)∫x² dt=0 (α>0); α=0: P_x=A²/2';
     if (family === 'en-train') return 'x̄=(1/T₀)∫x dt=Ad; P_x=(1/T₀)∫x² dt=A²d';
     if (family === 'chain') return 'u(t)=∫_{−∞}^{t}δ(λ)dλ; δ(t)=du/dt; r(t)=∫_{−∞}^{t}u(λ)dλ=t u(t)';

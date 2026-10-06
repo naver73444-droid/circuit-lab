@@ -44,6 +44,18 @@ export const SIGNALS_REGISTRY = {
 };
 const REGISTRY = SIGNALS_REGISTRY;
 
+// Draggable plots. On a phone the slider name row and the lesson heading are hidden, so a one-line hint under the plot says what can be dragged.
+const POINT_HINT = '● 점을 끌거나 ←/→';
+const DRAG_HINTS = {
+  time: () => POINT_HINT,
+  lti: (family) => (family === 'step' ? POINT_HINT : null),
+  convolution: () => POINT_HINT,
+  series: () => POINT_HINT,
+  fourier: (family) => (['rect', 'tri', 'exp', 'twoexp', 'gauss', 'sinc', 'dt'].includes(family) ? '● 시간 파형을 끌어 이동' : null),
+  freq: (family) => (family === 'rc' || family === 'rlc' ? POINT_HINT : null),
+  roc: () => '● 극점을 끌어 이동',
+};
+
 export function createSignalsCourseController(host) {
   if (!host || typeof host.querySelector !== 'function') throw new TypeError('신호 학습 패널 host가 필요합니다.');
   const doc = host.ownerDocument;
@@ -118,6 +130,7 @@ export function createSignalsCourseController(host) {
     ui.controls = el('section', { class: 'sg-controls', 'aria-label': '조건 슬라이더' }, ui.root);
     ui.stage = el('div', { class: 'sg-stage' }, ui.root);
     ui.read = el('p', { class: 'sg-read', 'data-signals-read': '' }, ui.root);
+    ui.hint = el('p', { class: 'sg-hint', 'data-signals-hint': '', hidden: '' }, ui.root);
     ui.live = el('p', { class: 'sg-live', 'data-signals-live': '' }, ui.root);
     ui.status = el('p', { class: 'sg-status', role: 'status', 'data-signals-status': '' }, ui.root);
     buildAdvanced();
@@ -174,12 +187,12 @@ export function createSignalsCourseController(host) {
     ui.sliders.clear();
     for (const spec of lesson.controls(state.family, state.params)) {
       const wrap = el('label', { class: spec.options ? 'sg-ctl sg-choice' : 'sg-ctl' }, ui.dynamic);
-      el('span', { class: 'sg-name' }, wrap, spec.label);
+      const name = el('span', { class: 'sg-name' }, wrap, spec.label);
       if (spec.options) {
         // choice control (axis, scale, mode): a select whose value is the option index
         const input = el('select', { 'data-signals-param': spec.key, 'data-signals-choice': '', 'aria-label': spec.label }, wrap);
         for (const option of spec.options) el('option', { value: option.value }, input, option.label);
-        ui.sliders.set(spec.key, { spec, input, output: null });
+        ui.sliders.set(spec.key, { spec, input, output: null, name });
         continue;
       }
       const output = el('output', { 'aria-live': 'off' }, wrap);
@@ -187,7 +200,7 @@ export function createSignalsCourseController(host) {
         type: 'range', min: spec.min, max: spec.max, step: spec.step, 'data-signals-param': spec.key,
         'aria-label': spec.label,
       }, wrap);
-      ui.sliders.set(spec.key, { spec, input, output });
+      ui.sliders.set(spec.key, { spec, input, output, name });
     }
     const scrub = cursorSpec(state);
     ui.scrub = null;
@@ -205,10 +218,20 @@ export function createSignalsCourseController(host) {
 
   function syncControls() {
     const state = current();
+    // Frequency sliders keep Hz inside and relabel themselves (f -> w, x 2 pi) when the axis select changes: re-read the specs.
+    const fresh = new Map(lessonOf().controls(state.family, state.params).map((s) => [s.key, s]));
+    for (const entry of ui.sliders.values()) {
+      const next = fresh.get(entry.spec.key);
+      if (next && (next.label !== entry.spec.label || next.unit !== entry.spec.unit)) {
+        entry.spec = next;
+        if (entry.name) entry.name.textContent = next.label;
+        entry.input.setAttribute('aria-label', next.label);
+      }
+    }
     for (const { spec, input, output } of ui.sliders.values()) {
       const value = state.params[spec.key];
       if (Number(input.value) !== value) input.value = String(value);
-      const text = spec.options ? spec.options.find((o) => o.value === value)?.label ?? '' : formatQuantity(value, spec.unit);
+      const text = spec.options ? spec.options.find((o) => o.value === value)?.label ?? '' : formatQuantity(value * (spec.displayScale ?? 1), spec.unit);
       if (output) output.textContent = text;
       input.setAttribute('aria-valuetext', text);
     }
@@ -377,6 +400,8 @@ export function createSignalsCourseController(host) {
     const view = views.get(lessonId);
     const read = readText(state);
     if (ui.read.textContent !== read) ui.read.textContent = read;
+    const hint = DRAG_HINTS[lessonId]?.(state.family) ?? '';
+    if (ui.hint.textContent !== hint) { ui.hint.textContent = hint; ui.hint.hidden = !hint; }
     const width = Math.floor(ui.stage.clientWidth);
     if (width > 0 && width !== layoutWidth) { layoutWidth = width; view.layout(width); }
     if (!layoutWidth) return;

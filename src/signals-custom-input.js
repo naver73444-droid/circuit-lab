@@ -8,7 +8,7 @@ export const CUSTOM_FIELDS = {
     { key: 'xExpression', label: 'x(t) 식', initial: 'u(t)-u(t-2)', maxLength: EXPRESSION_LIMITS.length },
     { key: 'hExpression', label: 'h(t) 식', initial: 'exp(-t)*u(t)', maxLength: EXPRESSION_LIMITS.length },
     { key: 'windowT', label: '입력 창 ±T [s]', initial: '4' },
-    { key: 'dt', label: '적분 간격 Δτ [s]', initial: '0.02' },
+    { key: 'dt', label: '적분 간격 Δλ [s]', initial: '0.02' },
   ],
   'custom-dt': [
     { key: 'x', label: 'x[n] 표본 (쉼표)', initial: '1,2,1' },

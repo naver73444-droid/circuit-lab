@@ -81,7 +81,8 @@ export function rootLocus(Cinv, Rmax = 14, n = 140) {
 
 // ---------------------------------------------------------------- first order forced response: y' + a y = A cos(w t)
 export const FORCED_A = 20;
-export function forcedResponse({ a, omega, y0 }, A = FORCED_A) {
+// The input amplitude A is a slider (0..20, default 20); A = 0 leaves only the natural response y(0) e^(-a t).
+export function forcedResponse({ a, omega, y0, A: amplitude }, A = amplitude ?? FORCED_A) {
   const k1 = (a * A) / (a * a + omega * omega);
   const k2 = (A * omega) / (a * a + omega * omega);
   const c = y0 - k1;
@@ -239,6 +240,7 @@ function forcedFrame(p) {
   const hi = 3;
   const sets = [f.total, f.transient, f.steady];
   const ranges = sets.map((fn) => padRange(Array.from({ length: 80 }, (_, i) => fn((hi * i) / 79))));
+  if (f.amplitude < 1e-9) ranges[2] = [-1, 1]; // A = 0: a flat zero steady state gets a readable axis
   const yAll = [Math.min(...ranges.map((r) => r[0])), Math.max(...ranges.map((r) => r[1]))];
   return {
     panes: [
@@ -308,7 +310,7 @@ const slider = (key, label, min, max, step, initial, unit = '') => ({ key, label
 function ltiControls(family) {
   if (family === 'step') return [slider('tau', 'τ = RC', 0.05, 2, 0.05, 0.25, 's')];
   if (family.startsWith('nat-')) return [slider('R', 'R 저항', 0.2, 14, 0.2, RLC_PRESETS[family].R, 'Ω'), slider('y0', 'y(0) 초기 전압', -3, 3, 0.5, RLC_PRESETS[family].y0, 'V')];
-  if (family === 'forced') return [slider('omega', 'ω 입력 각주파수', 1, 20, 1, 8, 'rad/s'), slider('a', 'a=1/RC', 1, 10, 1, 4, '1/s'), slider('y0', 'y(0) 초기값', -5, 10, 1, 5)];
+  if (family === 'forced') return [slider('omega', 'ω 입력 각주파수', 1, 20, 1, 8, 'rad/s'), slider('a', 'a=1/RC', 1, 10, 1, 4, '1/s'), slider('y0', 'y(0) 초기값', -5, 10, 1, 5), slider('A', 'A 입력 진폭', 0, 20, 1, FORCED_A)];
   if (family === 'bibo') return [slider('a', 'a (극점 s=−a)', -1, 3, 0.25, 1), slider('d', 'd 지연(+)/앞섬(−)', -1, 1, 0.25, 0, 's')];
   if (family === 'bibo-osc') return [slider('sigma', 'σ 감쇠', -0.5, 2, 0.25, 1, '1/s')];
   return [
@@ -358,7 +360,7 @@ export const ltiLesson = {
     if (family.startsWith('nat-')) return describeNatural(family, params);
     if (family === 'forced') {
       const f = forcedResponse(params);
-      return `y=${num(f.c)}e^(−${num(params.a)}t)+${num(f.k1)}cos(${num(params.omega)}t)+${num(f.k2)}sin(${num(params.omega)}t) · 정상상태 진폭 ${num(f.amplitude)}`;
+      return `y=${num(f.c)}e^(−${num(params.a)}t)+${num(f.k1)}cos(${num(params.omega)}t)+${num(f.k2)}sin(${num(params.omega)}t) · 정상상태 진폭 ${num(f.amplitude)} · τ=1/a=${num(1 / params.a)} s${(params.A ?? FORCED_A) === 0 ? ' · A=0: 입력이 없어 자연응답만' : ''}`;
     }
     if (family === 'bibo' || family === 'bibo-osc') {
       const total = absIntegral(family, params);

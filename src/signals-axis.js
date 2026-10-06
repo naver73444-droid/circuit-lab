@@ -14,6 +14,13 @@ export const AXIS_OPTIONS = [{ value: 0, label: 'f [Hz]' }, { value: 1, label: '
 export const freqAxisControl = (initial = 0) => choiceControl('axis', '주파수 축', AXIS_OPTIONS, initial);
 export const isOmega = (axis) => axis === 1;
 
+// A frequency slider whose stored value stays in Hz; on the omega axis its label, unit and shown value switch to w [rad/s] (x 2 pi).
+// names = [Hz symbol, omega symbol], e.g. ['f_c', 'ω_c']; rest = the Korean part of the label.
+export function freqSlider(key, names, rest, min, max, step, initial, params = {}) {
+  const omega = isOmega(params.axis ?? 0);
+  return { key, label: `${omega ? names[1] : names[0]} ${rest}`, min, max, step, initial, unit: omega ? 'rad/s' : 'Hz', displayScale: omega ? TAU : 1 };
+}
+
 // Frequency [Hz] <-> value on the chosen axis.
 export const toAxis = (hz, axis) => (isOmega(axis) ? TAU * hz : hz);
 export const fromAxis = (value, axis) => (isOmega(axis) ? value / TAU : value);

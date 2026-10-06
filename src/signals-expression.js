@@ -200,10 +200,10 @@ export function estimateCustomCost(xAst, hAst, cells) {
 
 export function prepareCustomConvolution(xSource, hSource, T, requestedDt) {
   const started = performance.now();
-  if (!Number.isFinite(T) || T < 0.05 || T > 20 || !Number.isFinite(requestedDt) || requestedDt <= 0) fail('T는 0.05~20 s, Δτ는 양수여야 합니다.');
+  if (!Number.isFinite(T) || T < 0.05 || T > 20 || !Number.isFinite(requestedDt) || requestedDt <= 0) fail('T는 0.05~20 s, Δλ는 양수여야 합니다.');
   const cells = Math.ceil((2 * T) / requestedDt);
   if (cells < EXPRESSION_LIMITS.minCells || cells > EXPRESSION_LIMITS.maxCells) {
-    fail(`적분 구간 수 ${EXPRESSION_LIMITS.minCells}~${EXPRESSION_LIMITS.maxCells}가 되도록 Δτ 또는 T를 조절하세요.`);
+    fail(`적분 구간 수 ${EXPRESSION_LIMITS.minCells}~${EXPRESSION_LIMITS.maxCells}가 되도록 Δλ 또는 T를 조절하세요.`);
   }
   const xAst = parseSignalExpression(xSource);
   const hAst = parseSignalExpression(hSource);

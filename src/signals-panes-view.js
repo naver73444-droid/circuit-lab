@@ -3,7 +3,7 @@
 //                       texts, bands, segments }], legend: [{ cls, text }] }
 // Every drawing item has a `cls` string ("c1", "c2 dash", ...). Elements are created lazily per (pane, type, cls) the first
 // time a frame needs them and are only re-attributed afterwards (create-once / update); unused ones are hidden.
-import { createPane, createSurface } from './signals-plot.js';
+import { createPane, createSurface, phoneBudget } from './signals-plot.js';
 
 const TYPES = {
   lines: (pane, cls) => { const w = pane.line(cls); return { set: (item) => w.set(item.pts), hide: () => w.set([]) }; },
@@ -66,9 +66,15 @@ export function createPanesView({ doc, parent, label, keys = null, className = '
       panes[2].setBox(46 + colW + 40, 22 + magH + 46, colW, H - magH - 46);
       return;
     }
-    const heights = frame.panes.map((p) => (p.h ?? (n === 1 ? 280 : n === 2 ? 180 : 138)) * (compact ? (n === 1 ? 0.9 : 0.78) : 1));
+    let heights = frame.panes.map((p) => (p.h ?? (n === 1 ? 280 : n === 2 ? 180 : 138)) * (compact ? (n === 1 ? 0.9 : 0.78) : 1));
     const gap = 42;
     const top = 22;
+    if (compact) {
+      // phone: shrink the panes (not below 60%) until the whole plot fits the height budget
+      const room = phoneBudget(doc) - top - gap * (n - 1) - 30;
+      const sum = heights.reduce((a, b) => a + b, 0);
+      if (sum > room) heights = heights.map((h) => h * Math.max(0.6, room / sum));
+    }
     const total = top + heights.reduce((a, b) => a + b, 0) + gap * (n - 1) + 30;
     surface.resize(width, total);
     let y = top;

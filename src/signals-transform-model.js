@@ -2,7 +2,7 @@
 // Course convention: X(w) = integral x(t) e^{-jwt} dt, x = (1/2pi) integral X e^{jwt} dw; X(f) = X(w) at w = 2 pi f; duality X(t) <-> 2 pi x(-w).
 // Models describe a "frame" (curves, spans, arrows) that signals-panes-view draws.
 import { breakWraps, formatNumber, formatQuantity, jumpList, midpointRect, niceTicks, sampleCurve } from './signals-util.js';
-import { freqAxisControl, isOmega, toAxis, axisSymbol, axisUnit } from './signals-axis.js';
+import { freqAxisControl, freqSlider, isOmega, toAxis, axisSymbol, axisUnit } from './signals-axis.js';
 
 export const TRANSFORM_FAMILIES = [
   { value: 'rect', label: '직사각 AΠ → sinc (Ex 4.12)' },
@@ -44,7 +44,7 @@ export function freqRange(family, p = {}) {
   return FREQ_RANGE;
 }
 
-export function transformControls(family) {
+export function transformControls(family, params = {}) {
   if (family === 'dt') {
     return [
       { key: 'L', label: 'L 길이', min: 1, max: 16, step: 1, initial: 5, unit: '', integer: true },
@@ -66,20 +66,20 @@ export function transformControls(family) {
   if (family === 'mod') {
     return [
       { key: 'T', label: 'T 포락선 폭', min: 0.5, max: 4, step: 0.1, initial: 2, unit: 's' },
-      { key: 'f0', label: 'f₀ 반송파', min: 0.5, max: 3, step: 0.1, initial: 2, unit: 'Hz' }, axis,
+      freqSlider('f0', ['f₀', 'ω₀'], '반송파', 0.5, 3, 0.1, 2, params), axis,
     ];
   }
   if (family === 'delta') return [{ key: 'a', label: 'a 펄스 폭 (면적 1)', min: 0.05, max: 2, step: 0.05, initial: 1, unit: 's' }, axis];
   if (family === 'psd') {
     return [
       { key: 'A', label: 'A 진폭', min: 0.5, max: 5, step: 0.5, initial: 5, unit: '' },
-      { key: 'f0', label: 'f₀ 주파수', min: 10, max: 200, step: 10, initial: 100, unit: 'Hz' }, axis,
+      freqSlider('f0', ['f₀', 'ω₀'], '주파수', 10, 200, 10, 100, params), axis,
     ];
   }
-  if (family === 'cos') return [{ key: 'f0', label: 'f₀ 주파수 (0이면 상수 1)', min: 0, max: 3, step: 0.1, initial: 1, unit: 'Hz' }, axis];
+  if (family === 'cos') return [freqSlider('f0', ['f₀', 'ω₀'], '주파수 (0이면 상수 1)', 0, 3, 0.1, 1, params), axis];
   return [
     { key: 'T', label: 'T sinc 폭 (sinc(t/T))', min: 0.05, max: 1, step: 0.05, initial: 0.1, unit: 's' },
-    { key: 'fB', label: 'f_B 대역', min: 0.5, max: 10, step: 0.5, initial: 3, unit: 'Hz' }, axis,
+    freqSlider('fB', ['f_B', 'ω_B'], '대역', 0.5, 10, 0.5, 3, params), axis,
   ];
 }
 
@@ -511,7 +511,7 @@ export function transformFrame(family, raw) {
 // ---- lesson description consumed by the controller -------------------------------------------
 
 const FORMULAS_F = {
-  rect: 'X(f)=A T sinc(fT) e^(−j2πf t₀); sinc(u)=sin(πu)/(πu)',
+  rect: 'X(f)=Aτ sinc(fτ) e^(−j2πf t₀); sinc(u)=sin(πu)/(πu)',
   tri: 'X(f)=(T/2) sinc²(fT/2) e^(−j2πf t₀)',
   exp: 'X(f)=e^(−j2πf t₀)/(α+j2πf)',
   twoexp: 'X(f)=2α/(α²+(2πf)²) e^(−j2πf t₀)',
@@ -525,7 +525,7 @@ const FORMULAS_F = {
   dt: 'X(e^(jΩ))=e^(−jΩ n₀) Σ_{k=0}^{L−1} e^(−jΩk); |X|=|sin(ΩL/2)/sin(Ω/2)|',
 };
 const FORMULAS_W = {
-  rect: 'X(ω)=A T sinc(ωT/2π) e^(−jω t₀); sinc(u)=sin(πu)/(πu)',
+  rect: 'X(ω)=Aτ sinc(ωτ/2π) e^(−jω t₀); sinc(u)=sin(πu)/(πu)',
   tri: 'X(ω)=(T/2) sinc²(ωT/4π) e^(−jω t₀)',
   exp: 'X(ω)=e^(−jω t₀)/(α+jω)',
   twoexp: 'X(ω)=2α/(α²+ω²) e^(−jω t₀)',
@@ -575,6 +575,6 @@ export const transformLesson = {
   read(family, params) {
     return READS[family] ?? readFor(family, params) ?? '시간에서 좁게 만들수록 주파수에서 넓어지고, 넓게 만들수록 좁아집니다. t₀는 |X|를 그대로 두고 위상만 기울입니다.';
   },
-  formula: (family, params = {}) => `X(ω)=∫ x(t) e^(−jωt) dt; x(t)=(1/2π)∫ X(ω) e^(jωt) dω; X(f)=X(2πf); ${(isOmega(params.axis ?? 0) ? FORMULAS_W : FORMULAS_F)[family]}`,
+  formula: (family, params = {}) => `X(ω)=∫ x(t) e^(−jωt) dt; x(t)=(1/2π)∫ X(ω) e^(jωt) dω; X(f)=X(ω), ω=2πf; ${(isOmega(params.axis ?? 0) ? FORMULAS_W : FORMULAS_F)[family]}`,
   describe: ({ family, params }) => describeTransform(family, params),
 };

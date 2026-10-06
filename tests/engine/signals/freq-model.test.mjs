@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FREQ_FAMILIES, freqFrame, freqLesson, rcH, rlcH, rlcDamping, rlcResonance, steadyState, pulseCoefficient, trainOutputCoefficient,
-  trainOutput, trainInput, trainExact, trainPowers, pulseX, pulseOutput, describeFreq, INPUT_AMPLITUDE,
+  trainOutput, trainInput, trainExact, trainPowers, pulseX, pulseOutput, describeFreq, INPUT_AMPLITUDE, inputFromPlot,
 } from '../../../src/signals-freq-model.js';
 
 const near = (a, b, tol = 1e-9) => assert.ok(Math.abs(a - b) <= tol, `${a} versus ${b}`);
@@ -187,9 +187,10 @@ test('every example draws finite frames at the slider extremes with both axis co
   assert.throws(() => freqFrame('nope', {}));
 });
 
-test('axis toggle: omega mode labels the panes with omega and rad/s, Hz mode with f; H lesson defaults to omega, spectra to Hz', () => {
+test('axis toggle: omega mode labels the panes with omega and rad/s, Hz mode with f; all lessons default to Hz (Ex 4.45 is a Hz worked example)', () => {
   const rc = freqLesson.controls('rc', {});
-  assert.equal(rc.find((c) => c.key === 'axis').initial, 1);
+  assert.equal(rc.find((c) => c.key === 'axis').initial, 0);
+  assert.equal(freqLesson.controls('rlc', {}).find((c) => c.key === 'axis').initial, 0);
   assert.equal(freqLesson.controls('train', {}).find((c) => c.key === 'axis').initial, 0);
   const base = { fc: 80, fin: 20, scale: 0 };
   const omega = freqFrame('rc', { ...base, axis: 1 });
@@ -243,4 +244,39 @@ test('RLC steady-state formula: the input amplitude 5 and the evaluated frequenc
     assert.ok(text.includes('x=5cos(ωt+θ) ⇒ y=5|H(ω)|cos(ωt+θ+Θ(ω))'), family);
     assert.ok(!text.includes('|H(ω₀)|cos'), family);
   }
+});
+
+test('plot drag: a point on the plot axis becomes the input frequency in Hz, clamped and snapped to the slider grid (Hz, omega and log axes)', () => {
+  const rc = { fc: 80, fin: 20, axis: 0, scale: 0 };
+  assert.equal(inputFromPlot('rc', rc, 123.4), 125);
+  assert.equal(inputFromPlot('rc', rc, -123.4), 125, 'the plot is symmetric in f');
+  assert.equal(inputFromPlot('rc', rc, 1), 5, 'clamped to the slider minimum');
+  assert.equal(inputFromPlot('rc', rc, 9000), 500, 'clamped to the slider maximum');
+  // omega axis: the plot shows 2 pi f
+  assert.equal(inputFromPlot('rc', { ...rc, axis: 1 }, TAU * 100), 100);
+  // log scale: the plot axis holds log10 of the axis value
+  assert.equal(inputFromPlot('rc', { ...rc, scale: 1 }, Math.log10(200)), 200);
+  assert.equal(inputFromPlot('rc', { ...rc, axis: 1, scale: 1 }, Math.log10(TAU * 50)), 50);
+  assert.equal(inputFromPlot('rlc', { R: 2, w2: 26, fin: 0.5, axis: 0, scale: 0 }, 1.234), 1.25);
+  assert.equal(inputFromPlot('train', rc, 100), null, 'only the rc / rlc examples have an input frequency');
+  assert.equal(inputFromPlot('rc', rc, NaN), null);
+});
+
+test('frequency sliders keep Hz inside and relabel to omega (x 2 pi, rad/s) with the axis select; rc / rlc open on f [Hz]', () => {
+  for (const family of ['rc', 'rlc', 'train', 'pulse']) {
+    const hz = freqLesson.controls(family, { axis: 0 });
+    const omega = freqLesson.controls(family, { axis: 1 });
+    const fc = (list) => list.find((c) => c.key === 'fc' || c.key === 'fin');
+    assert.equal(fc(hz).unit, 'Hz');
+    assert.equal(fc(omega).unit, 'rad/s');
+    assert.equal(fc(hz).displayScale, 1);
+    near(fc(omega).displayScale, TAU, 1e-12);
+    assert.match(fc(hz).label, /^f/);
+    assert.match(fc(omega).label, /^ω/);
+    // the stored range and initial value do not change with the axis
+    for (const [a, b] of hz.map((c, i) => [c, omega[i]])) assert.deepEqual([a.key, a.min, a.max, a.step, a.initial], [b.key, b.min, b.max, b.step, b.initial]);
+  }
+  assert.equal(freqLesson.controls('rc', { axis: 1 })[0].label, 'ω_c 차단');
+  assert.equal(freqLesson.controls('rc', { axis: 0 })[1].label, 'f 입력 주파수');
+  assert.equal(freqLesson.controls('rc', {}).find((c) => c.key === 'fin').initial, 20);
 });

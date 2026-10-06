@@ -1,6 +1,6 @@
 // Lesson 2 view: one SVG, three stacked panes sharing the time axis:
 // (1) x(tau) with the flipped, shifted h(t-tau); (2) their product (area shaded); (3) y accumulating up to the cursor.
-import { createLegend, createPane, createSurface, svgEl } from './signals-plot.js';
+import { createLegend, createPane, createSurface, phoneBudget, svgEl } from './signals-plot.js';
 import { clamp, formatNumber, jumpList, niceTicks, sampleCurve } from './signals-util.js';
 import {
   cachedSetup, continuousFrame, convolutionFrame, flippedImpulse, outputCurve, isCustomFamily,
@@ -86,9 +86,9 @@ export function createConvolutionView({ doc, parent, emit }) {
 
   function layout(width) {
     const compact = width < 640;
-    const paneH = compact ? 92 : 132;
     const gap = 42;
     const top = 22;
+    const paneH = compact ? Math.max(60, Math.min(92, Math.floor((phoneBudget(doc) - top - gap * 2 - 28) / 3))) : 132;
     const height = top + paneH * 3 + gap * 2 + 28;
     surface.resize(width, height);
     panes.forEach((pane, i) => pane.setBox(46, top + i * (paneH + gap), width - 46 - 14, paneH));

@@ -240,3 +240,27 @@ test('every example draws finite frames at initial / min / max sliders and has a
   }
   assert.throws(() => ltiFrame('nope', {}));
 });
+
+test('forced response: the input amplitude A is a slider (0..20, default 20 = Ex 2.16); A = 0 leaves only the natural response, tau = 1/a is read out', () => {
+  const sliders = ltiLesson.controls('forced', {});
+  const A = sliders.find((c) => c.key === 'A');
+  assert.deepEqual([A.min, A.max, A.initial], [0, 20, 20]);
+  const base = forcedResponse({ a: 4, omega: 8, y0: 5 }); // no A: the lecture's 20
+  const same = forcedResponse({ a: 4, omega: 8, y0: 5, A: 20 });
+  for (const t of [0, 0.3, 1.1]) near(base.total(t), same.total(t));
+  const half = forcedResponse({ a: 4, omega: 8, y0: 5, A: 10 });
+  near(half.k1, 0.5);
+  near(half.k2, 1);
+  near(half.c, 4.5);
+  const none = forcedResponse({ a: 4, omega: 8, y0: 5, A: 0 });
+  for (const t of [0, 0.25, 1, 2.9]) {
+    near(none.steady(t), 0);
+    near(none.total(t), 5 * Math.exp(-4 * t)); // y(0) e^(-a t)
+  }
+  const text = ltiLesson.describe({ family: 'forced', params: { a: 4, omega: 8, y0: 5, A: 0 } });
+  assert.match(text, /τ=1\/a=0\.25 s/);
+  assert.match(text, /A=0: 입력이 없어 자연응답만/);
+  assert.doesNotMatch(ltiLesson.describe({ family: 'forced', params: { a: 4, omega: 8, y0: 5 } }), /A=0/);
+  const frame = ltiFrame('forced', { a: 4, omega: 8, y0: 5, A: 0 });
+  assert.deepEqual(frame.panes[1].y, [-1, 1], 'the flat steady-state pane keeps a readable axis');
+});

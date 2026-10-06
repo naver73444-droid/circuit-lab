@@ -2,7 +2,7 @@
 // a periodic pulse train through the RC low-pass (harmonic by harmonic, d_k = c_k H(k f0)) and a pulse input (Y = H X).
 // Course convention: H is defined in w [rad/s] (w_c = 1/RC), figures often use f [Hz] (f_c = w_c / 2 pi).
 import { breakWraps, formatNumber, jumpList, niceTicks, sampleCurve } from './signals-util.js';
-import { choiceControl, freqAxisControl, isOmega, toAxis } from './signals-axis.js';
+import { choiceControl, freqAxisControl, freqSlider, fromAxis, isOmega, toAxis } from './signals-axis.js';
 
 export const FREQ_FAMILIES = [
   { value: 'rc', label: 'RC 저역통과 · 정현파 응답 (Ex 4.45)' },
@@ -271,21 +271,34 @@ export function freqFrame(family, params) {
 // ---------------------------------------------------------------- lesson
 const slider = (key, label, min, max, step, initial, unit = '') => ({ key, label, min, max, step, initial, unit });
 
-function freqControls(family) {
+// The stored values are in Hz; the axis select (default f [Hz], the Hz worked-example convention of Ex 4.45) relabels the frequency sliders to w.
+const FIN_RANGE = { rc: [5, 500, 5], rlc: [0.05, 4, 0.05] };
+function freqControls(family, params = {}) {
   if (family === 'rc') {
     return [
-      slider('fc', 'f_c 차단', 10, 200, 5, 80, 'Hz'), slider('fin', 'f 입력 주파수', 5, 500, 5, 20, 'Hz'), slider('phi', 'θ 입력 위상', -3.1, 3.1, 0.1, 0, 'rad'),
-      freqAxisControl(1), choiceControl('scale', '축 척도', SCALE_OPTIONS, 0),
+      freqSlider('fc', ['f_c', 'ω_c'], '차단', 10, 200, 5, 80, params), freqSlider('fin', ['f', 'ω'], '입력 주파수', ...FIN_RANGE.rc, 20, params),
+      slider('phi', 'θ 입력 위상', -3.1, 3.1, 0.1, 0, 'rad'), freqAxisControl(0), choiceControl('scale', '축 척도', SCALE_OPTIONS, 0),
     ];
   }
   if (family === 'rlc') {
     return [
-      slider('R', 'R 저항', 0.2, 14, 0.2, 2, 'Ω'), slider('w2', 'ω₀²=1/LC', 1, 50, 1, 26, 'rad²/s²'), slider('fin', 'f 입력 주파수', 0.05, 4, 0.05, 0.5, 'Hz'),
-      freqAxisControl(1), choiceControl('scale', '축 척도', SCALE_OPTIONS, 0),
+      slider('R', 'R 저항', 0.2, 14, 0.2, 2, 'Ω'), slider('w2', 'ω₀²=1/LC', 1, 50, 1, 26, 'rad²/s²'), freqSlider('fin', ['f', 'ω'], '입력 주파수', ...FIN_RANGE.rlc, 0.5, params),
+      freqAxisControl(0), choiceControl('scale', '축 척도', SCALE_OPTIONS, 0),
     ];
   }
-  if (family === 'train') return [slider('N', 'N 조화 수', 1, 40, 1, 20, ''), slider('d', 'd 듀티', 0.05, 0.95, 0.05, 0.2), slider('fc', 'f_c 차단', 10, 200, 5, 80, 'Hz'), freqAxisControl(0)];
-  return [slider('fc', 'f_c 차단', 0.1, 100, 0.1, 0.5, 'Hz'), freqAxisControl(0)];
+  if (family === 'train') return [slider('N', 'N 조화 수', 1, 40, 1, 20, ''), slider('d', 'd 듀티', 0.05, 0.95, 0.05, 0.2), freqSlider('fc', ['f_c', 'ω_c'], '차단', 10, 200, 5, 80, params), freqAxisControl(0)];
+  return [freqSlider('fc', ['f_c', 'ω_c'], '차단', 0.1, 100, 0.1, 0.5, params), freqAxisControl(0)];
+}
+
+// Dragging the |H| / angle H plots: a point on the plot axis (a linear value or log10 of it) becomes the input frequency [Hz],
+// clamped to the slider range and snapped to its step (so the slider and the plot agree).
+export function inputFromPlot(family, params, x) {
+  const spec = freqControls(family, params).find((c) => c.key === 'fin');
+  if (!spec || !Number.isFinite(x)) return null;
+  const onAxis = params.scale === 1 ? 10 ** x : x;
+  const hz = Math.abs(fromAxis(onAxis, params.axis ?? 0));
+  const snapped = Math.round(hz / spec.step) * spec.step;
+  return Number(Math.min(spec.max, Math.max(spec.min, snapped)).toFixed(6));
 }
 
 export function describeFreq(family, p) {
@@ -315,7 +328,7 @@ export const freqLesson = {
   scrub: false,
   describe: ({ family, params }) => describeFreq(family, params),
   read(family) {
-    if (family === 'rc' || family === 'rlc') return 'H(ω)=Y/X. 정상상태에서 입력 cos은 크기 |H|배, 위상 Θ만큼 밀려 나옵니다. 입력 주파수를 끌어 점이 곡선 위를 움직이게 해 보세요.';
+    if (family === 'rc' || family === 'rlc') return 'H(ω)=Y/X. 정상상태에서 입력 cos은 크기 |H|배, 위상 Θ만큼 밀려 나옵니다. |H|·∠H 그래프를 끌어(또는 ←/→) 입력 주파수 점이 곡선 위를 움직이게 해 보세요.';
     if (family === 'train') return '주기 입력은 조화마다 c_k H(kf₀)로 곱해집니다. 고주파 조화가 깎여 모서리가 둥글어지고 지수 충·방전 모양이 됩니다.';
     return '비주기 입력은 Y(ω)=H(ω)X(ω)입니다. 크기는 곱, 위상은 합이며 f_c를 낮출수록 펄스 응답이 지수적으로 퍼집니다.';
   },

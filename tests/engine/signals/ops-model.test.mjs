@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   OPS_FAMILIES, opsFrame, opsLesson, ex11, ex12x1, ex12x2, ampOp, sumOp, prodOp, pieceFormulas, evenPart, oddPart, pulseAt, expRight, evenOddEnergy,
-  energyPower, runningPower, runningEnergy, trainPower, deltaApprox, stepApprox, rampApprox, idealStep, idealRamp, dtChain, dtSinusoid, EX11,
+  energyPower, runningPower, runningEnergy, trainPower, sinePeak, deltaApprox, stepApprox, rampApprox, idealStep, idealRamp, dtChain, dtSinusoid, EX11,
 } from '../../../src/signals-ops-model.js';
 import { controlDefaults } from '../../../src/signals-util.js';
 
@@ -113,13 +113,22 @@ test('energy and power: sinusoid A^2/2, A e^{-at}u(t): A^2/(2a), A u(t): A^2/2, 
   // numerical checks of the running quantities
   const p = { A: 2, f0: 1, theta: 0.7 };
   const w = 2 * Math.PI * p.f0;
-  for (const T of [0.3, 1.25, 4]) near(runningPower('en-sin', p, T), integrate((t) => (p.A * Math.sin(w * t + p.theta)) ** 2, -T, T, 100000) / (2 * T), 1e-6);
+  for (const T of [0.3, 1.25, 4]) near(runningPower('en-sin', p, T), integrate((t) => (p.A * Math.sin(w * t + p.theta)) ** 2, -T / 2, T / 2, 100000) / T, 1e-6);
   near(runningPower('en-sin', p, 400), 2, 5e-3);
   const q = { A: 2, alpha: 1 };
   near(runningEnergy(q, 3), integrate((t) => (q.A * Math.exp(-q.alpha * t)) ** 2, 0, 3, 100000), 1e-6);
   near(runningEnergy(q, 60), 2, 1e-9);
   const tr = { A: 2, d: 0.3 };
-  for (const T of [0.2, 1, 2.65, 4]) near(trainPower(tr, T), integrate((t) => ((t % 1) < tr.d ? 4 : 0), 0, T, 400000) / T, 2e-3);
+  // one lecture window for both power examples: P_T = (1/T) integral over [-T/2, T/2] (length T)
+  for (const T of [0.2, 0.55, 1, 2.65, 4]) near(trainPower(tr, T), integrate((t) => ((((t % 1) + 1) % 1) < tr.d ? 4 : 0), -T / 2, T / 2, 400000) / T, 2e-3);
+  near(trainPower(tr, 200), energyPower('en-train', tr).power, 1e-3); // the limit is A^2 d
+  near(runningPower('en-sin', p, 4000), energyPower('en-sin', p).power, 1e-3); // the limit is A^2/2
+  assert.ok(opsLesson.formula('sum').includes('B x₂') && opsLesson.formula('prod').includes('B x₂'), 'the formula line carries the B of the item name x₁+B·x₂');
+  const peak = sinePeak({ A: 2, f0: 1, theta: 0.7 });
+  near(2 * Math.sin(2 * Math.PI * peak.t + 0.7), 2, 1e-9);
+  assert.ok(peak.t >= 0 && peak.t < 1);
+  near(peak.phasorAngle, 0.7 - Math.PI / 2);
+  assert.match(opsLesson.describe({ family: 'en-sin', params: { A: 2, f0: 1, theta: 0.7 } }), /첫 양의 피크 t=\(π\/2−θ\)\/\(2πf₀\)=0\.1386 s, 페이저\(cos 기준\) X=A∠/);
   assert.match(opsLesson.describe({ family: 'en-exp', params: { A: 2, alpha: 0.5 } }), /E=4, P=0 → 에너지 신호/);
   assert.match(opsLesson.describe({ family: 'en-sin', params: { A: 2, f0: 1, theta: 0 } }), /E=∞, P=2/);
 });
