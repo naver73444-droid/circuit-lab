@@ -16,6 +16,7 @@ import { CIRCUIT_LIMITS, buildTopology, componentDefaults, endpointKey, pinCount
 import { UnionFind } from "./union-find.js";
 import { GRID_SIZE, circuitGeometryVersion, pinPosition, snapPoint } from "./circuit-geometry.js";
 import { createIdAllocator } from "./id-allocator.js";
+import { endpointPairKey, referenceForCopy } from "./circuit-edit.js";
 import { convertDeltaToY, convertYToDelta, parseResistance, resistanceCircuitText, resistanceText } from "./y-delta-model.js";
 
 const refOf = (component) => component?.props?.ref ?? component?.id;
@@ -75,7 +76,7 @@ export function detectYDelta(circuit, resistorIds) {
   if (commons.length === 1) {
     const center = commons[0];
     const outer = nets.map((pair) => (pair[0] === center ? pair[1] : pair[0]));
-    if (new Set(outer).size !== 3) return none("두 저항의 바깥쪽 끝이 같은 노드입니다. Y가 아닙니다.");
+    if (new Set(outer).size !== 3) return none("두 저항이 같은 두 노드 사이에 병렬입니다. Y도 Δ도 아닙니다.");
     const selected = new Set(parts.map((part) => part.id));
     const crowded = [];
     for (const component of circuit.components) {
@@ -89,8 +90,7 @@ export function detectYDelta(circuit, resistorIds) {
     };
   }
   if (allNets.size === 3) {
-    const pairKeys = nets.map((pair) => [...pair].sort().join("|"));
-    if (new Set(pairKeys).size !== 3) return none("두 저항이 같은 두 노드 사이에 있습니다. 삼각형(Δ)이 아닙니다.");
+    // Three nets with every pair of resistors sharing at most one net (a shared pair of nets would make a Y or the parallel case above).
     const shared = nets[0].find((net) => nets[1].includes(net));
     const a = nets[0].find((net) => net !== shared);
     const c = nets[1].find((net) => net !== shared);
@@ -245,18 +245,16 @@ function detachPins(work, pins, allocator, reserved, removedWires, repointed) {
   return anchor;
 }
 
-const wirePairKey = (wire) => [endpointKey(wire.a), endpointKey(wire.b)].sort().join("|");
-
 /**
  * Re-pointing wires onto a shared anchor can leave two wires with the same two endpoints (in either order) or a wire from an endpoint to itself.
  * Of the re-pointed wires (`repointed`), such redundant ones are dropped; wires the user drew are never touched. Mutates `work`.
  */
 function dropDuplicateWires(work, repointed) {
-  const seen = new Set(work.wires.filter((wire) => !repointed.has(wire.id)).map(wirePairKey));
+  const seen = new Set(work.wires.filter((wire) => !repointed.has(wire.id)).map((wire) => endpointPairKey(wire.a, wire.b)));
   work.wires = work.wires.filter((wire) => {
     if (!repointed.has(wire.id)) return true;
     if (endpointKey(wire.a) === endpointKey(wire.b)) return false;
-    const key = wirePairKey(wire);
+    const key = endpointPairKey(wire.a, wire.b);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -272,45 +270,46 @@ function structureRejection(circuit) {
   return null;
 }
 
-function maxReferenceIndex(circuit, prefix) {
-  let top = 0;
-  const pattern = new RegExp(`^${prefix}(\\d+)$`);
-  for (const component of circuit.components) {
-    const match = pattern.exec(refOf(component) ?? "");
-    if (match) top = Math.max(top, Number(match[1]));
-  }
-  return top;
-}
-
+/**
+ * Probes after the rewrite: { probes, dropped }. A voltage probe on a removed outer pin moves to its anchor (colour and position in the list
+ * are kept); probes that only existed on removed parts (centre, junction, resistor current) are dropped, and so is a moved probe whose new
+ * key an existing probe already has — the ORIGINAL (its colour, its place) stays. `dropped` counts every probe that is gone.
+ */
 function retargetProbes(probes, circuit, removedIds, keptWireIds, removedJunctionIds, anchorOfPin) {
   const byId = new Map(circuit.components.map((component) => [component.id, component]));
-  const result = [];
-  const keys = new Set();
-  for (const probe of probes) {
-    let next = probe;
+  const planned = probes.map((probe) => {
     if (probe.componentId !== undefined && removedIds.has(probe.componentId)) {
       const anchor = probe.kind === "voltage" ? anchorOfPin.get(`${probe.componentId}:${probe.pin}`) : null;
-      if (!anchor) continue;
-      next = { ...probe, wireId: null };
+      if (!anchor) return { next: null };
+      const next = { ...probe, wireId: null };
       delete next.componentId; delete next.pin; delete next.junctionId;
       if (anchor.junctionId !== undefined) Object.assign(next, { key: `V:J:${anchor.junctionId}`, junctionId: anchor.junctionId, label: `V(${anchor.junctionId})` });
       else Object.assign(next, { key: `V:${anchor.componentId}:${anchor.pin}`, componentId: anchor.componentId, pin: anchor.pin, label: `V(${refOf(byId.get(anchor.componentId)) ?? anchor.componentId}.${anchor.pin + 1})` });
-    } else if (probe.junctionId !== undefined && removedJunctionIds.has(probe.junctionId)) continue;
-    else if (probe.wireId && !keptWireIds.has(probe.wireId)) next = { ...probe, wireId: null };
-    if (keys.has(next.key)) continue;
+      return { next, moved: true };
+    }
+    if (probe.junctionId !== undefined && removedJunctionIds.has(probe.junctionId)) return { next: null };
+    return { next: probe.wireId && !keptWireIds.has(probe.wireId) ? { ...probe, wireId: null } : probe };
+  });
+  const original = new Set(planned.filter((entry) => entry.next && !entry.moved).map((entry) => entry.next.key));
+  const keys = new Set();
+  const result = [];
+  for (const { next, moved } of planned) {
+    if (!next || (moved && original.has(next.key)) || keys.has(next.key)) continue;
     keys.add(next.key);
     result.push(next);
   }
-  return result;
+  return { probes: result, dropped: probes.length - result.length };
 }
 
 /**
  * Rewrite the Y or Δ formed by `resistorIds` into the other form. The input circuit is not modified.
- * Returns { ok: true, circuit, probes, report } where report = { kind: "Y→Δ"|"Δ→Y", removed, added, names, values, texts, message, selection }.
+ * Returns { ok: true, circuit, probes, report } where report = { kind: "Y→Δ"|"Δ→Y", removed, added, names, values, texts, message, selection, droppedProbes, anchors }
+ * (`anchors`: [{ from: { componentId, pin }, to: endpoint }], where each removed pin's net is attached now — see retargetPortEndpoint).
  * Throws RangeError (Korean reason) when the three resistors are not a convertible Y or Δ. When the rewrite itself would not be a valid circuit (it would
  * exceed CIRCUIT_LIMITS, ...) it returns { ok: false, reason } (Korean) instead of a circuit, so the editor can refuse before it mutates anything.
  * `allocator` (id-allocator.js) keeps the new ids unique for the whole project; without one the ids continue after the circuit's own.
- * New reference labels continue after the highest R number in the circuit (the removed R1…R3 are not reused for different values).
+ * New reference labels follow the placement rule (circuit-edit referenceForCopy): the number of the new part's id, the next free one when taken. The
+ * labels of the removed parts count as taken, so R1…R3 are not reused for different values.
  */
 export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = createIdAllocator(), probes = [] } = {}) {
   const detected = detectYDelta(circuit, resistorIds);
@@ -365,10 +364,11 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
   const home = average(detected.resistors.map((id) => byId.get(id)));
   const anchorPoints = anchors.map((anchor) => endpointPosition(work, anchor));
   const added = [];
-  const refStart = maxReferenceIndex(circuit, "R");
+  const usedRefs = new Set(circuit.components.map(refOf).filter((ref) => typeof ref === "string"));
   const newResistor = (index, center, from, to) => {
     const id = allocator.next("R", reserved.components);
-    return { id, type: "R", x: center.x, y: center.y, rotation: rotationFor(from, to), props: { ...componentDefaults("R", refStart + index + 1), ref: `R${refStart + index + 1}`, value: resistanceCircuitText(values[names[index]]) } };
+    const ref = referenceForCopy("R", "", id, usedRefs);
+    return { id, type: "R", x: center.x, y: center.y, rotation: rotationFor(from, to), props: { ...componentDefaults("R", 1), ref, value: resistanceCircuitText(values[names[index]]) } };
   };
   const connect = (component, pin, end) => work.wires.push({ id: allocator.next("W", reserved.wires), a: { componentId: component.id, pin }, b: structuredClone(end), waypoints: [] });
   if (detected.kind === "Y") {
@@ -398,10 +398,30 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
 
   const kind = detected.kind === "Y" ? "Y→Δ" : "Δ→Y";
   const texts = Object.fromEntries(names.map((name) => [name, resistanceText(values[name])]));
+  const kept = retargetProbes(probes, circuit, removedIds, new Set(work.wires.map((item) => item.id)), removedJunctions, anchorOfPin);
+  const pinAnchors = [...anchorOfPin].map(([key, to]) => {
+    const split = key.lastIndexOf(":");
+    return { from: { componentId: key.slice(0, split), pin: Number(key.slice(split + 1)) }, to: structuredClone(to) };
+  });
+  const dropNote = kept.dropped ? ` · 프로브 ${kept.dropped}개 제거` : "";
   return {
     ok: true,
     circuit: work,
-    probes: retargetProbes(probes, circuit, removedIds, new Set(work.wires.map((item) => item.id)), removedJunctions, anchorOfPin),
-    report: { kind, removed: [...removedIds], added, names, values, texts, message: `${kind} 변환: ${names.map((name) => `${name}=${texts[name]}`).join(", ")}`, selection: added.map((id) => ({ kind: "component", id })) },
+    probes: kept.probes,
+    report: {
+      kind, removed: [...removedIds], added, names, values, texts, droppedProbes: kept.dropped, anchors: pinAnchors,
+      message: `${kind} 변환: ${names.map((name) => `${name}=${texts[name]}`).join(", ")}${dropNote}`,
+      selection: added.map((id) => ({ kind: "component", id })),
+    },
   };
+}
+
+/**
+ * Where an analysis endpoint (DC port end) goes after a conversion: a pin of a removed resistor follows the anchor its net was attached to
+ * (the same one a probe moves to), null when that pin had none (the centre); anything else is unchanged. `report` is convertYDeltaInCircuit's.
+ */
+export function retargetPortEndpoint(endpoint, report) {
+  if (endpoint?.componentId === undefined || !report.removed.includes(endpoint.componentId)) return endpoint;
+  const hit = report.anchors.find((anchor) => anchor.from.componentId === endpoint.componentId && anchor.from.pin === endpoint.pin);
+  return hit ? structuredClone(hit.to) : null;
 }

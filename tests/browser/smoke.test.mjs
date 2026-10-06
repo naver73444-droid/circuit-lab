@@ -3376,4 +3376,52 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal(await ev(`document.querySelector('[data-ydelta-value="RAB"]').textContent`), "3 kΩ");
     assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true);
   });
+
+  test("Y–Δ course tool: units other than Ω are refused, sliders speak their value, the read line is not a live region, a refused slider step puts the knob back", async () => {
+    await navigate("/");
+    await click("#circuit-course-workspace-tab");
+    await until(`${L}.getCircuitCourseState()?.active === true`, "the circuit course");
+    await click('[data-circuit-course-tool="y-delta"]');
+    const attr = (selector, name) => ev(`document.querySelector('${selector}').getAttribute("${name}")`);
+    assert.equal(await attr('[data-ydelta-slider="0"]', "aria-valuetext"), "1 kΩ", "the slider says its resistance, not 0..1000");
+    assert.equal(await attr("[data-ydelta-read]", "aria-live"), null, "no live region that chatters while a slider is dragged");
+    assert.equal(await attr("[data-ydelta-read]", "role"), null);
+    await ev(`(() => { const slider = document.querySelector('[data-ydelta-slider="1"]'); slider.value = 500; slider.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    assert.match(await attr('[data-ydelta-slider="1"]', "aria-valuetext"), /^[\d.]+ [kM]?Ω$/, "and it follows the knob");
+
+    // A text unit that is not a resistance is refused with the reason; the network keeps its last valid state.
+    const lastGood = await ev(`${L}.getCircuitCourseState().yDelta`);
+    for (const text of ["5V", "10uF", "1kHz"]) {
+      await typeInto('[data-ydelta-text="0"]', text);
+      assert.equal(await attr('[data-ydelta-text="0"]', "aria-invalid"), "true", text);
+      assert.match(await ev(`document.querySelector('[data-ydelta-error="0"]').textContent`), /단위/, text);
+    }
+    assert.deepEqual((await ev(`${L}.getCircuitCourseState().yDelta`)).inputs, lastGood.inputs, "nothing changed");
+    await typeInto('[data-ydelta-text="0"]', "330Ω");
+    assert.equal(await attr('[data-ydelta-text="0"]', "aria-invalid"), null, "Ω is accepted");
+    assert.equal((await ev(`${L}.getCircuitCourseState().yDelta`)).inputs.RA, 330);
+
+    // A slider step whose conversion overflows is refused and the knob goes back to the value in use.
+    await typeInto('[data-ydelta-text="0"]', "1k");
+    await typeInto('[data-ydelta-text="1"]', "1e300");
+    await typeInto('[data-ydelta-text="2"]', "1e-5");
+    assert.equal(await attr('[data-ydelta-text="2"]', "aria-invalid"), null, "that network is still valid");
+    const knob = await ev(`document.querySelector('[data-ydelta-slider="0"]').value`);
+    await ev(`(() => { const slider = document.querySelector('[data-ydelta-slider="0"]'); slider.value = slider.max; slider.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+    assert.equal(await ev(`document.querySelector('[data-ydelta-slider="0"]').value`), knob, "the knob is back where the state is");
+    assert.match(await ev(`document.querySelector('[data-ydelta-error="0"]').textContent`), /[가-힣]/, "and the field says why");
+    assert.equal((await ev(`${L}.getCircuitCourseState().yDelta`)).inputs.RA, 1e3);
+  });
+
+  for (const width of [900, 1000, 1100]) {
+    test(`Y–Δ course tool at ${width}px: the figure's value text is at least 11px on screen`, async () => {
+      await navigate("/", { width, height: 900 });
+      await click("#circuit-course-workspace-tab");
+      await until(`${L}.getCircuitCourseState()?.active === true`, "the circuit course");
+      await click('[data-circuit-course-tool="y-delta"]');
+      const metrics = await ev(`(() => { const svg = document.querySelector(".ydelta-svg"); const scale = svg.getScreenCTM().a; const size = (selector) => parseFloat(getComputedStyle(document.querySelector(selector)).fontSize) * scale; return { scale, width: svg.getBoundingClientRect().width, layout: svg.dataset.layout, value: size(".ydelta-value"), sub: size(".ydelta-sub"), corner: size(".ydelta-corner"), scroll: document.documentElement.scrollWidth <= innerWidth + 1 }; })()`);
+      assert.ok(metrics.value >= 11 && metrics.sub >= 9, JSON.stringify(metrics));
+      assert.equal(metrics.scroll, true, "no horizontal overflow");
+    });
+  }
 });

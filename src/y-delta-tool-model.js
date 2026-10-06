@@ -3,7 +3,7 @@
  * other network on every change: sliders are logarithmic (10 Ω … 10 MΩ), text fields take SI values ("4.7k", "2.2meg", "330Ω").
  * A text value that cannot be used leaves the last valid state untouched and says why.
  */
-import { convertDeltaToY, convertYToDelta, parseResistance, resistanceText } from "./y-delta-model.js";
+import { convertDeltaToY, convertYToDelta, parseResistance, parseResistanceInput, resistanceText } from "./y-delta-model.js";
 
 export const SLIDER_MIN_OHM = 10;
 export const SLIDER_MAX_OHM = 1e7;
@@ -35,13 +35,13 @@ export function createYDeltaToolState(direction = "toDelta") {
   return { direction, values: { ...DEFAULT_VALUES[direction] } };
 }
 
-/** Same network, the other way: this direction's results become the next inputs (six significant digits, so the text shown is the value used). */
+/** Same network, the other way: this direction's results become the next inputs, unrounded (only the display rounds, so toggling back loses nothing). */
 export function toggleDirection(state) {
   const outputs = evaluateTool(state).outputs;
   const direction = state.direction === "toDelta" ? "toY" : "toDelta";
   const keys = DIRECTIONS[direction].inputs;
   const values = {};
-  DIRECTIONS[state.direction].outputs.forEach((name, index) => { values[keys[index]] = Number(outputs[name].toPrecision(6)); });
+  DIRECTIONS[state.direction].outputs.forEach((name, index) => { values[keys[index]] = outputs[name]; });
   return { direction, values };
 }
 
@@ -53,7 +53,7 @@ export function withValue(state, key, resistance) {
 
 /** { ok: true, state } for usable text, { ok: false, reason } (Korean) otherwise. */
 export function withText(state, key, text) {
-  try { return { ok: true, state: withValue(state, key, parseResistance(text, key)) }; } catch (error) { return { ok: false, reason: error.message }; }
+  try { return { ok: true, state: withValue(state, key, parseResistanceInput(text, key)) }; } catch (error) { return { ok: false, reason: error.message }; }
 }
 
 const SIDES = { RA: "RBC", RB: "RCA", RC: "RAB", RAB: "RC", RBC: "RA", RCA: "RB" };

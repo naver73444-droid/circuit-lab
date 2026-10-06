@@ -4,7 +4,7 @@ import { allItems, clearSelection, selectedItems, setSelectionItems, setSingleSe
 import { moveGroup, movableItems, rotateGroup } from "./group-edit.js";
 import { allocatorFor } from "./id-allocator.js";
 import { NUDGE_IDLE_MS } from "./editor-shortcuts.js";
-import { convertYDeltaInCircuit, selectedResistorIds } from "./y-delta-circuit.js";
+import { convertYDeltaInCircuit, retargetPortEndpoint, selectedResistorIds } from "./y-delta-circuit.js";
 import { CLIPBOARD_FORMAT, additionLimitReason, buildClipboard, clipboardLimitReason, controlsNeedingTarget, parseClipboardText, pasteClipboard, pasteRejection, serializeClipboard } from "./clipboard-model.js";
 
 /**
@@ -12,7 +12,7 @@ import { CLIPBOARD_FORMAT, additionLimitReason, buildClipboard, clipboardLimitRe
  * through session.mutate()/mutateGrouped(), so each is ONE history entry no matter how many items it touches. editor-input wires them
  * to keys, buttons and the inspector's group actions.
  */
-export function createSelectionCommands({ state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive, notify = () => {} }) {
+export function createSelectionCommands({ state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive, notify = () => {}, reconcileAnalysis = () => {} }) {
   /** Delete every selected part, wire and junction as ONE history entry. */
   function deleteSelection() {
     commitActiveDrag();
@@ -77,9 +77,25 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
     setStatus(`${cloned.components.length}개 부품 복제 완료`, "ready");
   }
 
+  /** Port ends on removed pins follow their anchor (none → cleared); a port that moved no longer has a valid result. */
+  function retargetPort(report) {
+    const port = state.port;
+    if (!port) return;
+    let moved = false;
+    for (const key of ["p", "n"]) {
+      const next = retargetPortEndpoint(port[key], report);
+      if (next === port[key]) continue;
+      port[key] = next;
+      moved = true;
+    }
+    if (moved) Object.assign(port, { mode: null, result: null, error: null, stale: false });
+  }
+
   /**
    * Y→Δ / Δ→Y for exactly three selected resistors, as ONE history entry. Anything else selected is ignored (no-op); a recognised but
    * unsupported topology says why. The three new resistors become the selection; the result turns stale like any circuit edit.
+   * DC-port ends that sat on a removed resistor pin move to the net's anchor (where a probe would go), and the port loads / sweep part that
+   * were removed are dropped (analysis reconcile), so no analysis setting is left pointing at a part that no longer exists.
    */
   function convertYDelta() {
     commitActiveDrag();
@@ -102,6 +118,8 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
     mutate(() => {
       state.circuit = outcome.circuit;
       state.probes = outcome.probes;
+      retargetPort(outcome.report);
+      reconcileAnalysis();
       setSelectionItems(state, outcome.report.selection);
     });
     setStatus(outcome.report.message, "ready");

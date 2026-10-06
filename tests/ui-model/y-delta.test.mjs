@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTopology, parseValue, simulateDC, validateCircuitStructure } from "../../src/circuit-engine.js";
-import { convertDeltaToY, convertYToDelta, parseResistance, resistanceCircuitText, resistanceText, Y_DELTA_FORMULAS } from "../../src/y-delta-model.js";
+import { convertDeltaToY, convertYToDelta, parseResistance, parseResistanceInput, resistanceCircuitText, resistanceText, Y_DELTA_FORMULAS } from "../../src/y-delta-model.js";
 import { convertYDeltaInCircuit, detectYDelta, layoutDeltaEdges, layoutStarArms, selectedResistorIds, yDeltaCommandState } from "../../src/y-delta-circuit.js";
 import { createIdAllocator } from "../../src/id-allocator.js";
 import { cloneExample } from "../../src/examples.js";
@@ -10,6 +10,11 @@ import { parseCourseMath } from "../../src/course-math-view.js";
 import { formatCanvasValueLabel } from "../../src/canvas-renderer.js";
 import { DIRECTIONS, SLIDER_STEPS, attempt, createYDeltaToolState, evaluateTool, resistanceToSlider, sliderToResistance, toggleDirection, withText, withValue } from "../../src/y-delta-tool-model.js";
 import { shortcutFor } from "../../src/editor-shortcuts.js";
+import { createSelectionCommands } from "../../src/selection-commands.js";
+import { createEditorSession, createEditorState } from "../../src/editor-session.js";
+import { createAnalysisRunner, createRunState } from "../../src/analysis-runner.js";
+import { setSelectionItems } from "../../src/selection-model.js";
+import { endpointPairKey, wireJoins } from "../../src/circuit-edit.js";
 
 const relative = (a, b) => Math.abs(a - b) / Math.max(Math.abs(b), 1e-300);
 
@@ -450,7 +455,7 @@ test("도구 상태: 잘못된 입력은 한국어 이유와 함께 거부하고
   assert.deepEqual(state.values, { RA: 1e3, RB: 2e3, RC: 3e3 }, "상태는 불변");
 });
 
-test("방향 전환은 같은 회로를 거꾸로 보여 준다(결과가 새 입력, 6자리)", () => {
+test("방향 전환은 같은 회로를 거꾸로 보여 준다(결과가 새 입력)", () => {
   const start = createYDeltaToolState();
   const forward = evaluateTool(start);
   const flipped = toggleDirection(start);
@@ -610,4 +615,170 @@ test("[7] 캔버스 값 라벨: 8자를 넘는 값은 유효숫자 5자리 이�
   assert.ok(relative(parseValue(stored), 11e3 / 3) < 1e-11);
   assert.ok(formatCanvasValueLabel(stored).length <= 8);
   assert.ok(relative(parseValue(formatCanvasValueLabel(stored)), 11e3 / 3) < 1e-4);
+});
+
+// ---- second-round review fixes ----------------------------------------------------------------------------------------------------
+
+/** selection-commands on a real editor session and the real analysis reconcile; the three resistors of yCircuit() are selected. */
+function commandHarness(circuit, { port = {}, sweepComponent = null, probes = [] } = {}) {
+  const state = { ...createEditorState(), ...createRunState(), inlineEdit: null, pointerOwnerId: null, pendingPin: null };
+  state.circuit = circuit;
+  state.probes = probes;
+  Object.assign(state.port, port);
+  state.sweep.form.componentId = sweepComponent;
+  const noop = () => {};
+  const session = createEditorSession({ state, inputDrafts: { retainComponents: noop }, synchronizeIntent: noop, markStale: noop, scheduleAutoRun: noop, renderAll: noop, resetProjectSession: noop, refreshProbeViews: noop, closeProbeContextMenu: noop, confirmDiscardDrafts: () => true });
+  const analysis = createAnalysisRunner({ state, elements: {}, workspace: {}, inputDrafts: {}, scopeView: {}, phasorView: {} });
+  const statuses = [], notices = [];
+  const commands = createSelectionCommands({
+    state, elements: { "inline-value-editor": { classList: { add() {} } } },
+    mutate: session.mutate, mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, commitActiveDrag() {},
+    setStatus: (text, kind) => statuses.push([text, kind]), renderSelection() {}, isCircuitUiActive: () => true,
+    notify: (text, kind) => notices.push([text, kind]), reconcileAnalysis: analysis.reconcileWithCircuit,
+  });
+  setSelectionItems(state, ["R1", "R2", "R3"].map((id) => ({ kind: "component", id })));
+  return { state, commands, statuses, notices };
+}
+
+test("[2차 1] 변환 명령: 지워진 핀의 포트 끝은 앵커로 옮겨 가고, 지워진 부하·스윕 대상은 정리된다", () => {
+  const port = { p: pinEnd("R1", 0), n: pinEnd("R2", 0), loadIds: ["R2", "R4", "R3"], result: { stale: false }, error: null };
+  const { state, commands } = commandHarness(yCircuit(), { port, sweepComponent: "R3" });
+  assert.equal(commands.convertYDelta(), true);
+  assert.deepEqual(state.port.p, pinEnd("V1", 0), "R1 바깥 핀의 노드는 V1.1로");
+  assert.deepEqual(state.port.n, pinEnd("R4", 0), "R2 바깥 핀의 노드는 R4.1로");
+  assert.deepEqual(state.port.loadIds, ["R4"], "지워진 R2·R3는 부하에서 빠진다");
+  assert.equal(state.sweep.form.componentId, null, "지워진 스윕 대상");
+  assert.equal(state.port.result, null, "끝점이 옮겨 갔으니 이전 포트 결과는 버린다");
+  for (const end of [state.port.p, state.port.n]) assert.ok(state.circuit.components.some((component) => component.id === end.componentId), "남아 있는 부품의 핀");
+});
+
+test("[2차 1] 변환 명령: 중심 핀의 포트 끝은 비워지고, 남는 부품을 가리키는 끝·부하·스윕은 그대로다", () => {
+  const port = { p: pinEnd("R1", 1), n: pinEnd("R4", 1), loadIds: ["R5"], result: null };
+  const { state, commands } = commandHarness(yCircuit(), { port, sweepComponent: "R5" });
+  commands.convertYDelta();
+  assert.equal(state.port.p, null);
+  assert.deepEqual(state.port.n, pinEnd("R4", 1));
+  assert.deepEqual(state.port.loadIds, ["R5"]);
+  assert.equal(state.sweep.form.componentId, "R5");
+});
+
+test("[2차 1] Δ→Y에서도 지워지는 변의 핀에 있던 포트 끝은 그 노드의 앵커로 옮겨 간다", () => {
+  const first = commandHarness(yCircuit());
+  first.commands.convertYDelta();
+  const circuit = first.state.circuit;
+  const delta = circuit.components.filter((component) => component.type === "R" && !["R4", "R5"].includes(component.id)).map((component) => component.id);
+  assert.equal(delta.length, 3);
+  const edgeId = delta[0];
+  const wired = circuit.wires.find((item) => item.a.componentId === edgeId || item.b.componentId === edgeId);
+  const edgePin = wired.a.componentId === edgeId ? wired.a : wired.b;
+  const anchor = wired.a.componentId === edgeId ? wired.b : wired.a;
+  const second = commandHarness(circuit, { port: { p: { ...edgePin }, n: null, loadIds: [], result: null } });
+  setSelectionItems(second.state, delta.map((id) => ({ kind: "component", id })));
+  assert.equal(second.commands.convertYDelta(), true);
+  assert.deepEqual(second.state.port.p, anchor, "변의 핀 → 그 핀에 이어져 있던 코너");
+});
+
+test("[2차 2] 사라진 프로브 수가 보고서와 안내 문구에 들어간다", () => {
+  const before = yCircuit();
+  const probes = [
+    { key: "V:R1:0", kind: "voltage", componentId: "R1", pin: 0, wireId: "W1", label: "V(R1.1)", color: "c1" },
+    { key: "V:R1:1", kind: "voltage", componentId: "R1", pin: 1, wireId: null, label: "V(R1.2)", color: "c2" },
+    { key: "I:R2", kind: "current", componentId: "R2", label: "I(R2)", color: "c3" },
+    { key: "V:J:J1", kind: "voltage", junctionId: "J1", wireId: null, label: "V(J1)", color: "c4" },
+    { key: "V:R4:0", kind: "voltage", componentId: "R4", pin: 0, wireId: "W5", label: "V(R4.1)", color: "c5" },
+  ];
+  const result = convertYDeltaInCircuit(before, ["R1", "R2", "R3"], { probes });
+  assert.equal(result.report.droppedProbes, 3, "중심 핀 전압, 접속점 전압, R2 전류");
+  assert.match(result.report.message, /프로브 3개 제거$/);
+  const clean = convertYDeltaInCircuit(before, ["R1", "R2", "R3"], { probes: probes.filter((probe) => ["V:R1:0", "V:R4:0"].includes(probe.key)) });
+  assert.equal(clean.report.droppedProbes, 0);
+  assert.doesNotMatch(clean.report.message, /프로브/);
+  const { commands, notices, statuses } = commandHarness(before, { probes });
+  commands.convertYDelta();
+  assert.match(notices.at(-1)[0], /프로브 3개 제거/);
+  assert.match(statuses.at(-1)[0], /프로브 3개 제거/);
+});
+
+test("[2차 2] 옮겨 간 프로브가 같은 키의 기존 프로브와 겹치면 기존(색·순서)이 남고 옮긴 쪽이 사라진다", () => {
+  const before = yCircuit();
+  const moving = { key: "V:R1:0", kind: "voltage", componentId: "R1", pin: 0, wireId: "W1", label: "V(R1.1)", color: "moved" };
+  const existing = { key: "V:V1:0", kind: "voltage", componentId: "V1", pin: 0, wireId: null, label: "V(V1.1)", color: "orig" };
+  for (const order of [[moving, existing], [existing, moving]]) {
+    const result = convertYDeltaInCircuit(before, ["R1", "R2", "R3"], { probes: order });
+    assert.deepEqual(result.probes.map((probe) => [probe.key, probe.color]), [["V:V1:0", "orig"]], order.map((probe) => probe.color).join(">"));
+    assert.equal(result.report.droppedProbes, 1);
+  }
+  const { commands, notices, state } = commandHarness(before, { probes: [moving, existing] });
+  commands.convertYDelta();
+  assert.match(notices.at(-1)[0], /프로브 1개 제거/);
+  assert.deepEqual(state.probes.map((probe) => probe.color), ["orig"]);
+});
+
+test("[2차 3] 같은 두 노드 사이에 병렬인 두 저항은 그 이유를 말한다", () => {
+  const circuit = circuitOf(
+    [resistor("R1", "1k", 100, 100), resistor("R2", "1k", 100, 200), resistor("R3", "1k", 300, 100), part("V1", "V", 400, 100, { mode: "DC", dc: "5" }), part("G1", "GND", 200, 400)],
+    [wire("W1", pinEnd("R1", 0), pinEnd("R2", 0)), wire("W2", pinEnd("R1", 1), pinEnd("R2", 1)), wire("W3", pinEnd("R3", 0), pinEnd("R1", 1)), wire("W4", pinEnd("R3", 1), pinEnd("V1", 0)), wire("W6", pinEnd("V1", 1), pinEnd("G1", 0)), wire("W5", pinEnd("R2", 0), pinEnd("G1", 0))],
+  );
+  const result = detectYDelta(circuit, ["R1", "R2", "R3"]);
+  assert.equal(result.kind, null);
+  assert.match(result.reason, /두 저항이 같은 두 노드 사이에 병렬입니다/);
+});
+
+test("[2차 4] 방향 전환은 결과 값을 반올림 없이 새 입력으로 쓴다 (왕복해도 값이 변하지 않는다)", () => {
+  const start = createYDeltaToolState();
+  const forward = evaluateTool(start);
+  const flipped = toggleDirection(start);
+  for (const key of ["RAB", "RBC", "RCA"]) assert.equal(flipped.values[key], forward.outputs[key], key);
+  assert.notEqual(flipped.values.RAB, Number(forward.outputs.RAB.toPrecision(6)), "11000/3은 6자리로 자르면 달라진다");
+  const back = toggleDirection(flipped).values;
+  for (const key of ["RA", "RB", "RC"]) assert.ok(relative(back[key], start.values[key]) < 1e-13, key);
+});
+
+test("[2차 5] 도구 입력은 단위 없음/ohm/Ω만 받고 V·F·Hz 등은 한국어 이유로 거부한다 (부품 값 입력은 그대로)", () => {
+  const state = createYDeltaToolState();
+  for (const text of ["5V", "10uF", "1kHz", "10F", "1H", "2 s", "3A", "1k V"]) {
+    const result = withText(state, "RA", text);
+    assert.equal(result.ok, false, text);
+    assert.match(result.reason, /[가-힣]/, text);
+  }
+  assert.match(withText(state, "RA", "5V").reason, /Ω/);
+  const accepted = { "1k": 1e3, "330Ω": 330, " 2.2 kΩ ": 2200, "4.7meg": 4.7e6, "10 ohm": 10, "100": 100, "1e3": 1e3, "3mohm": 0.003, "1Mohm": 1e6 };
+  for (const [text, value] of Object.entries(accepted)) {
+    const result = withText(state, "RA", text);
+    assert.equal(result.ok, true, text);
+    assert.equal(result.state.values.RA, value, text);
+  }
+  assert.equal(parseResistanceInput(470), 470);
+  assert.equal(parseResistance("5V"), 5, "회로 부품의 R 값 해석은 바꾸지 않았다");
+});
+
+test("[2차 7] 슬라이더로 결과가 넘치는 값은 attempt()가 막는다 (컨트롤러는 손잡이를 상태 값으로 되돌린다)", () => {
+  let state = createYDeltaToolState();
+  state = withText(state, "RB", "1e300").state;
+  state = withText(state, "RC", "1e-5").state;
+  assert.equal(attempt(state).ok, true);
+  const pushed = withValue(state, "RA", sliderToResistance(SLIDER_STEPS));
+  const tried = attempt(pushed);
+  assert.equal(tried.ok, false);
+  assert.match(tried.reason, /[가-힣]/);
+  assert.equal(state.values.RA, 1e3, "상태는 그대로");
+});
+
+test("[2차 11] 같은 두 끝점을 잇는 배선 판정은 한 규칙(방향 무관)이다", () => {
+  const a = pinEnd("R1", 1), b = { junctionId: "J1" };
+  assert.equal(endpointPairKey(a, b), endpointPairKey(b, a));
+  assert.notEqual(endpointPairKey(a, b), endpointPairKey(a, pinEnd("R1", 0)));
+  assert.equal(wireJoins(wire("W", a, b), b, a), true);
+  assert.equal(wireJoins(wire("W", a, b), a, b), true);
+  assert.equal(wireJoins(wire("W", a, b), a, pinEnd("R2", 0)), false);
+});
+
+test("[2차 11] 새 저항의 참조 이름은 배치 규칙(새 id의 번호, 쓰인 이름이면 다음 빈 번호)을 따른다", () => {
+  const before = yCircuit();
+  before.components.find((component) => component.id === "R4").props.ref = "R7";
+  const allocator = createIdAllocator();
+  allocator.observe(before.components, before.wires, before.junctions);
+  const result = convertYDeltaInCircuit(before, ["R1", "R2", "R3"], { allocator });
+  const refs = result.report.added.map((id) => result.circuit.components.find((component) => component.id === id).props.ref);
+  assert.deepEqual(refs, ["R6", "R8", "R9"], "R6, 이미 R7이 있으니 R8, 그다음 R9");
 });

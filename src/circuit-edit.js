@@ -7,6 +7,16 @@ export function endpointsEqual(first, second) {
   return endpointKey(first) === endpointKey(second);
 }
 
+/** The same key for the two endpoints of a wire in either order: two wires with equal keys connect the same two endpoints. */
+export function endpointPairKey(first, second) {
+  return [endpointKey(first), endpointKey(second)].sort().join("|");
+}
+
+/** Does this wire join exactly these two endpoints (in either order)? The one rule for "that wire already exists". */
+export function wireJoins(wire, first, second) {
+  return endpointPairKey(wire.a, wire.b) === endpointPairKey(first, second);
+}
+
 /** Does this wire endpoint still point at something that exists (a junction, or an in-range pin of a part)? */
 export function endpointExists(circuit, endpoint) {
   if (!endpoint || typeof endpoint !== "object") return false;

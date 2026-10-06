@@ -117,7 +117,7 @@ export function createYDeltaToolView(host) {
   const arrowAcross = svg("path", { d: "M366 190H434M418 174L434 190L418 206" }, arrow);
   const arrowDown = svg("path", { d: "M200 290V324M188 310L200 324L212 310", hidden: "" }, arrow);
 
-  const read = html("p", { class: "ydelta-read", role: "status", "aria-live": "polite", "data-ydelta-read": "" }, "", root);
+  const read = html("p", { class: "ydelta-read", "data-ydelta-read": "" }, "", root); // not a live region: it changes on every slider step, so a screen reader would chatter while dragging
   const math = html("div", { class: "ydelta-math", "data-ydelta-math": "" }, "", root);
 
   const details = html("details", { class: "ydelta-formulas", "data-ydelta-formulas": "" }, "", root);
@@ -177,6 +177,7 @@ export function createYDeltaToolView(host) {
         if (element) element.textContent = text;
       }
       read.textContent = evaluation.read;
+      delete read.dataset.state;
       desc.textContent = evaluation.read;
       const key = `${evaluation.direction}|${evaluation.math.general}|${evaluation.math.numeric}`;
       if (key !== mathKey) {
@@ -186,7 +187,18 @@ export function createYDeltaToolView(host) {
       }
     },
     setStacked(value) { stacked = Boolean(value); place(); },
-    showSlider(index, position) { rows[index].slider.value = String(position); },
+    /** Knob position and the value a screen reader says for it ("3 kΩ"; the position alone is a meaningless 0…1000). */
+    showSlider(index, position, valueText) {
+      rows[index].slider.value = String(position);
+      if (valueText !== undefined) rows[index].slider.setAttribute("aria-valuetext", valueText);
+    },
+    /** Only the spoken value: used while the knob itself is being dragged (moving it from here would fight the pointer). */
+    showSliderValueText(index, valueText) { rows[index].slider.setAttribute("aria-valuetext", valueText); },
+    /** A reason that is not about one field (e.g. the direction switch failed) goes to the read line until the next evaluation replaces it. */
+    showNotice(text) {
+      read.textContent = text;
+      read.dataset.state = "notice";
+    },
     showText(index, text) { rows[index].text.value = text; },
     showError(index, message) {
       rows[index].error.textContent = message ?? "";

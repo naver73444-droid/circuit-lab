@@ -108,7 +108,7 @@ const input = createEditorInput({
   renderCanvas: renderer.renderCanvas, renderOverlay: renderer.renderOverlay, scheduleDragUpdate: renderer.scheduleDragUpdate, cancelDragUpdate: renderer.cancelDragUpdate, scheduleOverlayRender: renderer.scheduleOverlayRender,
   updateCanvasView: renderer.updateCanvasView, endpointPosition: renderer.endpointPosition, pinPosition: renderer.pinPosition, routeForWireId: renderer.routeForWireId,
   renderInspector: inspector.renderInspector, openInlineEditor: inspector.openInlineEditor, closeInlineEditor: inspector.closeInlineEditor,
-  assignPortEndpoint: analysis.assignPortEndpoint, presentProbe: analysis.presentProbe,
+  assignPortEndpoint: analysis.assignPortEndpoint, presentProbe: analysis.presentProbe, reconcileAnalysis: analysis.reconcileWithCircuit,
 });
 const projectIO = createProjectIO({
   state, elements, resetProjectSession, setStatus,

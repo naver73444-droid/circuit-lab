@@ -1,5 +1,5 @@
 import { componentDefaults, pinCount } from "./circuit-engine.js";
-import { componentIdPrefix, endpointExists, endpointsEqual, retargetWireProbes, splitWireAtJunction } from "./circuit-edit.js";
+import { componentIdPrefix, endpointExists, endpointsEqual, retargetWireProbes, splitWireAtJunction, wireJoins } from "./circuit-edit.js";
 import { allocatorFor } from "./id-allocator.js";
 import { appendFixedWaypoint, snapPoint } from "./circuit-geometry.js";
 import { commitsActiveDrag, createClipboardShortcutGate, isTypingTarget, shortcutFor } from "./editor-shortcuts.js";
@@ -41,7 +41,7 @@ export function createInputState() {
 export function createEditorInput(deps) {
   const { state, elements, workspace, scopeView, mutate, mutateGrouped, closeEditGroup, snapshot, commitMove, undo, redo, runAnalysis, saveProject, hover, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe,
     renderCanvas, renderOverlay, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
-    renderAll, renderSelection, applySelection, setMarquee, scheduleDragUpdate, cancelDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
+    renderAll, renderSelection, applySelection, setMarquee, scheduleDragUpdate, cancelDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, reconcileAnalysis, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
   let canvasTouch = null;
   const notices = createCanvasNotices(elements["canvas-notices"]);
 
@@ -182,10 +182,7 @@ export function createEditorInput(deps) {
       }
       if (endpointsEqual(state.pendingPin, target)) { cancelPendingWire(); return; }
       if (!endpointExists(state.circuit, state.pendingPin) || !endpointExists(state.circuit, target)) { cancelPendingWire(); return; }
-      const duplicate = state.circuit.wires.some((wire) => {
-        return (endpointsEqual(wire.a, state.pendingPin) && endpointsEqual(wire.b, target))
-          || (endpointsEqual(wire.b, state.pendingPin) && endpointsEqual(wire.a, target));
-      });
+      const duplicate = state.circuit.wires.some((wire) => wireJoins(wire, state.pendingPin, target));
       const start = structuredClone(state.pendingPin);
       const waypoints = structuredClone(state.pendingWaypoints);
       state.pendingPin = null;
@@ -371,7 +368,7 @@ export function createEditorInput(deps) {
       const split = splitWireAtJunction(state.circuit, wireId, point, routePoints, allocatorFor(state));
       state.circuit = split.circuit;
       state.probes = retargetWireProbes(state.probes, wireId, split.replacementWireId, split);
-      const duplicate = state.circuit.wires.some((wire) => (endpointsEqual(wire.a, start) && endpointsEqual(wire.b, split.endpoint)) || (endpointsEqual(wire.b, start) && endpointsEqual(wire.a, split.endpoint)));
+      const duplicate = state.circuit.wires.some((wire) => wireJoins(wire, start, split.endpoint));
       if (!endpointsEqual(start, split.endpoint) && !duplicate) state.circuit.wires.push({ id: allocatorFor(state).next("W", state.circuit.wires), a: start, b: split.endpoint, waypoints });
       setSingleSelection(state, split.endpoint.junctionId ? { kind: "junction", id: split.endpoint.junctionId } : { kind: "component", id: split.endpoint.componentId });
     });
@@ -418,7 +415,7 @@ export function createEditorInput(deps) {
   const redoEdit = () => { commitActiveDrag(); redo(); };
 
   const { deleteSelection, cloneSelection, rotateSelection, convertYDelta, nudgeSelection, selectAll, copySelection, pasteSelection } = createSelectionCommands({
-    state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive,
+    state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive, reconcileAnalysis,
     notify: (text, kind = "info") => notices.show({ text, kind, autoHideMs: kind === "error" ? 9000 : 8000 }),
   });
 

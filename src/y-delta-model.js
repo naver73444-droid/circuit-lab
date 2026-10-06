@@ -11,6 +11,26 @@
 import { parseValue } from "./circuit-engine.js";
 import { engineering } from "./scope-model.js";
 
+const TOOL_PREFIX = /^(?:meg|[TGMkmunpfµμ])$/i;
+
+/**
+ * Text typed into a tool field → positive finite resistance. Like parseResistance, but the unit must be none or ohm (Ω, ohm): "5V", "10uF",
+ * "1kHz" parse as numbers in the circuit engine but are not resistances, so they are refused with the reason. Numbers pass unchanged.
+ * (The part value editors keep using parseResistance.)
+ */
+export function parseResistanceInput(value, name = "저항") {
+  if (typeof value === "string") {
+    const match = /^\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\s*([A-Za-zΩµμ]*)\s*$/.exec(value);
+    if (match) {
+      const unit = match[1].replace(/(?:ohm|Ω)$/i, "");
+      if (unit !== "" && (!TOOL_PREFIX.test(unit) || unit === "F")) {
+        throw new RangeError(`${name}에는 저항값을 넣어야 하므로 단위는 Ω(ohm)만 쓸 수 있습니다. '${value.trim()}'의 단위 '${match[1]}'을(를) 확인하세요. 예: 4.7k, 2.2meg, 330Ω`);
+      }
+    }
+  }
+  return parseResistance(value, name);
+}
+
 /** One resistance (number or SI text) → positive finite number. `name` labels the message ("R_A"). */
 export function parseResistance(value, name = "저항") {
   if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) throw new RangeError(`${name}은 숫자나 SI 값(예: 1k, 4.7meg)으로 입력해야 합니다.`);
@@ -70,8 +90,9 @@ export function convertDeltaToY(input) {
 const SI_SUFFIX = new Map([[-12, "p"], [-9, "n"], [-6, "u"], [-3, "m"], [0, ""], [3, "k"], [6, "meg"], [9, "g"], [12, "t"]]);
 
 /**
- * A resistance as the text a circuit part stores ("1.33333333333k"): 12 significant digits, so a converted network stays electrically
- * equivalent to ~1e-12 relative, and parseValue() of it gives the number back.
+ * A resistance as the text a circuit part stores ("1.33333333333k"): 12 significant digits, so each stored value is within 5e-12 relative
+ * of the exact one (half a unit of the last digit, worst for a mantissa just above 1) and a converted network stays electrically
+ * equivalent to that tolerance; parseValue() of the text gives the rounded number back.
  */
 export function resistanceCircuitText(value) {
   if (!(value > 0) || !Number.isFinite(value)) throw new RangeError("0보다 큰 유한 저항이 필요합니다.");

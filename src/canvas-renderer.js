@@ -137,8 +137,8 @@ export function createCanvasRenderer(deps) {
   function componentMarkup(component, connection) {
     const ref = escapeHtml(component.props?.ref ?? component.id);
     const sourceDescriptor = ["V", "I", "VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component, state.settings.analysis) : null;
-    const rawValue = formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
-    const value = escapeHtml(sourceDescriptor ? `${sourceDescriptor.label} ${rawValue} ${sourceDescriptor.unit}` : rawValue);
+    const valueLabel = formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
+    const value = escapeHtml(sourceDescriptor ? `${sourceDescriptor.label} ${valueLabel} ${sourceDescriptor.unit}` : valueLabel);
     const editProp = sourceDescriptor?.prop ?? (component.props?.value !== undefined ? "value" : component.props?.gain !== undefined ? "gain" : "");
     const geometryVersion = circuitGeometryVersion(state.circuit);
     const mode = component.props?.mode ?? "DC";

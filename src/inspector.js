@@ -221,10 +221,19 @@ export function createInspector(deps) {
       const summary = describeSelection(items);
       const parts = [summary.components && `부품 ${summary.components}`, summary.wires && `배선 ${summary.wires}`, summary.junctions && `접속점 ${summary.junctions}`].filter(Boolean).join(" · ");
       const yDelta = yDeltaCommandState(state.circuit, items);
-      const yDeltaButton = yDelta.visible ? `<button type="button" data-multi-action="ydelta"${yDelta.enabled ? ` title="Y와 Δ 저항망을 서로 바꿉니다 (Y)"` : ` disabled title="${escapeHtml(yDelta.reason)}"`}>${yDelta.label}</button>` : "";
+      const yDeltaAttributes = yDelta.enabled ? ` title="Y와 Δ 저항망을 서로 바꿉니다 (Y)"` : ` disabled title="${escapeHtml(yDelta.reason)}"`;
+      const yDeltaButton = yDelta.visible ? `<button type="button" data-multi-action="ydelta"${yDeltaAttributes}>${yDelta.label}</button>` : "";
       const yDeltaHelp = yDelta.visible && !yDelta.enabled ? `<p class="field-help" data-ydelta-reason>${escapeHtml(yDelta.reason)}</p>` : "";
       elements["selection-label"].textContent = `${items.length}개 선택`;
-      elements["inspector-content"].innerHTML = `<div class="multi-selection"><p class="field-help">${parts}</p><div class="multi-actions"><button type="button" data-multi-action="clone"${summary.components ? "" : " disabled"} title="복제 (Ctrl+D)">복제</button><button type="button" data-multi-action="rotate"${summary.components ? "" : " disabled"} title="함께 회전 (R)">회전</button><button type="button" class="danger" data-multi-action="delete" title="삭제 (Delete)">삭제</button>${yDeltaButton}</div>${yDeltaHelp}<p class="field-help">끌면 함께 이동 · 방향키로 이동 · Ctrl+C/X/V 복사·붙여넣기 · 빈 곳을 누르면 선택 해제</p></div>`;
+      const needsPart = summary.components ? "" : " disabled";
+      elements["inspector-content"].innerHTML = [
+        `<div class="multi-selection"><p class="field-help">${parts}</p><div class="multi-actions">`,
+        `<button type="button" data-multi-action="clone"${needsPart} title="복제 (Ctrl+D)">복제</button>`,
+        `<button type="button" data-multi-action="rotate"${needsPart} title="함께 회전 (R)">회전</button>`,
+        `<button type="button" class="danger" data-multi-action="delete" title="삭제 (Delete)">삭제</button>`,
+        `${yDeltaButton}</div>${yDeltaHelp}`,
+        `<p class="field-help">끌면 함께 이동 · 방향키로 이동 · Ctrl+C/X/V 복사·붙여넣기 · 빈 곳을 누르면 선택 해제</p></div>`,
+      ].join("");
       return;
     }
     if (!selected) {

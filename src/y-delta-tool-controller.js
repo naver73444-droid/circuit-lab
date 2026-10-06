@@ -4,7 +4,7 @@
  */
 import { DIRECTIONS, SLIDER_STEPS, attempt, createYDeltaToolState, evaluateTool, resistanceToSlider, sliderToResistance, toggleDirection, withText, withValue } from "./y-delta-tool-model.js";
 import { createYDeltaToolView } from "./y-delta-tool-view.js";
-import { resistanceCircuitText } from "./y-delta-model.js";
+import { resistanceCircuitText, resistanceText } from "./y-delta-model.js";
 
 export function createYDeltaTool(host) {
   const view = createYDeltaToolView(host);
@@ -19,7 +19,7 @@ export function createYDeltaTool(host) {
     view.setDirection(state.direction);
     const keys = DIRECTIONS[state.direction].inputs;
     keys.forEach((key, index) => {
-      view.showSlider(index, resistanceToSlider(state.values[key]));
+      view.showSlider(index, resistanceToSlider(state.values[key]), resistanceText(state.values[key]));
       view.showText(index, resistanceCircuitText(state.values[key]));
       view.showError(index, invalid.get(index) ?? "");
     });
@@ -32,16 +32,23 @@ export function createYDeltaTool(host) {
     view.showError(index, invalid.get(index));
   }
 
+  /** The knob goes back to the value in use (a refused slider step must not leave it somewhere else). */
+  function restoreKnob(index) {
+    const value = state.values[keyOf(index)];
+    view.showSlider(index, resistanceToSlider(value), resistanceText(value));
+  }
+
   function onInput(event) {
     const target = event.target;
     if (target.matches?.("[data-ydelta-slider]")) {
       const index = fieldIndex(target);
       let candidate;
-      try { candidate = withValue(state, keyOf(index), sliderToResistance(Number(target.value))); } catch { return; }
+      try { candidate = withValue(state, keyOf(index), sliderToResistance(Number(target.value))); } catch { restoreKnob(index); return; }
       const tried = attempt(candidate);
-      if (!tried.ok) { reject(index, tried.reason); return; }
+      if (!tried.ok) { restoreKnob(index); reject(index, tried.reason); return; }
       state = candidate;
       invalid.delete(index);
+      view.showSliderValueText(index, resistanceText(state.values[keyOf(index)]));
       view.showText(index, resistanceCircuitText(state.values[keyOf(index)]));
       view.showError(index, "");
       view.showEvaluation(tried.evaluation);
@@ -52,7 +59,7 @@ export function createYDeltaTool(host) {
       if (tried.ok) {
         state = result.state;
         invalid.delete(index);
-        view.showSlider(index, resistanceToSlider(state.values[keyOf(index)]));
+        view.showSlider(index, resistanceToSlider(state.values[keyOf(index)]), resistanceText(state.values[keyOf(index)]));
         view.showError(index, "");
         view.showEvaluation(tried.evaluation);
       } else reject(index, tried.reason);
@@ -78,7 +85,7 @@ export function createYDeltaTool(host) {
     let toggled;
     try { toggled = toggleDirection(state); } catch { toggled = null; }
     const tried = toggled ? attempt(toggled) : { ok: false, reason: "반대 방향의 값을 계산할 수 없습니다." };
-    if (!tried.ok) { reject(0, tried.reason); return; }
+    if (!tried.ok) { view.showNotice(`방향을 바꾸지 못했습니다. ${tried.reason} 지금 값을 그대로 쓰고 있습니다.`); return; }
     state = toggled;
     invalid.clear();
     showAll();
