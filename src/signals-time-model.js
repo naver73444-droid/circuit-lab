@@ -69,6 +69,12 @@ export function markerDomain(family) {
   return { min: start, max: start + values.length - 1, step: 1 };
 }
 
+// CT marker exactly on a jump of x(t) whose value the lecture leaves undefined (the step family is defined by its intervals).
+export function isJumpMarker(family, tau) {
+  if (isDiscrete(family) || isSteps(family)) return false;
+  return baseEdges(family).some((edge) => Math.abs(edge - tau) < 1e-9 && Math.abs(baseSignal(family, edge - 1e-7) - baseSignal(family, edge + 1e-7)) > 1e-3);
+}
+
 export const defaultMarker = (family) => ({ tri: 0.4, rect: 0.3, exp: 0.5, steps: 0.5, 'steps-r': 0.5, seq: 1, up: 1 })[family];
 
 // a=0 is not a valid scale: clamp to +-MIN_SCALE (CT) or 1 (DT).
@@ -208,7 +214,8 @@ export const timeLesson = {
   describe: ({ family, params, cursor }) => {
     const discrete = isDiscrete(family);
     const map = timeMap(family, params);
-    return describeTimeMap({ family, a: map.a, b: map.shift ?? map.b, L: map.L, tau: discrete ? Math.round(cursor) : cursor });
+    const text = describeTimeMap({ family, a: map.a, b: map.shift ?? map.b, L: map.L, tau: discrete ? Math.round(cursor) : cursor });
+    return isJumpMarker(family, cursor) ? `${text} · 점프 위치라 x(τ)는 미정의 — 좌·우 극한만 있습니다` : text;
   },
   read(family, params = {}) {
     if (family === 'up') return 'g[n]=x[n/L]: L의 배수 자리에만 x가 놓이고 나머지 n에는 0이 들어갑니다. 정수 L, b만 허용합니다.';

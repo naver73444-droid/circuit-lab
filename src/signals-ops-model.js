@@ -68,6 +68,18 @@ export const oddPart = (fn) => (t) => (fn(t) - fn(-t)) / 2;
 export const pulseAt = (c, w) => (t) => (Math.abs(t - c) < w / 2 ? 1 : 0);
 export const expRight = (alpha) => (t) => (t > 0 ? Math.exp(-alpha * t) : 0);
 
+// Energies of x, x_e, x_o in closed form (the sum E_e + E_o = E_x has no cross term).
+//  e^(-alpha t)u(t): E_x = 1/(2 alpha), x_e = e^(-alpha|t|)/2, x_o = sgn(t) e^(-alpha|t|)/2, so each part carries half.
+//  Pi((t-c)/w): E_x = w; the mirror image overlaps over o = max(0, w - 2|c|) where x_e = 1, elsewhere x_e = +-1/2 and x_o = +-1/2.
+export function evenOddEnergy(family, p) {
+  if (family === 'eo-exp') {
+    const ex = 1 / (2 * p.alpha);
+    return { ex, ee: ex / 2, eo: ex / 2 };
+  }
+  const overlap = Math.max(0, p.w - 2 * Math.abs(p.c));
+  return { ex: p.w, ee: (p.w + overlap) / 2, eo: (p.w - overlap) / 2 };
+}
+
 // Energy and power closed forms (R = 1 ohm normalization).
 export function energyPower(family, p) {
   if (family === 'en-sin') return { energy: Infinity, power: (p.A * p.A) / 2, rms: p.A / Math.SQRT2, kind: 'power', mean: 0 };
@@ -344,13 +356,11 @@ const sentenceOf = {
   combine: (mode, { B }) => pieceFormulas(mode, B).map((p) => p.text).join(' · '),
   eo: (family, p) => {
     const x = family === 'eo-pulse' ? pulseAt(p.c, p.w) : expRight(p.alpha);
-    let ex = 0; let ee = 0; let eo = 0; let err = 0;
+    let err = 0;
     const dt = 0.004;
     const [xe, xo] = [evenPart(x), oddPart(x)];
-    for (let t = -6 + dt / 2; t < 6; t += dt) {
-      const [a, e, o] = [x(t), xe(t), xo(t)];
-      ex += a * a * dt; ee += e * e * dt; eo += o * o * dt; err = Math.max(err, Math.abs(a - e - o));
-    }
+    for (let t = -6 + dt / 2; t < 6; t += dt) err = Math.max(err, Math.abs(x(t) - xe(t) - xo(t))); // reconstruction check only
+    const { ex, ee, eo } = evenOddEnergy(family, p); // energies are closed forms: the tail of e^(-alpha t) lies beyond any finite window
     return `E_x=${num(ex)} = E_e ${num(ee)} + E_o ${num(eo)} (교차항 0) · 확인 x−(x_e+x_o) 최대 ${num(err)}`;
   },
   en: (family, p) => {

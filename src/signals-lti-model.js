@@ -3,7 +3,7 @@
 //  forced: first-order response to A cos(wt) = transient + steady state (Ex 2.16)   bibo: causality and BIBO stability from h(t)
 //  test: linearity / time-invariance test (expected vs actual output, Ex 2.1, 2.2)
 // Impulse-response examples 2.20-2.22 live in the convolution lesson (same definitions).
-import { formatNumber, sampleCurve, jumpList } from './signals-util.js';
+import { formatNumber, sampleCurve, jumpList, niceTicks } from './signals-util.js';
 import { choiceControl } from './signals-axis.js';
 
 export const LTI_FAMILIES = [
@@ -23,7 +23,9 @@ const TAU = 2 * Math.PI;
 
 // ---------------------------------------------------------------- step response: first order, tau = RC
 export const stepResponse = (tau, t) => (t > 0 ? 1 - Math.exp(-t / tau) : 0);
+// h(t) = ds/dt jumps at t = 0 (h(0-) = 0, h(0+) = 1/tau); the lecture leaves h(0) itself undefined: the 0 returned here is only a plotting filler.
 export const rcImpulse = (tau, t) => (t > 0 ? Math.exp(-t / tau) / tau : 0);
+export const atStepJump = (t) => Math.abs(t) < 1e-9;
 export const stepWindow = (tau) => {
   const hi = Math.max(1.5, 6 * tau);
   return { lo: -hi / 6, hi };
@@ -121,12 +123,14 @@ export function absIntegralTo(family, p, t) {
 export const isCausalH = (family, p) => (family === 'bibo' ? p.d >= 0 : true);
 
 // ---------------------------------------------------------------- linearity / time-invariance test
+// `linear` / `timeInvariant` are the theoretical verdicts of the lecture (Ex 2.1, 2.2), fixed per system. The curve comparison
+// below only tells whether THIS test input exposes the failure (testErrors: linearMatch / timeMatch).
 export const TEST_SYSTEMS = [
-  { label: 'y=5x(t)', f: (x) => 5 * x },
-  { label: 'y=5x(t)+3', f: (x) => 5 * x + 3 },
-  { label: 'y=3x²(t)', f: (x) => 3 * x * x },
-  { label: 'y=cos(x(t))', f: (x) => Math.cos(x) },
-  { label: 'y=3cos(t)·x(t)', f: (x, t) => 3 * Math.cos(t) * x },
+  { label: 'y=5x(t)', f: (x) => 5 * x, linear: true, timeInvariant: true },
+  { label: 'y=5x(t)+3', f: (x) => 5 * x + 3, linear: false, timeInvariant: true },
+  { label: 'y=3x²(t)', f: (x) => 3 * x * x, linear: false, timeInvariant: true },
+  { label: 'y=cos(x(t))', f: (x) => Math.cos(x), linear: false, timeInvariant: true },
+  { label: 'y=3cos(t)·x(t)', f: (x, t) => 3 * Math.cos(t) * x, linear: true, timeInvariant: false },
 ];
 export const TEST_OPTIONS = TEST_SYSTEMS.map((s, i) => ({ value: i, label: s.label }));
 const X1 = (t) => Math.cos(TAU * 5 * t);
@@ -156,7 +160,14 @@ export function testErrors(index, a1, a2, T) {
     const s = timeInvarianceTest(index, T, t + 0);
     ti = Math.max(ti, Math.abs(s.response - s.shifted));
   }
-  return { linear: lin < 1e-9, timeInvariant: ti < 1e-9, linearError: lin, timeError: ti };
+  const { linear, timeInvariant } = TEST_SYSTEMS[index];
+  const linearMatch = lin < 1e-9;
+  const timeMatch = ti < 1e-9;
+  return {
+    linear, timeInvariant, // theory (fixed per system)
+    linearMatch, timeMatch, linearError: lin, timeError: ti, // this input only
+    linearHidden: !linear && linearMatch, timeHidden: !timeInvariant && timeMatch, // the input does not expose the failure
+  };
 }
 
 // ---------------------------------------------------------------- frames
@@ -172,20 +183,24 @@ function stepFrame({ tau }, cursor) {
   const s = (t) => stepResponse(tau, t);
   const h = (t) => rcImpulse(tau, t);
   const t0 = Math.min(Math.max(cursor, 0), hi);
-  const slope = h(t0);
+  // At the jump of h (t = 0) the value h(0) is undefined: the tangent takes the right-hand slope h(0+) = 1/tau and h gets no marker dot.
+  const atJump = atStepJump(t0);
+  const slope = atJump ? 1 / tau : h(t0);
   const span = Math.min(hi - t0, tau * 1.6);
+  const xTicks = niceTicks(lo, hi, 6); // the same full-range ticks on both panes; tau gets its own guide line
   return {
     panes: [
-      { title: `s(t)=(1−e^(−t/τ))u(t), τ=RC=${num(tau)} s`, x: [lo, hi], y: [-0.2, 1.3], yTicks: [0, 0.632, 1], xTicks: [0, tau, 2 * tau, 3 * tau].filter((v) => v < hi),
-        lines: [{ cls: 'c1', pts: pts(s, lo, hi, 600, [0]) }], hlines: [{ cls: 'cm dash', y: 1 }],
+      { title: `s(t)=(1−e^(−t/τ))u(t), τ=RC=${num(tau)} s`, x: [lo, hi], y: [-0.2, 1.3], yTicks: [0, 0.632, 1], xTicks,
+        lines: [{ cls: 'c1', pts: pts(s, lo, hi, 600, [0]) }], hlines: [{ cls: 'cm dash', y: 1 }], vlines: [{ cls: 'c3 dash', x: tau, from: -0.2, to: 1 - Math.exp(-1) }],
         segments: [{ cls: 'c4', x1: t0 - span * 0.01, y1: s(t0) - slope * span * 0.01, x2: t0 + span, y2: s(t0) + slope * span }],
         dots: [{ cls: 'c4', x: t0, y: s(t0) }, { cls: 'c3', x: tau, y: 1 - Math.exp(-1) }],
-        texts: [{ cls: 'c3', x: tau, y: 1 - Math.exp(-1), text: `t=τ: 0.632`, anchor: 'start', dy: 16 }] },
-      { title: 'h(t)=ds/dt = (1/τ)e^(−t/τ) u(t)  (기울기 = h)', x: [lo, hi], y: [-0.12 / tau, 1.25 / tau], yTicks: [0, Number((1 / tau).toPrecision(3))],
+        texts: [{ cls: 'c3', x: tau + (hi - lo) * 0.012, y: 1 - Math.exp(-1), text: `t=τ: 0.632`, anchor: 'start', dy: 16 }, { cls: 'c3', x: tau, y: -0.2, text: `τ=${num(tau)}`, anchor: 'start', dy: -4 }] },
+      { title: 'h(t)=ds/dt = (1/τ)e^(−t/τ) u(t)  (기울기 = h, t=0에서는 h(0)이 미정의)', x: [lo, hi], y: [-0.12 / tau, 1.25 / tau], yTicks: [0, Number((1 / tau).toPrecision(3))], xTicks,
         lines: [{ cls: 'c2', pts: pts(h, lo, hi, 600, [0]) }], jumps: [{ cls: 'c2', list: jumpList(h, [0], lo, hi) }],
-        dots: [{ cls: 'c4', x: t0, y: h(t0) }], vlines: [{ cls: 'c4 dash', x: t0 }] },
+        dots: atJump ? [] : [{ cls: 'c4', x: t0, y: h(t0) }], vlines: [{ cls: 'c4 dash', x: t0 }, { cls: 'c3 dash', x: tau, from: 0, to: Math.exp(-1) / tau }],
+        texts: [{ cls: 'c3', x: tau, y: -0.12 / tau, text: `τ=${num(tau)}`, anchor: 'start', dy: -4 }] },
     ],
-    legend: [{ cls: 'c1', text: 's(t) 계단응답' }, { cls: 'c4', text: `접선: 기울기 ${num(slope)} = h(t)` }, { cls: 'c2', text: 'h(t) 임펄스응답' }],
+    legend: [{ cls: 'c1', text: 's(t) 계단응답' }, { cls: 'c4', text: atJump ? `접선: 우극한 기울기 h(0⁺)=${num(slope)}` : `접선: 기울기 ${num(slope)} = h(t)` }, { cls: 'c2', text: 'h(t) 임펄스응답' }],
   };
 }
 
@@ -263,14 +278,15 @@ function testFrame(p) {
   const hi = 3;
   const lin = (t) => linearityTest(index, p.a1, p.a2, t);
   const ti = (t) => timeInvarianceTest(index, p.T, t);
+  const e = testErrors(index, p.a1, p.a2, p.T);
   const vals = Array.from({ length: 200 }, (_, i) => (hi * i) / 199);
   const rLin = padRange(vals.flatMap((t) => [lin(t).expected, lin(t).actual]));
   const rTi = padRange(vals.flatMap((t) => [ti(t).response, ti(t).shifted]));
   return {
     panes: [
-      { title: `선형성: x=α₁cos(2π·5t)+α₂e^(−0.5t) (α₁=${num(p.a1)}, α₂=${num(p.a2)}) · 기대 y_exp=α₁y₁+α₂y₂ vs 실제 y_act`, x: [0, hi], y: rLin,
+      { title: `선형성 (이 입력: ${e.linearMatch ? '일치' : '불일치'}) x=α₁cos(2π·5t)+α₂e^(−0.5t), α₁=${num(p.a1)}, α₂=${num(p.a2)} · y_exp=α₁y₁+α₂y₂ vs y_act`, x: [0, hi], y: rLin,
         lines: [{ cls: 'c1', pts: sampleCurve((t) => lin(t).expected, 0, hi, 900) }, { cls: 'c5 dash', pts: sampleCurve((t) => lin(t).actual, 0, hi, 900) }] },
-      { title: `시불변성: 입력 x(t)=e^(−0.5t)u(t)를 T=${num(p.T)} s 지연 · Sys{x(t−T)} vs y(t−T)`, x: [0, hi], y: rTi,
+      { title: `시불변성 (이 입력: ${e.timeMatch ? '일치' : '불일치'}) x(t)=e^(−0.5t)u(t)를 T=${num(p.T)} s 지연 · Sys{x(t−T)} vs y(t−T)`, x: [0, hi], y: rTi,
         lines: [{ cls: 'c1', pts: pts((t) => ti(t).shifted, 0, hi, 700, [p.T]) }, { cls: 'c5 dash', pts: pts((t) => ti(t).response, 0, hi, 700, [p.T]) }] },
     ],
     legend: [{ cls: 'c1', text: '기대 / 출력 지연' }, { cls: 'c5 dash', text: '실제 / 지연 입력의 응답' }],
@@ -336,6 +352,7 @@ export const ltiLesson = {
   describe({ family, params, cursor }) {
     if (family === 'step') {
       const t = cursor;
+      if (atStepJump(t)) return `τ=RC=${num(params.tau)} s · t=0: s=0, h(0)은 미정의 — 좌극한 h(0⁻)=0, 우극한 h(0⁺)=1/τ=${num(1 / params.tau)} (접선은 우극한 기울기)`;
       return `τ=RC=${num(params.tau)} s · t=${num(t)}: s=${num(stepResponse(params.tau, t))}, h=ds/dt=${num(rcImpulse(params.tau, t))} · s(τ)=0.632, h(0⁺)=1/τ=${num(1 / params.tau)}`;
     }
     if (family.startsWith('nat-')) return describeNatural(family, params);
@@ -349,13 +366,16 @@ export const ltiLesson = {
       return `${causal ? '인과 (t<0에서 h=0)' : '비인과 (t<0에도 h≠0)'} · ${Number.isFinite(total) ? `∫|h|=${num(total)} 유한 → BIBO 안정` : '∫|h| 발산 → BIBO 불안정'}`;
     }
     const e = testErrors(params.sys, params.a1, params.a2, params.T);
-    return `${TEST_SYSTEMS[params.sys].label}: 선형성 ${e.linear ? '통과' : `실패 (최대 차 ${num(e.linearError)})`} · 시불변성 ${e.timeInvariant ? '통과' : `실패 (최대 차 ${num(e.timeError)})`}`;
+    const lin = e.linearMatch ? '일치' : `불일치 (최대 차 ${num(e.linearError)})`;
+    const tim = e.timeMatch ? '일치' : `불일치 (최대 차 ${num(e.timeError)})`;
+    const hints = [e.linearHidden ? '선형성은 이 입력으로는 드러나지 않음 — α₁, α₂를 바꿔 보세요' : '', e.timeHidden ? '시불변성은 이 입력으로는 드러나지 않음 — T를 바꿔 보세요' : ''].filter(Boolean);
+    return `${TEST_SYSTEMS[params.sys].label} · 이론 판정: ${e.linear ? '선형' : '비선형'}, ${e.timeInvariant ? '시불변' : '시변'} · 이 입력의 곡선: 선형성 ${lin}, 시불변성 ${tim}${hints.length ? ` · ${hints.join(' · ')}` : ''}`;
   },
   read(family) {
     if (family === 'step') return '선형·시불변이므로 계단응답을 미분하면 임펄스응답입니다: h=ds/dt. 접선의 기울기가 그 시각의 h(t)이고 t=τ에서 63.2%입니다.';
     if (family.startsWith('nat-')) return 'R을 키우면 특성근이 켤레 복소 → 중근 → 두 실근으로 갈라집니다. 입력은 0이고 초기 전압·전류가 응답을 만듭니다.';
     if (family === 'forced') return '강제응답은 과도(초기값이 정함, 사라짐)와 정상상태(입력 주파수 성분)의 합입니다. 초기 조건은 둘을 더한 뒤에 적용합니다.';
-    if (family === 'test') return '선형성은 기대 출력과 실제 출력이 겹치는지, 시불변성은 입력을 지연한 응답이 출력을 지연한 것과 같은지로 판정합니다.';
+    if (family === 'test') return '선형·시불변 여부는 시스템 식으로 정해지고, 곡선 일치는 이 입력에서만의 결과입니다. 일치해도 α나 T를 바꿔 반례를 찾아 보세요.';
     return '인과는 t<0에서 h(t)=0, BIBO 안정은 ∫|h|dt<∞ 입니다. 극점이 왼쪽 반평면(a>0, σ>0)이면 누적이 수렴합니다.';
   },
   formula(family) {

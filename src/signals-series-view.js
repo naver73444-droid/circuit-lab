@@ -113,6 +113,7 @@ export function createSeriesView({ doc, parent, emit }) {
     if (wantPhase !== showPhase) { showPhase = wantPhase; placedKey = ''; place(); }
     else place();
     phasePane.root.setAttribute('visibility', showPhase ? 'visible' : 'hidden');
+    if (!showPhase) phasePane.clearAxes(); // tick nodes carry their own visibility and would stay drawn under a hidden parent
     const coeff = seriesCoefficients(wave, D, MAX_HARMONICS);
     const points = phasorChain(coeff, N, t);
     const tipPoint = points.at(-1);

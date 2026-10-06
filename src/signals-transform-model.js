@@ -207,8 +207,49 @@ export function transformMetrics(family, p) {
   return value;
 }
 
+// The modulated pulse has two overlapping sinc lobes, so neither the maximum nor the half-amplitude crossings follow from one
+// sinc: find them on the synthesized |X(f)| (grid scan, golden-section refinement, then bisection on the lobe around the peak).
+function modulationPeak(p) {
+  const mag = (f) => spectrumValue('mod', p, f).mag;
+  const fmax = p.f0 + 6 / p.T;
+  const n = 4000;
+  let best = -1;
+  let bestF = 0;
+  for (let i = 0; i <= n; i++) {
+    const f = (fmax * i) / n;
+    const m = mag(f);
+    if (m > best) { best = m; bestF = f; }
+  }
+  let a = Math.max(0, bestF - fmax / n);
+  let b = bestF + fmax / n;
+  for (let i = 0; i < 100; i++) {
+    const c = a + (b - a) * 0.382;
+    const d = a + (b - a) * 0.618;
+    if (mag(c) < mag(d)) a = c; else b = d;
+  }
+  let at = (a + b) / 2;
+  if (at < 1e-6) at = 0; // flat maximum at the origin when the two lobes merge
+  const peak = mag(at);
+  const half = peak / 2;
+  const crossing = (dir) => {
+    const step = 0.005 / p.T;
+    let x = at;
+    while (mag(x + dir * step) >= half && Math.abs(x) < 2 * fmax) x += dir * step;
+    let inside = x;
+    let outside = x + dir * step;
+    for (let i = 0; i < 80; i++) {
+      const mid = (inside + outside) / 2;
+      if (mag(mid) >= half) inside = mid; else outside = mid;
+    }
+    return (inside + outside) / 2;
+  };
+  return { at, peak, span: [crossing(-1), crossing(1)] };
+}
+
 function computeMetrics(family, p) {
   let peak;
+  let peakAt = 0;
+  let freqSpan = null;
   let timeSpan;
   let freqWidth;
   let freqCenter = 0;
@@ -243,10 +284,13 @@ function computeMetrics(family, p) {
     timeSpan = [t0 - SINC_HALF * p.T, t0 + SINC_HALF * p.T];
     freqWidth = 1 / p.T;
   } else if (family === 'mod') {
-    peak = spectrumValue('mod', p, p.f0).mag;
+    const found = modulationPeak(p);
+    peak = found.peak;
+    peakAt = found.at;
+    freqSpan = found.span;
     timeSpan = [-p.T / 2, p.T / 2];
-    freqWidth = (2 * SINC_HALF) / p.T;
-    freqCenter = p.f0;
+    freqWidth = found.span[1] - found.span[0];
+    freqCenter = (found.span[0] + found.span[1]) / 2;
   } else if (family === 'delta') {
     peak = 1;
     timeSpan = [-p.a / 2, p.a / 2];
@@ -266,8 +310,9 @@ function computeMetrics(family, p) {
     timeWidth: timeSpan[1] - timeSpan[0],
     freqWidth,
     timeSpan,
-    freqSpan: [freqCenter - freqWidth / 2, freqCenter + freqWidth / 2],
+    freqSpan: freqSpan ?? [freqCenter - freqWidth / 2, freqCenter + freqWidth / 2],
     peak,
+    peakAt,
     unit: family === 'dt' ? 'rad/sample' : 'Hz',
   };
 }
@@ -334,7 +379,9 @@ export function describeTransform(family, p) {
     const inBand = half > 0 ? bandEnergy(family, p, half, 600) : 0;
     tail = ` · E=${formatNumber(total)}, 반진폭 대역 안 ${formatNumber((inBand / total) * 100)}%`;
   }
-  const peakText = family === 'mod' ? `|X(±f₀)|=${formatNumber(m.peak)}(최댓값)` : `|X(0)|=${formatNumber(m.peak)}(=면적)`;
+  const peakText = family === 'mod'
+    ? `|X| 최댓값 ${formatNumber(m.peak)}(${Math.abs(m.peakAt) < 1e-9 ? '원점, 두 로브가 겹침' : `${isOmega(axis) ? 'ω' : 'f'}≈±${formatNumber(toAxis(Math.abs(m.peakAt), axis))} ${unit}`})`
+    : `|X(0)|=${formatNumber(m.peak)}(=면적)`;
   return `시간 폭 ${formatQuantity(m.timeWidth, 's')} ↔ 주파수 폭 ${formatQuantity(m.freqWidth * k, unit)} · 곱 ${formatNumber(product)} · ${peakText}${tail}`;
 }
 
@@ -495,14 +542,29 @@ const FORMULAS_W = {
 const READS = {
   dt: 'L을 키우면 시간에서 넓어지고 주 로브는 좁아집니다. DTFT는 2π마다 반복되고, n₀는 위상만 바꿉니다.',
   rect: '시간에서 좁게 만들수록 주파수에서 넓어지고, 높이를 키우면 |X(0)|=면적이 커집니다. t₀는 |X|를 그대로 두고 위상만 기울입니다.',
-  twoexp: '좌우 대칭(우함수) 신호의 FT는 순실수입니다 (위상 0). α가 크면 시간에서 좁고 주파수에서 넓습니다.',
   sinc: '쌍대성: Π(t)↔sinc이면 sinc↔Π(직사각)입니다. ω 형태는 X(t)↔2πx(−ω). sinc가 넓을수록 직사각 대역은 좁아집니다.',
   mod: '변조: x(t)cos(ω₀t)의 스펙트럼은 X(ω)를 ±ω₀로 옮기고 절반으로 줄인 복사본 두 개입니다.',
   delta: '폭 a를 줄이면 높이 1/a로 면적 1을 유지한 채 스펙트럼이 평평해져 δ(t)↔1에 가까워집니다 (첫 영점 1/a).',
   psd: '전력 신호는 PSD로 봅니다. 자기상관 r(τ)의 푸리에 변환이 S(f)이고, 두 선의 면적을 더하면 전력 r(0)=A²/2입니다.',
   cos: '주기 신호의 FT는 임펄스 열입니다: cos↔두 임펄스(면적 π, ω 형태), 상수 1↔2πδ(ω). f₀→0 이면 한 점으로 모입니다.',
-  esd: 'ESD G=|X|²의 전체 면적이 에너지이고(Parseval) 음영 대역 안의 면적이 그 대역의 에너지입니다. 대역을 넓혀 보세요.',
 };
+
+// Wording that depends on the shift t0 or on the frequency axis.
+function readFor(family, params = {}) {
+  const shift = params.t0 ?? 0;
+  if (family === 'twoexp') {
+    const phase = isOmega(params.axis ?? 0) ? '−ωt₀' : '−2πf t₀';
+    return Math.abs(shift) < 1e-9
+      ? '좌우 대칭(우함수) 신호의 FT는 순실수입니다 (위상 0). α가 크면 시간에서 좁고 주파수에서 넓습니다.'
+      : `t₀≠0이면 대칭이 깨져 순실수가 아닙니다: |X|는 그대로이고 위상이 ${phase}로 기울어집니다 (t₀=0일 때만 위상 0). α가 크면 주파수에서 넓습니다.`;
+  }
+  if (family === 'esd') {
+    return isOmega(params.axis ?? 0)
+      ? 'ESD G=|X|²를 ω축에 그리면 에너지는 면적÷2π입니다(Parseval). 음영 대역은 그 안의 면적÷2π가 대역의 에너지입니다.'
+      : 'ESD G=|X|²의 전체 면적이 에너지이고(Parseval) 음영 대역 안의 면적이 그 대역의 에너지입니다. 대역을 넓혀 보세요.';
+  }
+  return null;
+}
 
 export const transformLesson = {
   id: 'fourier',
@@ -510,8 +572,8 @@ export const transformLesson = {
   initialFamily: 'rect',
   controls: transformControls,
   scrub: false,
-  read(family) {
-    return READS[family] ?? '시간에서 좁게 만들수록 주파수에서 넓어지고, 넓게 만들수록 좁아집니다. t₀는 |X|를 그대로 두고 위상만 기울입니다.';
+  read(family, params) {
+    return READS[family] ?? readFor(family, params) ?? '시간에서 좁게 만들수록 주파수에서 넓어지고, 넓게 만들수록 좁아집니다. t₀는 |X|를 그대로 두고 위상만 기울입니다.';
   },
   formula: (family, params = {}) => `X(ω)=∫ x(t) e^(−jωt) dt; x(t)=(1/2π)∫ X(ω) e^(jωt) dω; X(f)=X(2πf); ${(isOmega(params.axis ?? 0) ? FORMULAS_W : FORMULAS_F)[family]}`,
   describe: ({ family, params }) => describeTransform(family, params),

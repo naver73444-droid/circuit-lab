@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TIME_FAMILIES, baseSignal, baseEdges, transformedSignal, transformedEdges, stageSignals, sequenceUpsample, sequenceTransform, timeMap, affineText,
-  normalizeTimeParams, timeLesson, markerDomain, isSteps, timeAxisOf, TIME_SEQUENCE, describeTimeMap,
+  normalizeTimeParams, timeLesson, markerDomain, isSteps, timeAxisOf, TIME_SEQUENCE, describeTimeMap, isJumpMarker,
 } from '../../../src/signals-time-model.js';
 import { sampleCurve, jumpList } from '../../../src/signals-util.js';
 
@@ -82,6 +82,26 @@ test('open / closed circles: CT jumps are listed with both limits, the lecture s
   assert.ok(curve.every(([x, y]) => Number.isNaN(y) || y === 0 || y === 1 || Math.abs(x) > 1e-3), 'no 1/2 value at the jump');
   assert.match(timeLesson.read('tri', { a: 2, b: 1 }), /열린 원은 CT에서 u\(0\)처럼 그 점의 값을 정하지 않는다/);
   assert.match(timeLesson.read('steps', { a: 2, b: 5 }), /채운 원/);
+});
+
+test('CT marker on a jump of x(t) (rect edges 0 and 1, exp edge 0): value undefined, the readout says so; interval-defined steps and kinks are unaffected', () => {
+  for (const [family, tau] of [['rect', 0], ['rect', 1], ['exp', 0]]) {
+    assert.equal(isJumpMarker(family, tau), true, `${family} ${tau}`);
+    assert.match(timeLesson.describe({ family, params: { a: 2, b: 1 }, cursor: tau }), /점프 위치라 x\(τ\)는 미정의 — 좌·우 극한만/);
+  }
+  assert.equal(isJumpMarker('rect', 0.3), false);
+  assert.equal(isJumpMarker('rect', 1e-6), false);
+  assert.equal(isJumpMarker('exp', 0.5), false);
+  assert.equal(isJumpMarker('tri', 1), false); // continuous kink
+  assert.equal(isJumpMarker('tri', -1), false);
+  assert.equal(isJumpMarker('steps', 2), false); // defined by its intervals ([2,3) is closed on the left)
+  assert.equal(isJumpMarker('seq', 1), false);
+  assert.doesNotMatch(timeLesson.describe({ family: 'rect', params: { a: 2, b: 1 }, cursor: 0.3 }), /미정의/);
+  // the one-sided limits at the jump: x(0-) = 0, x(0+) = 1 for the rectangle, the same two values the view prints
+  const [j] = jumpList((t) => baseSignal('rect', t), baseEdges('rect'), -5, 5);
+  assert.equal(j.x, 0);
+  near(j.left, 0, 1e-12);
+  near(j.right, 1, 1e-6);
 });
 
 test('DT upsample x[n/L] inserts zeros: g[n] = x[n/2] for even n (lecture), 0 for odd n', () => {

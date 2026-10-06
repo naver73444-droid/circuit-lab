@@ -203,3 +203,44 @@ test('axis toggle: omega mode labels the panes with omega and rad/s, Hz mode wit
   assert.ok(log.panes[0].xTicks.every((t) => /^\d/.test(t.label)));
   assert.ok(log.panes[0].lines[0].pts.every(([, y]) => y <= 0.001)); // low-pass: never above 0 dB
 });
+
+test('the plot window always contains the input frequency (RC fc=10 Hz with 500 Hz; RLC w0^2=1 with 4 Hz), in both axes and scales', () => {
+  const inside = (frame, f, axis, scale) => {
+    const x = scale === 1 ? Math.log10(axis === 1 ? TAU * f : f) : (axis === 1 ? TAU * f : f);
+    for (const pane of frame.panes.slice(0, 2)) assert.ok(x >= pane.x[0] && x <= pane.x[1], `x=${x} outside [${pane.x}]`);
+    const marker = frame.panes[0].dots[0];
+    assert.ok(Math.abs(marker.x - x) < 1e-9 && marker.x >= frame.panes[0].x[0] && marker.x <= frame.panes[0].x[1]);
+  };
+  for (const axis of [0, 1]) {
+    for (const scale of [0, 1]) {
+      inside(freqFrame('rc', { fc: 10, fin: 500, phi: 0, axis, scale }), 500, axis, scale);
+      inside(freqFrame('rc', { fc: 200, fin: 5, phi: 0, axis, scale }), 5, axis, scale);
+      inside(freqFrame('rlc', { R: 2, w2: 1, fin: 4, axis, scale }), 4, axis, scale);
+      inside(freqFrame('rlc', { R: 2, w2: 1, fin: 0.05, axis, scale }), 0.05, axis, scale);
+      inside(freqFrame('rlc', { R: 14, w2: 50, fin: 4, axis, scale }), 4, axis, scale);
+    }
+  }
+  // the usual case keeps the usual window (7 f_c for RC, 3.2 f0 for RLC)
+  near(freqFrame('rc', { fc: 80, fin: 20, phi: 0, axis: 0, scale: 0 }).panes[0].x[1], 560, 1e-9);
+});
+
+test('pulse train: the spectrum panes cover every synthesized harmonic (N up to 40)', () => {
+  for (const N of [1, 20, 21, 40]) {
+    const frame = freqFrame('train', { N, d: 0.2, fc: 80, axis: 0 });
+    const f0 = 20;
+    const used = frame.panes[0].stems.flatMap((s) => s.pts.map(([x]) => x));
+    assert.ok(Math.max(...used) >= Math.max(20, N) * f0 - 0.2 * f0 - 1e-9, `N=${N}`);
+    assert.ok(frame.panes[0].x[1] > Math.max(20, N) * f0, `N=${N}`);
+    // each harmonic <= N is drawn as an included (non-faint) stem
+    const included = frame.panes[0].stems.slice(0, 2).flatMap((s) => s.pts.map(([x]) => x));
+    assert.equal(included.length, 2 * (2 * N + 1), `N=${N}`);
+  }
+});
+
+test('RLC steady-state formula: the input amplitude 5 and the evaluated frequency appear, not the resonance value', () => {
+  for (const family of ['rc', 'rlc']) {
+    const text = freqLesson.formula(family);
+    assert.ok(text.includes('x=5cos(ωt+θ) ⇒ y=5|H(ω)|cos(ωt+θ+Θ(ω))'), family);
+    assert.ok(!text.includes('|H(ω₀)|cos'), family);
+  }
+});

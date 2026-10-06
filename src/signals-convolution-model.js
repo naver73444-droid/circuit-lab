@@ -47,13 +47,14 @@ export function rcPulseResponse(tau, t) {
   return (Math.exp(1 / (2 * tau)) - Math.exp(-1 / (2 * tau))) * Math.exp(-t / tau);
 }
 // Ex 2.22: h = e^{-a t}[u(t)-u(t-2)], x = 1 on (0,1), -1 on (1,2): y = F(0,1) - F(1,2), F(A,B) = integral over the overlap.
+// F(A,B): integral of e^{-a(t-lambda)} over the overlap [max(A,t-2), min(B,t)]; no overlap (lower limit >= upper limit) gives 0, never a reversed integral.
+export function ex222Slice(alpha, t, A, B) {
+  const lo = Math.max(A, t - 2);
+  const hi = Math.min(B, t);
+  return hi > lo ? (Math.exp(-alpha * (t - hi)) - Math.exp(-alpha * (t - lo))) / alpha : 0;
+}
 export function ex222Response(alpha, t) {
-  const slice = (A, B) => {
-    const lo = Math.max(A, t - 2);
-    const hi = Math.min(B, t);
-    return hi > lo ? (Math.exp(-alpha * (t - hi)) - Math.exp(-alpha * (t - lo))) / alpha : 0;
-  };
-  return slice(0, 1) - slice(1, 2);
+  return ex222Slice(alpha, t, 0, 1) - ex222Slice(alpha, t, 1, 2);
 }
 // The numbered overlap case of the lecture (the pieces of y(t) that have their own formula).
 export function overlapCase(family, t) {
@@ -253,7 +254,7 @@ const FORMULAS = {
   'exp-exp': 'y(t)=[e^(−αt)−e^(−βt)]/(β−α)·u(t), α≠β',
   'rc-step': 'y(t)=(1−e^(−t/RC))u(t); h=(1/RC)e^(−t/RC)u(t)',
   'rc-pulse': 'y(t)=1−e^(−(t+1/2)/RC), −1/2<t≤1/2; y(t)=[e^(1/2RC)−e^(−1/2RC)]e^(−t/RC), t>1/2',
-  ex222: 'y(t)=F(0,1)−F(1,2); F(A,B)=∫_{max(A,t−2)}^{min(B,t)} e^(−α(t−λ))dλ',
+  ex222: 'y(t)=F(0,1)−F(1,2); F(A,B)=∫_{max(A,t−2)}^{min(B,t)} e^(−α(t−λ))dλ, max(A,t−2)<min(B,t); F(A,B)=0, max(A,t−2)≥min(B,t)',
 };
 
 export const convolutionLesson = {

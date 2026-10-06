@@ -130,9 +130,11 @@ function responseFrame(family, p) {
     const hz = log ? 10 ** u : u;
     return [log ? Math.log10(toAxis(hz, axis)) : toAxis(hz, axis), fn(hz)];
   });
+  // The plot window follows the system (around f_ref) but always contains the current input frequency, so the marker never leaves the graph.
   const span = family === 'rc' ? 100 : 20;
-  const lo = log ? Math.log10(fref / span) : -(family === 'rc' ? 7 : 3.2) * fref;
-  const hi = log ? Math.log10(fref * span) : (family === 'rc' ? 7 : 3.2) * fref;
+  const reach = Math.max((family === 'rc' ? 7 : 3.2) * fref, f * 1.15);
+  const lo = log ? Math.min(Math.log10(fref / span), Math.log10(f) - 0.15) : -reach;
+  const hi = log ? Math.max(Math.log10(fref * span), Math.log10(f) + 0.15) : reach;
   const xLo = log ? Math.log10(toAxis(10 ** lo, axis)) : toAxis(lo, axis);
   const xHi = log ? Math.log10(toAxis(10 ** hi, axis)) : toAxis(hi, axis);
   const marker = (hz) => (log ? Math.log10(toAxis(hz, axis)) : toAxis(hz, axis));
@@ -186,7 +188,7 @@ function trainFrame(p) {
   const axis = p.axis;
   const sym = isOmega(axis) ? 'ω' : 'f';
   const unit = isOmega(axis) ? 'rad/s' : 'Hz';
-  const K = 20;
+  const K = Math.max(20, p.N); // show every harmonic that is synthesized (N goes up to 40)
   const inc = []; const incOut = []; const exc = []; const excOut = [];
   const phIn = []; const phOut = [];
   const off = 0.14 * f0;
@@ -318,8 +320,8 @@ export const freqLesson = {
     return '비주기 입력은 Y(ω)=H(ω)X(ω)입니다. 크기는 곱, 위상은 합이며 f_c를 낮출수록 펄스 응답이 지수적으로 퍼집니다.';
   },
   formula(family) {
-    if (family === 'rc') return 'H(ω)=1/(1+jω/ω_c); ω_c=1/RC; f_c=ω_c/2π; |H|=1/√(1+(ω/ω_c)²); Θ=−tan⁻¹(ω/ω_c)';
-    if (family === 'rlc') return 'H(ω)=ω₀²/[(ω₀²−ω²)+jωR/L]; ω₀²=1/LC; ζ=(R/2)√(C/L); y=|H(ω₀)|cos(ω t+Θ)';
+    if (family === 'rc') return 'H(ω)=1/(1+jω/ω_c); ω_c=1/RC; f_c=ω_c/2π; |H|=1/√(1+(ω/ω_c)²); Θ=−tan⁻¹(ω/ω_c); x=5cos(ωt+θ) ⇒ y=5|H(ω)|cos(ωt+θ+Θ(ω))';
+    if (family === 'rlc') return 'H(ω)=ω₀²/[(ω₀²−ω²)+jωR/L]; ω₀²=1/LC; ζ=(R/2)√(C/L); x=5cos(ωt+θ) ⇒ y=5|H(ω)|cos(ωt+θ+Θ(ω))';
     if (family === 'train') return 'x̃=Σ c_k e^(jkω₀t); c_k=d sinc(kd); ỹ=Σ c_k H(kω₀) e^(jkω₀t); d_k=c_k H(kω₀)';
     return 'Y(ω)=H(ω)X(ω); |Y|=|H||X|; arg Y=arg X+Θ; X(f)=sinc(f), x=Π(t)';
   },

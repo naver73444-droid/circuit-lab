@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CONVOLUTION_FAMILIES, convolutionSetup, continuousFrame, rcPulseResponse, ex222Response, overlapCase, describeConvolution, convolutionLesson,
+  CONVOLUTION_FAMILIES, convolutionSetup, continuousFrame, rcPulseResponse, ex222Response, ex222Slice, overlapCase, describeConvolution, convolutionLesson,
 } from '../../../src/signals-convolution-model.js';
 
 const near = (a, b, tol = 1e-9) => assert.ok(Math.abs(a - b) <= tol, `${a} versus ${b}`);
@@ -64,6 +64,29 @@ test('Ex 2.22: h = e^{-t}[u(t)-u(t-2)] and x = Pi(t-0.5) - Pi(t-1.5): six overla
   // another decay rate works too
   const slow = convolutionSetup('ex222', { alpha: 0.4 });
   for (const t of [0.7, 2.4]) near(numeric(slow, t), slow.y(t), 4e-3);
+});
+
+test('Ex 2.22 displayed formula: the integral is taken only when the lower limit is below the upper one, otherwise F = 0', () => {
+  const formula = convolutionLesson.formula('ex222');
+  assert.ok(formula.includes('dλ, max(A,t−2)<min(B,t); F(A,B)=0, max(A,t−2)≥min(B,t)'));
+  // the displayed formula read literally (with the guard) against the model, over the whole axis
+  const shown = (alpha, t) => {
+    const F = (A, B) => {
+      const lo = Math.max(A, t - 2);
+      const hi = Math.min(B, t);
+      return lo < hi ? (Math.exp(-alpha * (t - hi)) - Math.exp(-alpha * (t - lo))) / alpha : 0;
+    };
+    return F(0, 1) - F(1, 2);
+  };
+  for (const alpha of [0.25, 1, 3]) for (let t = -1; t <= 5; t += 0.125) near(shown(alpha, t), ex222Response(alpha, t), 1e-12);
+  // the reported mismatch: alpha = 1, t = 0.5, F(1,2) has no overlap (lower limit 1 > upper limit 0.5): a reversed integral would give 1.042
+  near(ex222Slice(1, 0.5, 1, 2), 0, 1e-12);
+  near(ex222Response(1, 0.5), 1 - Math.exp(-0.5), 1e-12);
+  const reversed = (1 - Math.exp(-0.5)) - (Math.exp(-0.5 * 1 + 0) * 0 + (Math.exp(-(0.5 - 0.5)) - Math.exp(-(0.5 - 1))) / 1);
+  near(reversed, 1.0420, 1e-3);
+  // lecture limits: max 0.6321 at t=1, 0 outside (0, 4)
+  near(ex222Response(1, 1), 0.6321, 1e-4);
+  for (const t of [-0.3, 4, 4.7]) assert.equal(ex222Response(1, t), 0);
 });
 
 test('the flipped / moving copies carry their jump limits (u(0) is undefined: open circles, not a midpoint)', () => {

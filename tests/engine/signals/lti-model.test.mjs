@@ -163,8 +163,62 @@ test('Ex 2.1 / 2.2 tests: 5x linear + time-invariant; 5x+3, 3x^2, cos x nonlinea
   near(same.response, same.shifted);
   // linearity of the TI-failing system: superposition does hold
   near(linearityTest(4, -1.5, 0.75, 1.9).expected, linearityTest(4, -1.5, 0.75, 1.9).actual);
-  assert.match(ltiLesson.describe({ family: 'test', params: { a1: 2, a2: 1.25, T: 2, sys: 4 } }), /선형성 통과 · 시불변성 실패/);
-  assert.match(ltiLesson.describe({ family: 'test', params: { a1: 2, a2: 1.25, T: 2, sys: 1 } }), /선형성 실패.*시불변성 통과/);
+  assert.match(ltiLesson.describe({ family: 'test', params: { a1: 2, a2: 1.25, T: 2, sys: 4 } }), /이론 판정: 선형, 시변.*선형성 일치, 시불변성 불일치/);
+  assert.match(ltiLesson.describe({ family: 'test', params: { a1: 2, a2: 1.25, T: 2, sys: 1 } }), /이론 판정: 비선형, 시불변.*선형성 불일치.*시불변성 일치/);
+});
+
+test('linearity / time-invariance verdicts are fixed by the system; one matching input never turns into a pass', () => {
+  // theory per system does not depend on alpha or T
+  for (const [sys, linear, timeInvariant] of [[0, true, true], [1, false, true], [2, false, true], [3, false, true], [4, true, false]]) {
+    for (const [a1, a2, T] of [[2, 1.25, 2], [0.5, 0.5, 0], [1, 0, 0], [0, 1, 3], [-3, 3, 1]]) {
+      const e = testErrors(sys, a1, a2, T);
+      assert.equal(e.linear, linear, `${sys} ${a1} ${a2}`);
+      assert.equal(e.timeInvariant, timeInvariant, `${sys} T=${T}`);
+      assert.equal(e.linear, TEST_SYSTEMS[sys].linear);
+    }
+  }
+  // 5x+3 with a1 + a2 = 1 hides the offset: the curves match although the system is not linear
+  const hidden = testErrors(1, 0.5, 0.5, 2);
+  assert.equal(hidden.linearMatch, true);
+  assert.equal(hidden.linear, false);
+  assert.equal(hidden.linearHidden, true);
+  assert.match(ltiLesson.describe({ family: 'test', params: { a1: 0.5, a2: 0.5, T: 2, sys: 1 } }), /이론 판정: 비선형.*선형성 일치.*드러나지 않음 — α₁, α₂를 바꿔/);
+  // 3x^2 and cos(x) with one input switched off look linear in the same way (alpha = (1, 0))
+  for (const sys of [2, 3]) assert.equal(testErrors(sys, 1, 0, 2).linearHidden, true, `${sys}`);
+  // 3cos(t)x(t) at T = 0: no delay, nothing to see
+  const tv = testErrors(4, 2, 1.25, 0);
+  assert.equal(tv.timeMatch, true);
+  assert.equal(tv.timeInvariant, false);
+  assert.equal(tv.timeHidden, true);
+  assert.match(ltiLesson.describe({ family: 'test', params: { a1: 2, a2: 1.25, T: 0, sys: 4 } }), /시변.*시불변성 일치.*드러나지 않음 — T를 바꿔/);
+  // a truly linear system never gets a hint
+  assert.doesNotMatch(ltiLesson.describe({ family: 'test', params: { a1: 0.5, a2: 0.5, T: 0, sys: 0 } }), /드러나지 않음/);
+  // the plot titles say it is this input only
+  const frame = ltiFrame('test', { sys: 1, a1: 0.5, a2: 0.5, T: 2 });
+  assert.match(frame.panes[0].title, /이 입력: 일치/);
+});
+
+test('step response marker at t = 0 shows the one-sided limits, not h(0)', () => {
+  const at0 = ltiLesson.describe({ family: 'step', params: { tau: 0.25 }, cursor: 0 });
+  assert.match(at0, /h\(0\)은 미정의.*h\(0⁻\)=0.*h\(0⁺\)=1\/τ=4/);
+  assert.doesNotMatch(at0, /h=ds\/dt=0/);
+  const frame = ltiFrame('step', { tau: 0.25 }, 0);
+  assert.deepEqual(frame.panes[1].dots, []); // no marker dot on the jump
+  const tangent = frame.panes[0].segments[0];
+  near((tangent.y2 - tangent.y1) / (tangent.x2 - tangent.x1), 4, 1e-9); // right-hand slope
+  assert.ok(frame.panes[1].jumps[0].list.some((j) => j.x === 0 && j.left === 0 && Math.abs(j.right - 4) < 1e-5));
+  const after = ltiFrame('step', { tau: 0.25 }, 0.3);
+  assert.equal(after.panes[1].dots.length, 1);
+  near(after.panes[1].dots[0].y, 4 * Math.exp(-1.2));
+});
+
+test('step response panes share the same full-range ticks, tau is marked separately', () => {
+  for (const tau of [0.05, 0.25, 1, 2]) {
+    const [top, bottom] = ltiFrame('step', { tau }, 0.1).panes;
+    assert.deepEqual(top.xTicks, bottom.xTicks);
+    assert.ok(Math.max(...top.xTicks) >= top.x[1] * 0.7, `ticks reach the right edge for tau=${tau}: ${top.xTicks}`);
+    assert.ok(top.vlines.some((v) => v.x === tau) && bottom.vlines.some((v) => v.x === tau));
+  }
 });
 
 test('every example draws finite frames at initial / min / max sliders and has a Korean read line', () => {

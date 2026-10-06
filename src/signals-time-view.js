@@ -89,6 +89,8 @@ export function createTimeView({ doc, parent, emit }) {
     pane.setTitle(discrete ? 'x[k] · y[n]  (횡축 정수 인덱스)' : 'x(t) · y(t)=x(at−b)', 'start');
     let v;
     let image;
+    let jumpIn = null; // CT: the marker sits on a jump of x(t), where the value is undefined and only the one-sided limits exist
+    let jumpOut = null;
     if (discrete) {
       curveX.set([]); curveY.set([]); jumpsX.set([]); jumpsY.set([]); stageScale.set([]); stageShift.set([]);
       stemsX.set(seqValues.map((value, i) => [TIME_SEQUENCE.start + i - 0.12, value]));
@@ -111,8 +113,10 @@ export function createTimeView({ doc, parent, emit }) {
       curveX.set(sampleCurve(baseFn, axis.lo, axis.hi, 700, xEdges, { gaps: true }));
       curveY.set(sampleCurve(outFn, axis.lo, axis.hi, 1200, yEdges, { gaps: true }));
       const defined = family === 'steps' || family === 'steps-r'; // the lecture defines the end values by interval ([-1,2) is closed on the left)
-      jumpsX.set(jumpList(baseFn, xEdges, axis.lo, axis.hi, { defined }));
-      jumpsY.set(jumpList(outFn, yEdges, axis.lo, axis.hi, { defined }));
+      const listX = jumpList(baseFn, xEdges, axis.lo, axis.hi, { defined });
+      const listY = jumpList(outFn, yEdges, axis.lo, axis.hi, { defined });
+      jumpsX.set(listX);
+      jumpsY.set(listY);
       if (stage) {
         const s = stageSignals(family, a, b);
         const scaledEdges = xEdges.map((e) => e / Math.abs(a));
@@ -121,17 +125,32 @@ export function createTimeView({ doc, parent, emit }) {
       } else { stageScale.set([]); stageShift.set([]); }
       v = baseFn(tau);
       image = timeImage(tau, a, b);
+      jumpIn = defined ? null : listX.find((j) => Math.abs(j.x - tau) < 1e-9) ?? null;
+      jumpOut = defined ? null : listY.find((j) => Math.abs(j.x - image) < 1e-9) ?? null;
     }
-    dotX.set(tau, v);
-    dropX.set(tau, 0, v);
     const forward = image >= tau;
-    labelX.set(pane.px(tau) + (forward ? -4 : 4), pane.py(0) + 16, discrete ? `k=${tau}` : `τ=${formatNumber(tau)}`, forward ? 'end' : 'start');
+    const limits = (name, at, j) => `${name}(${formatNumber(at)}⁻)=${formatNumber(j.left)}, ${name}(${formatNumber(at)}⁺)=${formatNumber(j.right)}`;
+    if (jumpIn) {
+      // no value at the jump: no dot, only the position guide and the two one-sided limits
+      dotX.hide();
+      dropX.set(tau, 0, Math.abs(jumpIn.left) > Math.abs(jumpIn.right) ? jumpIn.left : jumpIn.right);
+    } else {
+      dotX.set(tau, v);
+      dropX.set(tau, 0, v);
+    }
+    labelX.set(pane.px(tau) + (forward ? -4 : 4), pane.py(0) + 16, discrete ? `k=${tau}` : jumpIn ? `τ=${formatNumber(tau)}: ${limits('x', tau, jumpIn)}` : `τ=${formatNumber(tau)}`, forward ? 'end' : 'start');
     const survives = !discrete || Number.isInteger(image);
     if (survives && image >= axis.lo && image <= axis.hi) {
-      dotY.set(image, v);
-      dropY.set(image, 0, v);
-      link.set(tau, v, image, v);
-      labelY.set(pane.px(image) + (forward ? 4 : -4), pane.py(0) + 16, discrete ? `n=${formatNumber(image)}` : `t=${formatNumber(image)}`, forward ? 'start' : 'end');
+      if (jumpOut) {
+        dotY.hide();
+        dropY.set(image, 0, Math.abs(jumpOut.left) > Math.abs(jumpOut.right) ? jumpOut.left : jumpOut.right);
+        link.hide();
+      } else {
+        dotY.set(image, v);
+        dropY.set(image, 0, v);
+        link.set(tau, v, image, v);
+      }
+      labelY.set(pane.px(image) + (forward ? 4 : -4), pane.py(0) + 16, discrete ? `n=${formatNumber(image)}` : jumpOut ? `t=${formatNumber(image)}: ${limits('y', image, jumpOut)}` : `t=${formatNumber(image)}`, forward ? 'start' : 'end');
     } else {
       dotY.hide(); dropY.hide(); link.hide(); labelY.hide();
       if (discrete && !Number.isInteger(image)) labelY.setAt(tau, v, 'n 정수 아님 → 표본 없음', 'middle', 28);

@@ -161,3 +161,54 @@ test('only the time lesson normalizes parameters; the normalized value is a lega
   assert.deepEqual([up.params.L, up.params.b], [1, 1]);
   for (const [id, lesson] of Object.entries(LESSONS)) if (id !== 'time') assert.equal(lesson.normalize, undefined, id);
 });
+
+// ---- series view: the phase pane's ticks do not stay drawn when the pane is hidden (fake DOM, no browser) ----------
+function fakeNode(tag) {
+  const attrs = new Map();
+  const node = {
+    tag, children: [], style: {}, hidden: false, textContent: '', parent: null,
+    classList: { toggle() {}, add() {}, remove() {} },
+    setAttribute(key, value) { attrs.set(key, String(value)); },
+    getAttribute: (key) => attrs.get(key) ?? null,
+    append(...items) { for (const item of items) { if (typeof item === 'object') item.parent = node; node.children.push(item); } },
+    addEventListener() {}, remove() {}, focus() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 400 }),
+  };
+  return node;
+}
+const fakeDoc = {
+  createElement: (tag) => fakeNode(tag),
+  createElementNS: (ns, tag) => fakeNode(tag),
+  createTextNode: (text) => ({ data: text }),
+};
+const walk = (node, visit) => { visit(node); for (const child of node.children ?? []) if (child && child.tag) walk(child, visit); };
+
+test('series view: switching to the one-sided / power spectrum hides the phase pane axes too (no tick node stays visible)', async () => {
+  const { createSeriesView } = await import('../../src/signals-series-view.js');
+  const host = fakeNode('div');
+  const view = createSeriesView({ doc: fakeDoc, parent: host, emit() {} });
+  view.layout(900);
+  const state = (spec) => ({ family: 'pulse', params: { N: 7, T0: 1, D: 0.5, spec, axis: 0 }, cursor: 0.25 });
+  const drawnTicks = () => {
+    let drawn = 0;
+    let pane = null;
+    walk(view.root, (n) => { if (n.getAttribute?.('class') === 'sg-pane') pane = n; });
+    const panes = [];
+    walk(view.root, (n) => { if (n.getAttribute?.('class') === 'sg-pane') panes.push(n); });
+    pane = panes.at(-1); // the phase pane is the last one created
+    walk(pane, (n) => {
+      const cls = n.getAttribute('class');
+      if ((cls === 'sg-tick' || cls === 'sg-grid' || cls === 'sg-axis') && n.getAttribute('visibility') !== 'hidden') drawn += 1;
+    });
+    return { drawn, root: pane.getAttribute('visibility') };
+  };
+  view.update(state(0));
+  const shown = drawnTicks();
+  assert.equal(shown.root, 'visible');
+  assert.ok(shown.drawn > 5, 'the two-sided spectrum draws phase ticks');
+  for (const spec of [1, 2]) {
+    view.update(state(spec));
+    assert.deepEqual(drawnTicks(), { drawn: 0, root: 'hidden' }, 'spec ' + spec);
+  }
+  view.update(state(0));
+  assert.ok(drawnTicks().drawn > 5, 'the ticks come back with the phase pane');
+});

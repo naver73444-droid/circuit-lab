@@ -106,8 +106,58 @@ test('modulation: x(t) cos(w0 t) has half-height copies of X at +-f0 (checked ag
     near(spec.re, num.re, 2e-4);
     near(spec.re, 0.5 * 2 * (sinc((f - 2) * 2) + sinc((f + 2) * 2)), 1e-12);
   }
-  near(transformMetrics('mod', p).peak, spectrumValue('mod', p, 2).mag);
-  assert.deepEqual(transformMetrics('mod', p).freqSpan.map((v) => Math.round((v - p.f0) * 1000) / 1000), [-transformMetrics('mod', p).freqWidth / 2, transformMetrics('mod', p).freqWidth / 2].map((v) => Math.round(v * 1000) / 1000));
+  // maximum and half-amplitude points come from the synthesized spectrum (the mirror lobe shifts the peak off f0 a little)
+  const sm = transformMetrics('mod', p);
+  assert.ok(sm.peak >= spectrumValue('mod', p, 2).mag - 1e-12);
+  near(sm.peak, bruteMax(p), 1e-5);
+  near(sm.freqSpan[1] - sm.freqSpan[0], sm.freqWidth, 1e-12);
+  for (const edge of sm.freqSpan) near(spectrumValue('mod', p, edge).mag, sm.peak / 2, 1e-6);
+});
+
+// brute-force maximum of |X(f)| for the modulated pulse over f >= 0
+function bruteMax(p) {
+  let best = 0;
+  for (let f = 0; f <= p.f0 + 6 / p.T; f += 0.0005) best = Math.max(best, spectrumValue('mod', p, f).mag);
+  return best;
+}
+
+test('modulation with overlapping lobes (T=0.5, f0=0.5): peak 0.450158 at f=0 and half-amplitude width 2.540391 Hz, not the single-sinc 0.409 / 2.413', () => {
+  const p = { T: 0.5, f0: 0.5 };
+  const m = transformMetrics('mod', p);
+  near(m.peak, 0.450158, 1e-6);
+  near(m.peak, spectrumValue('mod', p, 0).mag, 1e-9);
+  near(m.peakAt, 0, 1e-9);
+  near(m.freqWidth, 2.540391, 1e-5);
+  near(m.freqSpan[0], -m.freqSpan[1], 1e-9);
+  assert.ok(Math.abs(m.peak - 0.409) > 0.04 && Math.abs(m.freqWidth - 2.413) > 0.1);
+  assert.match(describeTransform('mod', { ...p, axis: 0 }), /최댓값 0\.45\(/);
+  assert.match(describeTransform('mod', { ...p, axis: 0 }), /원점, 두 로브가 겹침/);
+  // the plotted segment ends are the true crossings
+  const frame = transformFrame('mod', { ...p, axis: 0 });
+  const seg = frame.panes[1].segments[0];
+  near(seg.x2 - seg.x1, 2.540391, 1e-5);
+  near(seg.y1, 0.450158 / 2, 1e-6);
+  // well separated lobes (T=2, f0=3): the peak sits next to f0 and the readout names it
+  const far = transformMetrics('mod', { T: 2, f0: 3 });
+  assert.ok(Math.abs(far.peakAt - 3) < 0.05);
+  assert.ok(far.peak > spectrumValue('mod', { T: 2, f0: 3 }, 3).mag - 1e-12);
+  assert.match(describeTransform('mod', { T: 2, f0: 3, axis: 0 }), /f≈±3/);
+  // random-ish parameter grid: the metric equals a brute-force scan
+  for (const [T, f0] of [[0.5, 1], [1, 0.7], [0.75, 2.5], [4, 0.5], [3.3, 1.3]]) near(transformMetrics('mod', { T, f0 }).peak, bruteMax({ T, f0 }), 1e-5);
+});
+
+test('readouts that depend on t0 and on the axis: shifted two-sided exponential, omega-axis ESD area', () => {
+  assert.match(transformLesson.read('twoexp', { t0: 0, axis: 0 }), /순실수입니다 \(위상 0\)/);
+  assert.match(transformLesson.read('twoexp', {}), /순실수입니다 \(위상 0\)/);
+  const shifted = transformLesson.read('twoexp', { t0: 0.5, axis: 0 });
+  assert.doesNotMatch(shifted, /순실수입니다 \(위상 0\)/);
+  assert.match(shifted, /위상이 −2πf t₀/);
+  assert.match(transformLesson.read('twoexp', { t0: -1, axis: 1 }), /위상이 −ωt₀/);
+  assert.match(transformLesson.read('esd', { axis: 0 }), /전체 면적이 에너지/);
+  const wRead = transformLesson.read('esd', { axis: 1 });
+  assert.doesNotMatch(wRead, /전체 면적이 에너지/);
+  assert.match(wRead, /면적÷2π/);
+  for (const family of ['twoexp', 'esd']) for (const axis of [0, 1]) assert.ok(transformLesson.read(family, { t0: 0.3, axis }).length > 20);
 });
 
 test('cos <-> two impulses (area 1/2 in f, pi in w) and 1 <-> delta (area 1 in f, 2 pi in w)', () => {

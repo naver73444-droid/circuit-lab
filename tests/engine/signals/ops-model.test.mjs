@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  OPS_FAMILIES, opsFrame, opsLesson, ex11, ex12x1, ex12x2, ampOp, sumOp, prodOp, pieceFormulas, evenPart, oddPart, pulseAt, expRight,
+  OPS_FAMILIES, opsFrame, opsLesson, ex11, ex12x1, ex12x2, ampOp, sumOp, prodOp, pieceFormulas, evenPart, oddPart, pulseAt, expRight, evenOddEnergy,
   energyPower, runningPower, runningEnergy, trainPower, deltaApprox, stepApprox, rampApprox, idealStep, idealRamp, dtChain, dtSinusoid, EX11,
 } from '../../../src/signals-ops-model.js';
 import { controlDefaults } from '../../../src/signals-util.js';
@@ -67,6 +67,30 @@ test('Ex 1.14: x = Pi(t - 1/2): x_e = (1/2) Pi(t/2), x_o = +-1/2; x_e + x_o = x'
   // Energy splits without cross term
   const ex = integrate((t) => x(t) ** 2, -4, 4);
   near(integrate((t) => xe(t) ** 2, -4, 4) + integrate((t) => xo(t) ** 2, -4, 4), ex, 2e-3);
+});
+
+test('even/odd energies are closed forms (not clipped by a finite window): e^(-0.25t)u(t) has E_x = 2 and E_e = E_o = 1', () => {
+  const exp = evenOddEnergy('eo-exp', { alpha: 0.25 });
+  near(exp.ex, 2);
+  near(exp.ee, 1);
+  near(exp.eo, 1);
+  assert.match(opsLesson.describe({ family: 'eo-exp', params: { alpha: 0.25 } }), /E_x=2 = E_e 1 \+ E_o 1/);
+  // against a window wide enough for every slider value
+  for (const alpha of [0.25, 1, 2.5]) {
+    const x = expRight(alpha);
+    const wide = 40 / alpha;
+    near(integrate((t) => evenPart(x)(t) ** 2, -wide, wide, 400000), evenOddEnergy('eo-exp', { alpha }).ee, 1e-4);
+    near(integrate((t) => oddPart(x)(t) ** 2, -wide, wide, 400000), evenOddEnergy('eo-exp', { alpha }).eo, 1e-4);
+  }
+  // pulse of width w centered at c: the closed form agrees with direct integration for overlapping and disjoint mirror images
+  for (const [c, w] of [[0.5, 1], [0, 2], [-1.2, 3], [0.3, 0.5], [2, 3]]) {
+    const x = pulseAt(c, w);
+    const energy = evenOddEnergy('eo-pulse', { c, w });
+    near(energy.ex, w);
+    near(energy.ee + energy.eo, energy.ex);
+    near(integrate((t) => evenPart(x)(t) ** 2, -8, 8, 800000), energy.ee, 2e-3);
+    near(integrate((t) => oddPart(x)(t) ** 2, -8, 8, 800000), energy.eo, 2e-3);
+  }
 });
 
 test('energy and power: sinusoid A^2/2, A e^{-at}u(t): A^2/(2a), A u(t): A^2/2, pulse train: mean Ad and power A^2 d', () => {
