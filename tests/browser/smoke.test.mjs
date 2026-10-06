@@ -3234,6 +3234,10 @@ describe("browser smoke", { timeout: 600000 }, () => {
     near(parseEng(values[1]), 11e3, 1e-9, "RBC");
     near(parseEng(values[2]), 5.5e3, 1e-9, "RCA");
     assert.equal((await ydeltaButton()).text, "Δ→Y 변환", "the same three parts now form a Δ");
+    // The stored value keeps 12 digits, the canvas label is shortened for reading (the inspector field still holds the raw text).
+    const firstId = converted.selection[0].slice("component:".length);
+    assert.ok(values[0].length > 8, "stored: " + values[0]);
+    assert.equal(await ev(`document.querySelector('.component[data-id="${firstId}"] .value-label').textContent`), "3.6667k", "canvas label is at most 5 significant digits");
     // Undo first (running an analysis can add its own history entries): one Ctrl+Z restores everything.
     await ctrlKey("z", "KeyZ", 90);
     const undone = await state();
@@ -3256,6 +3260,20 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.match((await noticeTexts()).join("|"), /Δ→Y 변환: RA=1 kΩ, RB=2 kΩ, RC=3 kΩ/);
     await runAnalysis("dc");
     cornerVoltages((await state()).result).forEach((value, index) => near(value, before[index], 1e-6, `corner ${YD_PINS[index].join(".")} after Δ→Y`, 1e-9));
+  });
+
+  test("Y–Δ editor: a held key Y converts once (auto-repeat keydowns are ignored)", async () => {
+    await navigate("/?example=y-network");
+    await autoUpdateOff();
+    await pickResistors(["R1", "R2", "R3"]);
+    const depth = (await state()).historyDepth;
+    await press("y", "KeyY", 89);
+    assert.equal((await state()).historyDepth, depth + 1, "the first press converts");
+    const converted = (await state()).circuit;
+    for (let n = 0; n < 4; n += 1) await ctx.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "y", code: "KeyY", windowsVirtualKeyCode: 89, autoRepeat: true });
+    await settle();
+    assert.equal((await state()).historyDepth, depth + 1, "held-key repeats add no history entry");
+    assert.deepEqual((await state()).circuit, converted, "and do not convert back");
   });
 
   test("Y–Δ editor: a selection that is not a Y or Δ shows a disabled command with the reason; other selections show none", async () => {
@@ -3314,6 +3332,17 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal(await valueOf("RAB"), lastGood, "outputs keep the last valid values");
     await typeInto('[data-ydelta-text="1"]', "2.2k");
     assert.equal(await ev(`document.querySelector('[data-ydelta-text="1"]').getAttribute("aria-invalid")`), null, "a valid value clears the complaint");
+
+    // A value that parses but overflows in the conversion (RA = 1e308) is refused before it is committed: nothing throws and the tool keeps working.
+    const beforeOverflow = await ev(`${L}.getCircuitCourseState().yDelta`);
+    await typeInto('[data-ydelta-text="0"]', "1e308");
+    assert.equal(await ev(`document.querySelector('[data-ydelta-text="0"]').getAttribute("aria-invalid")`), "true", "the field complains");
+    assert.match(await ev(`document.querySelector('[data-ydelta-error="0"]').textContent`), /[가-힣]/);
+    const keptState = await ev(`${L}.getCircuitCourseState().yDelta`);
+    assert.deepEqual([keptState.inputs, keptState.outputs], [beforeOverflow.inputs, beforeOverflow.outputs], "the last valid network stays");
+    assert.equal(keptState.direction, "toDelta");
+    await typeInto('[data-ydelta-text="0"]', "1k");
+    assert.equal(await ev(`document.querySelector('[data-ydelta-text="0"]').getAttribute("aria-invalid")`), null);
 
     // Direction: the results become the inputs, the figure's roles swap.
     await click('[data-ydelta-direction="toY"]');

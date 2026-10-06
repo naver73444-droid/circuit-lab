@@ -91,3 +91,11 @@ export function evaluateTool(state) {
     : `R_A = (${a}·${c})/(${a} + ${b} + ${c}) = ${plain(outputs[first])}`;
   return { direction: state.direction, inputs, outputs, texts, read, math: { general, numeric } };
 }
+
+/**
+ * Evaluate a candidate state completely BEFORE it is committed: { ok: true, evaluation } or { ok: false, reason } (Korean). A value can pass
+ * validation and still overflow in the conversion (R_A = 1e308), so the controller only keeps a candidate that evaluates.
+ */
+export function attempt(candidate) {
+  try { return { ok: true, evaluation: evaluateTool(candidate) }; } catch (error) { return { ok: false, reason: error instanceof RangeError ? error.message : "변환 결과를 계산하지 못했습니다." }; }
+}

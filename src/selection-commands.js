@@ -86,10 +86,14 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
     const ids = selectedResistorIds(state.circuit, selectedItems(state));
     if (!ids) return false;
     let outcome;
+    let reason = "";
     try {
       outcome = convertYDeltaInCircuit(state.circuit, ids, { allocator: allocatorFor(state), probes: state.probes });
+      if (outcome.ok === false) reason = outcome.reason;
     } catch (error) {
-      const reason = error instanceof RangeError ? error.message : "변환하지 못했습니다.";
+      reason = error instanceof RangeError ? error.message : "변환하지 못했습니다.";
+    }
+    if (reason) {
       setStatus(`Y–Δ 변환 거부 · ${reason}`, "error");
       notify(`Y–Δ 변환 거부 · ${reason}`, "error");
       return false;

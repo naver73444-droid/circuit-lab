@@ -7,7 +7,8 @@ import { createIdAllocator } from "../../src/id-allocator.js";
 import { cloneExample } from "../../src/examples.js";
 import { GRID_SIZE } from "../../src/circuit-geometry.js";
 import { parseCourseMath } from "../../src/course-math-view.js";
-import { DIRECTIONS, SLIDER_STEPS, createYDeltaToolState, evaluateTool, resistanceToSlider, sliderToResistance, toggleDirection, withText, withValue } from "../../src/y-delta-tool-model.js";
+import { formatCanvasValueLabel } from "../../src/canvas-renderer.js";
+import { DIRECTIONS, SLIDER_STEPS, attempt, createYDeltaToolState, evaluateTool, resistanceToSlider, sliderToResistance, toggleDirection, withText, withValue } from "../../src/y-delta-tool-model.js";
 import { shortcutFor } from "../../src/editor-shortcuts.js";
 
 const relative = (a, b) => Math.abs(a - b) / Math.max(Math.abs(b), 1e-300);
@@ -480,4 +481,133 @@ test("단축키 Y는 yDelta 동작, Ctrl+Y는 그대로 다시 하기, 글자 �
   assert.equal(shortcutFor(event("y"), { typing: true }), null);
   assert.equal(shortcutFor(event("y", { altKey: true })), null);
   assert.equal(shortcutFor({ key: "ㅛ", code: "KeyY" })?.action, "yDelta", "한글 입력기에서도 물리 키로 동작");
+});
+
+// ---- reviewer-verified fixes --------------------------------------------------------------------------------------------------
+
+test("[1] 검증은 통과하지만 변환에서 넘치는 입력(RA=1e308)은 커밋 전에 걸러지고 마지막 유효 상태·방향 전환·읽기가 살아 있다", () => {
+  const state = createYDeltaToolState();
+  const typed = withText(state, "RA", "1e308");
+  assert.equal(typed.ok, true, "값 자체는 유효한 저항");
+  assert.throws(() => evaluateTool(typed.state), RangeError, "그러나 평가는 넘친다");
+  const tried = attempt(typed.state);
+  assert.equal(tried.ok, false);
+  assert.match(tried.reason, /[가-힣]/);
+  // 컨트롤러는 attempt가 실패하면 state를 바꾸지 않는다: 마지막 유효 상태로 평가·방향 전환이 그대로 된다.
+  assert.equal(attempt(state).ok, true);
+  const toggled = toggleDirection(state);
+  assert.equal(attempt(toggled).ok, true);
+  assert.equal(evaluateTool(state).texts.RAB, "3.667 kΩ");
+  // 정상 후보는 평가 결과를 같이 돌려준다
+  const fine = attempt(withText(state, "RA", "4.7k").state);
+  assert.equal(fine.ok, true);
+  assert.equal(fine.evaluation.inputs.RA, 4700);
+});
+
+const endpointKeyOf = (end) => (end.junctionId !== undefined ? "J:" + end.junctionId : end.componentId + ":" + end.pin);
+
+/** A Δ whose corner A carries a capacitor wired twice (once from each edge pin, opposite orientations) to ground. */
+function deltaWithTwinWires() {
+  const circuit = deltaCircuit("direct");
+  circuit.components.push(part("C1", "C", 240, 100, { value: "1u", ic: "0" }));
+  circuit.wires.push(wire("W10", pinEnd("C1", 0), pinEnd("R1", 0)), wire("W11", pinEnd("R3", 1), pinEnd("C1", 0)), wire("W12", pinEnd("C1", 1), pinEnd("G1", 0)));
+  return circuit;
+}
+
+test("[2] 결과가 접속점 한도(1024)를 넘으면 회로 대신 {ok:false, reason}을 돌려주고 입력은 그대로다", () => {
+  const dangling = (count) => Array.from({ length: count }, (_, index) => ({ id: "JX" + (index + 1), x: 1000 + 20 * (index % 50), y: 1000 + 20 * Math.floor(index / 50) }));
+  const full = deltaCircuit("direct");
+  full.junctions.push(...dangling(1024));
+  validateCircuitStructure(full);
+  const frozen = structuredClone(full);
+  const refused = convertYDeltaInCircuit(full, ["R1", "R2", "R3"]);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.circuit, undefined);
+  assert.match(refused.reason, /접속점.*1025.*한도/);
+  assert.deepEqual(full, frozen, "입력 회로는 바뀌지 않는다");
+  const fits = deltaCircuit("direct");
+  fits.junctions.push(...dangling(1023));
+  const accepted = convertYDeltaInCircuit(fits, ["R1", "R2", "R3"]);
+  assert.equal(accepted.ok, true, "한도 안이면 변환된다");
+  assert.equal(accepted.circuit.junctions.length, 1024);
+  validateCircuitStructure(accepted.circuit);
+});
+
+test("[3] 코너 배선을 합친 뒤 같은 끝점 쌍의 중복 배선은 방향과 상관없이 하나만 남고 프로브 참조가 정리된다", () => {
+  const before = deltaWithTwinWires();
+  const probes = [
+    { key: "V:C1:0", kind: "voltage", componentId: "C1", pin: 0, wireId: "W11", label: "V(C1.1)", color: "c1" },
+    { key: "V:V1:0", kind: "voltage", componentId: "V1", pin: 0, wireId: "W4", label: "V(V1.1)", color: "c2" },
+  ];
+  const result = convertYDeltaInCircuit(before, ["R1", "R2", "R3"], { probes });
+  assert.equal(result.ok, true);
+  validateCircuitStructure(result.circuit);
+  const keys = result.circuit.wires.map((item) => [endpointKeyOf(item.a), endpointKeyOf(item.b)].sort().join("|"));
+  assert.equal(new Set(keys).size, keys.length, "같은 끝점 쌍의 배선이 둘 이상 없다: " + keys.join(" ; "));
+  const ids = new Set(result.circuit.wires.map((item) => item.id));
+  assert.ok(result.probes.every((probe) => !probe.wireId || ids.has(probe.wireId)), "프로브는 사라진 배선을 가리키지 않는다");
+  assert.ok(!ids.has("W11") && ids.has("W10"), "처음 배선은 남고 뒤의 중복은 사라진다");
+  assert.equal(result.probes.find((probe) => probe.key === "V:C1:0").wireId, null);
+  assertEquivalent(before, result.circuit, { cornerPins: [["V1", 0], ["R4", 0], ["R5", 1], ["C1", 0]] });
+});
+
+test("[4] Δ→Y의 새 팔·중심은 남는 부품과 겹치지 않는다(첫 배치 자리에 부품을 두어 재현)", () => {
+  const clean = deltaCircuit("direct");
+  const first = convertYDeltaInCircuit(clean, ["R1", "R2", "R3"]);
+  const placed = first.report.added.map((id) => first.circuit.components.find((component) => component.id === id));
+  const hub = first.circuit.junctions.find((junction) => !clean.junctions.some((old) => old.id === junction.id));
+  const blockers = [...placed.map((component, index) => part("X" + (index + 1), "C", component.x, component.y, { value: "1u", ic: "0" })), part("X4", "C", hub.x, hub.y, { value: "1u", ic: "0" })];
+  const crowded = deltaCircuit("direct");
+  crowded.components.push(...blockers);
+  const result = convertYDeltaInCircuit(crowded, ["R1", "R2", "R3"]);
+  assert.equal(result.ok, true);
+  validateCircuitStructure(result.circuit);
+  const moved = result.report.added.map((id) => result.circuit.components.find((component) => component.id === id));
+  for (const component of moved) for (const other of blockers) assert.ok(Math.hypot(component.x - other.x, component.y - other.y) >= 70, `${component.id} sits on ${other.id}`);
+  const newHub = result.circuit.junctions.find((junction) => !crowded.junctions.some((old) => old.id === junction.id));
+  for (const other of blockers) assert.ok(Math.hypot(newHub.x - other.x, newHub.y - other.y) >= 30, "새 중심 접속점이 부품 위에 있지 않다");
+  for (let i = 0; i < 3; i += 1) for (let j = i + 1; j < 3; j += 1) assert.ok(Math.hypot(moved[i].x - moved[j].x, moved[i].y - moved[j].y) >= 60);
+  for (const component of moved) assert.ok(component.x % GRID_SIZE === 0 && component.y % GRID_SIZE === 0);
+  assert.equal(detectYDelta(result.circuit, result.report.added).kind, "Y");
+  // 장애물이 없으면 처음 배치와 같고, 첫 배치 자리가 막히면 다른 자리를 고른다
+  const anchors = [{ x: 200, y: 100 }, { x: 400, y: 100 }, { x: 300, y: 300 }];
+  const preferred = layoutStarArms(anchors, { x: 300, y: 160 });
+  assert.deepEqual(layoutStarArms(anchors, { x: 300, y: 160 }, [], []), preferred);
+  const avoided = layoutStarArms(anchors, { x: 300, y: 160 }, [...preferred.arms, preferred.hub]);
+  assert.notDeepEqual(avoided, preferred);
+  for (const point of preferred.arms) for (const arm of avoided.arms) assert.ok(Math.hypot(arm.x - point.x, arm.y - point.y) >= 70);
+});
+
+test("[5] 단축키 Y를 누르고 있으면(repeat) 무시 신호가 붙고, 처음 눌렀을 때는 붙지 않는다", () => {
+  assert.deepEqual(shortcutFor({ key: "y", code: "KeyY", repeat: false }), { action: "yDelta" });
+  assert.deepEqual(shortcutFor({ key: "y", code: "KeyY", repeat: true }), { action: "yDelta", ignore: true });
+  assert.equal(shortcutFor({ key: "y", code: "KeyY", ctrlKey: true, repeat: true }).action, "redo", "Ctrl+Y는 그대로");
+});
+
+test("[6] 새 참조 번호는 ref가 없는 기존 부품의 id(R6)도 피해서 이어진다", () => {
+  const before = yCircuit();
+  before.components.push({ id: "R6", type: "R", x: 640, y: 260, rotation: 90, props: { value: "1k" } });
+  before.wires.push(wire("W30", pinEnd("R6", 0), pinEnd("R4", 0)), wire("W31", pinEnd("R6", 1), pinEnd("G1", 0)));
+  const result = convertYDeltaInCircuit(before, ["R1", "R2", "R3"]);
+  const refs = result.circuit.components.map((component) => component.props?.ref ?? component.id);
+  assert.deepEqual(result.report.added.map((id) => result.circuit.components.find((component) => component.id === id).props.ref), ["R7", "R8", "R9"]);
+  assert.equal(new Set(refs).size, refs.length, "표시 이름이 겹치지 않는다: " + refs.join(","));
+});
+
+test("[7] 캔버스 값 라벨: 8자를 넘는 값은 유효숫자 5자리 이하 + SI 접두어, 짧은 값과 숫자가 아닌 값은 그대로", () => {
+  assert.equal(formatCanvasValueLabel("3.66666666667k"), "3.6667k");
+  assert.equal(formatCanvasValueLabel("1.33333333333meg"), "1.3333meg");
+  assert.equal(formatCanvasValueLabel("3666.66666667"), "3.6667k");
+  assert.equal(formatCanvasValueLabel("0.000123456789"), "123.46u");
+  assert.equal(formatCanvasValueLabel("-3.66666666667k"), "-3.6667k");
+  assert.equal(formatCanvasValueLabel("22000.0001"), "22k");
+  for (const same of ["1k", "10m", "4.7u", "1", "100k", "2.2kΩ", "12345678", "abcdefghijkl", "", "PULSE high 1 V"]) assert.equal(formatCanvasValueLabel(same), same, same);
+  assert.equal(formatCanvasValueLabel(undefined), "");
+  assert.equal(formatCanvasValueLabel(5), "5");
+  // 저장 정밀도는 그대로: 변환 결과 문자열은 여전히 12자리이고 표시용만 줄어든다
+  const stored = resistanceCircuitText(11e3 / 3);
+  assert.ok(stored.length > 8);
+  assert.ok(relative(parseValue(stored), 11e3 / 3) < 1e-11);
+  assert.ok(formatCanvasValueLabel(stored).length <= 8);
+  assert.ok(relative(parseValue(formatCanvasValueLabel(stored)), 11e3 / 3) < 1e-4);
 });

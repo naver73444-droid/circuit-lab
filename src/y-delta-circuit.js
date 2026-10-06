@@ -12,7 +12,7 @@
  *  connectivity and probes on the corners survive. Voltage probes on a removed outer pin move to its anchor; probes that only existed
  *  on removed parts (centre, resistor current) are dropped.
  */
-import { buildTopology, componentDefaults, endpointKey, pinCount } from "./circuit-engine.js";
+import { CIRCUIT_LIMITS, buildTopology, componentDefaults, endpointKey, pinCount, validateCircuitStructure } from "./circuit-engine.js";
 import { UnionFind } from "./union-find.js";
 import { GRID_SIZE, circuitGeometryVersion, pinPosition, snapPoint } from "./circuit-geometry.js";
 import { createIdAllocator } from "./id-allocator.js";
@@ -176,20 +176,43 @@ export function layoutDeltaEdges(anchors, home, obstacles = []) {
   return best.centers;
 }
 
-/** The new centre junction (at `home`) and the three arm centres of the new Y, each between the hub and its corner. */
-export function layoutStarArms(anchors, home) {
-  let hub = snapPoint(home);
-  if (anchors.some((anchor) => distance(anchor, hub) < 40)) hub = snapPoint({ x: home.x, y: home.y - 80 });
-  const degenerate = anchors.some((anchor) => distance(anchor, hub) < 40);
-  const ring = ringAt(hub, 80, RING_ANGLES[0]);
-  const arms = anchors.map((anchor, index) => {
-    if (degenerate) return ring[index];
-    const gap = distance(anchor, hub);
-    const reach = Math.max(60, Math.min(100, gap / 2));
-    return snapPoint({ x: hub.x + ((anchor.x - hub.x) / gap) * reach, y: hub.y + ((anchor.y - hub.y) / gap) * reach });
+const HUB_SEARCH_STEPS = 6;
+
+/**
+ * The new centre junction (at `home`) and the three arm centres of the new Y, each between the hub and its corner.
+ * `obstacles` (centres of the parts that stay) and `junctions` (positions of the existing junctions) keep the result off other parts: the
+ * preferred layout (hub at home, arms towards the corners) wins when it is free; otherwise nearby hubs and ring layouts are searched and the
+ * least crowded one wins (a part under an arm or the hub costs the same heavy penalty as in layoutDeltaEdges).
+ */
+export function layoutStarArms(anchors, home, obstacles = [], junctions = []) {
+  let base = snapPoint(home);
+  if (anchors.some((anchor) => distance(anchor, base) < 40)) base = snapPoint({ x: home.x, y: home.y - 80 });
+  const spacedOut = (arms) => arms.every((arm, i) => arms.every((other, j) => i === j || distance(arm, other) >= 60));
+  const layoutsAt = (hub) => {
+    const degenerate = anchors.some((anchor) => distance(anchor, hub) < 40);
+    const towards = degenerate ? null : anchors.map((anchor) => {
+      const gap = distance(anchor, hub);
+      const reach = Math.max(60, Math.min(100, gap / 2));
+      return snapPoint({ x: hub.x + ((anchor.x - hub.x) / gap) * reach, y: hub.y + ((anchor.y - hub.y) / gap) * reach });
+    });
+    const ring = ringAt(hub, 80, RING_ANGLES[0]);
+    return [towards && spacedOut(towards) ? towards : ring, ring, ringAt(hub, 80, RING_ANGLES[1]), ringAt(hub, 100, RING_ANGLES[0]), ringAt(hub, 100, RING_ANGLES[1])];
+  };
+  const hubCrowding = (hub) => obstacles.filter((other) => distance(other, hub) < 30).length + junctions.filter((other) => distance(other, hub) < 1).length;
+  const candidates = [base];
+  for (let dy = -HUB_SEARCH_STEPS; dy <= HUB_SEARCH_STEPS; dy += 1) {
+    for (let dx = -HUB_SEARCH_STEPS; dx <= HUB_SEARCH_STEPS; dx += 1) if (dx || dy) candidates.push({ x: base.x + dx * GRID_SIZE, y: base.y + dy * GRID_SIZE });
+  }
+  let best = null;
+  candidates.forEach((hub, index) => {
+    const onCorner = index > 0 && anchors.some((anchor) => distance(anchor, hub) < 40);
+    layoutsAt(hub).forEach((arms, style) => {
+      if (!spacedOut(arms)) return;
+      const cost = CROWDED_COST * (hubCrowding(hub) + (onCorner ? 1 : 0) + arms.reduce((sum, arm) => sum + crowding(arm, obstacles), 0)) + distance(hub, base) / 2 + style;
+      if (!best || cost < best.cost - 1e-9) best = { cost, hub, arms };
+    });
   });
-  const spaced = arms.every((arm, i) => arms.every((other, j) => i === j || distance(arm, other) >= 60));
-  return { hub, arms: spaced ? arms : ring };
+  return { hub: best.hub, arms: best.arms };
 }
 
 // ---- rewrite ------------------------------------------------------------------------------------------------------------------
@@ -199,7 +222,7 @@ export function layoutStarArms(anchors, home) {
  * Wires between the pins vanish; remaining wires that all lead to one same endpoint are dropped and that endpoint becomes the anchor; none or several get a junction
  * placed on the first pin that the remaining wires are re-pointed to.
  */
-function detachPins(work, pins, allocator, reserved, removedWires) {
+function detachPins(work, pins, allocator, reserved, removedWires, repointed) {
   const inPins = (end) => end?.componentId !== undefined && pins.some((pin) => isEnd(pin, end));
   const touching = work.wires.filter((wire) => !removedWires.has(wire.id) && (inPins(wire.a) || inPins(wire.b)));
   const between = touching.filter((wire) => inPins(wire.a) && inPins(wire.b));
@@ -217,21 +240,49 @@ function detachPins(work, pins, allocator, reserved, removedWires) {
   for (const wire of rest) {
     if (inPins(wire.a)) wire.a = { ...anchor };
     if (inPins(wire.b)) wire.b = { ...anchor };
+    repointed.add(wire.id);
   }
   return anchor;
+}
+
+const wirePairKey = (wire) => [endpointKey(wire.a), endpointKey(wire.b)].sort().join("|");
+
+/**
+ * Re-pointing wires onto a shared anchor can leave two wires with the same two endpoints (in either order) or a wire from an endpoint to itself.
+ * Of the re-pointed wires (`repointed`), such redundant ones are dropped; wires the user drew are never touched. Mutates `work`.
+ */
+function dropDuplicateWires(work, repointed) {
+  const seen = new Set(work.wires.filter((wire) => !repointed.has(wire.id)).map(wirePairKey));
+  work.wires = work.wires.filter((wire) => {
+    if (!repointed.has(wire.id)) return true;
+    if (endpointKey(wire.a) === endpointKey(wire.b)) return false;
+    const key = wirePairKey(wire);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Korean reason when the rewritten circuit exceeds the editing limits or is structurally invalid, else null. */
+function structureRejection(circuit) {
+  const counts = [["부품", circuit.components.length, CIRCUIT_LIMITS.components], ["배선", circuit.wires.length, CIRCUIT_LIMITS.wires], ["접속점", (circuit.junctions ?? []).length, CIRCUIT_LIMITS.junctions]];
+  const over = counts.find(([, count, limit]) => count > limit);
+  if (over) return `변환하면 ${over[0]}이(가) ${over[1]}개가 되어 교육용 편집 한도(${over[0]} ${over[2]}개)를 넘습니다. 변환하지 않았습니다.`;
+  try { validateCircuitStructure(circuit); } catch (error) { return `변환 결과가 올바른 회로 구조가 아닙니다. ${error.message}`; }
+  return null;
 }
 
 function maxReferenceIndex(circuit, prefix) {
   let top = 0;
   const pattern = new RegExp(`^${prefix}(\\d+)$`);
   for (const component of circuit.components) {
-    const match = pattern.exec(component.props?.ref ?? "");
+    const match = pattern.exec(refOf(component) ?? "");
     if (match) top = Math.max(top, Number(match[1]));
   }
   return top;
 }
 
-function retargetProbes(probes, circuit, removedIds, removedWireIds, removedJunctionIds, anchorOfPin) {
+function retargetProbes(probes, circuit, removedIds, keptWireIds, removedJunctionIds, anchorOfPin) {
   const byId = new Map(circuit.components.map((component) => [component.id, component]));
   const result = [];
   const keys = new Set();
@@ -245,7 +296,7 @@ function retargetProbes(probes, circuit, removedIds, removedWireIds, removedJunc
       if (anchor.junctionId !== undefined) Object.assign(next, { key: `V:J:${anchor.junctionId}`, junctionId: anchor.junctionId, label: `V(${anchor.junctionId})` });
       else Object.assign(next, { key: `V:${anchor.componentId}:${anchor.pin}`, componentId: anchor.componentId, pin: anchor.pin, label: `V(${refOf(byId.get(anchor.componentId)) ?? anchor.componentId}.${anchor.pin + 1})` });
     } else if (probe.junctionId !== undefined && removedJunctionIds.has(probe.junctionId)) continue;
-    else if (probe.wireId && removedWireIds.has(probe.wireId)) next = { ...probe, wireId: null };
+    else if (probe.wireId && !keptWireIds.has(probe.wireId)) next = { ...probe, wireId: null };
     if (keys.has(next.key)) continue;
     keys.add(next.key);
     result.push(next);
@@ -255,8 +306,9 @@ function retargetProbes(probes, circuit, removedIds, removedWireIds, removedJunc
 
 /**
  * Rewrite the Y or Δ formed by `resistorIds` into the other form. The input circuit is not modified.
- * Returns { circuit, probes, report } where report = { kind: "Y→Δ"|"Δ→Y", removed, added, names, values, texts, message, selection }.
- * Throws RangeError (Korean reason) when the three resistors are not a convertible Y or Δ.
+ * Returns { ok: true, circuit, probes, report } where report = { kind: "Y→Δ"|"Δ→Y", removed, added, names, values, texts, message, selection }.
+ * Throws RangeError (Korean reason) when the three resistors are not a convertible Y or Δ. When the rewrite itself would not be a valid circuit (it would
+ * exceed CIRCUIT_LIMITS, ...) it returns { ok: false, reason } (Korean) instead of a circuit, so the editor can refuse before it mutates anything.
  * `allocator` (id-allocator.js) keeps the new ids unique for the whole project; without one the ids continue after the circuit's own.
  * New reference labels continue after the highest R number in the circuit (the removed R1…R3 are not reused for different values).
  */
@@ -270,6 +322,7 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
   const removedIds = new Set(detected.resistors);
   const removedWires = new Set();
   const removedJunctions = new Set();
+  const repointed = new Set();
   const anchorOfPin = new Map();
   const valueOf = (id) => parseResistance(byId.get(id).props.value, refOf(byId.get(id)));
   const [first, second, third] = detected.resistors.map(valueOf);
@@ -286,7 +339,7 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
     }
     for (const junction of circuit.junctions ?? []) if (resolver.junction(junction.id) === detected.center) removedJunctions.add(junction.id);
     anchors = detected.arms.map((arm) => {
-      const anchor = detachPins(work, [{ componentId: arm.id, pin: arm.outerPin }], allocator, reserved, removedWires);
+      const anchor = detachPins(work, [{ componentId: arm.id, pin: arm.outerPin }], allocator, reserved, removedWires, repointed);
       anchorOfPin.set(`${arm.id}:${arm.outerPin}`, anchor);
       return anchor;
     });
@@ -296,7 +349,7 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
     values = { RA: converted.RA, RB: converted.RB, RC: converted.RC };
     anchors = detected.nodes.map((net) => {
       const pins = detected.edges.filter((edge) => Object.hasOwn(edge.pinAt, net)).map((edge) => ({ componentId: edge.id, pin: edge.pinAt[net] }));
-      const anchor = detachPins(work, pins, allocator, reserved, removedWires);
+      const anchor = detachPins(work, pins, allocator, reserved, removedWires, repointed);
       for (const pin of pins) anchorOfPin.set(`${pin.componentId}:${pin.pin}`, anchor);
       return anchor;
     });
@@ -307,6 +360,7 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
   work.components = work.components.filter((component) => !removedIds.has(component.id));
   work.wires = work.wires.filter((wire) => !removedWires.has(wire.id) && !pointsAtRemoved(wire.a) && !pointsAtRemoved(wire.b));
   work.junctions = work.junctions.filter((junction) => !removedJunctions.has(junction.id));
+  dropDuplicateWires(work, repointed);
 
   const home = average(detected.resistors.map((id) => byId.get(id)));
   const anchorPoints = anchors.map((anchor) => endpointPosition(work, anchor));
@@ -327,7 +381,7 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
       added.push(component.id);
     });
   } else {
-    const { hub, arms } = layoutStarArms(anchorPoints, home);
+    const { hub, arms } = layoutStarArms(anchorPoints, home, work.components, work.junctions);
     const junction = { id: allocator.next("J", reserved.junctions), x: hub.x, y: hub.y };
     work.junctions.push(junction);
     names.forEach((_, index) => {
@@ -339,11 +393,15 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
     });
   }
 
+  const rejection = structureRejection(work);
+  if (rejection) return { ok: false, reason: rejection };
+
   const kind = detected.kind === "Y" ? "Y→Δ" : "Δ→Y";
   const texts = Object.fromEntries(names.map((name) => [name, resistanceText(values[name])]));
   return {
+    ok: true,
     circuit: work,
-    probes: retargetProbes(probes, circuit, removedIds, removedWires, removedJunctions, anchorOfPin),
+    probes: retargetProbes(probes, circuit, removedIds, new Set(work.wires.map((item) => item.id)), removedJunctions, anchorOfPin),
     report: { kind, removed: [...removedIds], added, names, values, texts, message: `${kind} 변환: ${names.map((name) => `${name}=${texts[name]}`).join(", ")}`, selection: added.map((id) => ({ kind: "component", id })) },
   };
 }

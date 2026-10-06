@@ -1,4 +1,4 @@
-import { pinCount } from "./circuit-engine.js";
+import { parseValue, pinCount } from "./circuit-engine.js";
 import { endpointKey } from "./circuit-edit.js";
 import {
   circuitGeometryVersion,
@@ -15,6 +15,36 @@ import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { sourceInlineDescriptor } from "./ui-model.js";
 import { isSelected, selectedKeys } from "./selection-model.js";
+
+const LABEL_LONG = 8;
+const LABEL_DIGITS = 5;
+const LABEL_PREFIX = new Map([[-12, "p"], [-9, "n"], [-6, "u"], [-3, "m"], [0, ""], [3, "k"], [6, "meg"], [9, "g"], [12, "t"]]);
+
+/**
+ * The value text drawn on the canvas. A stored value such as "3.66666666667k" (a converted resistance keeps 12 digits so the circuit stays
+ * equivalent) is too long to read there, so a value string longer than 8 characters is shown with at most 5 significant digits:
+ * "3.6667k"; a bare number gets an SI prefix ("0.000123456789" → "123.46u"). Short values, text that is no number ("PULSE" style labels are
+ * built around the value, not part of it) and anything that cannot be shortened stay exactly as stored. The inspector keeps the raw text.
+ */
+export function formatCanvasValueLabel(raw) {
+  const text = typeof raw === "string" ? raw : typeof raw === "number" ? String(raw) : "";
+  if (text.length <= LABEL_LONG) return text;
+  const match = text.trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([A-Za-zΩµμ]*)$/);
+  if (!match) return text;
+  let value;
+  try { value = parseValue(text); } catch { return text; }
+  if (!Number.isFinite(value) || value === 0) return text;
+  const suffix = match[2];
+  let shown;
+  if (suffix === "") {
+    const exponent = 3 * Math.floor(Math.log10(Math.abs(value)) / 3 + 1e-12);
+    if (!LABEL_PREFIX.has(exponent)) return text;
+    shown = `${Number((value / 10 ** exponent).toPrecision(LABEL_DIGITS))}${LABEL_PREFIX.get(exponent)}`;
+  } else {
+    shown = `${Number(Number(match[1]).toPrecision(LABEL_DIGITS))}${suffix}`;
+  }
+  return shown.length < text.length ? shown : text;
+}
 
 /**
  * SVG drawing of the circuit canvas. Reads the editor state and never changes it. Pointer/keyboard handling is delegated
@@ -107,7 +137,7 @@ export function createCanvasRenderer(deps) {
   function componentMarkup(component, connection) {
     const ref = escapeHtml(component.props?.ref ?? component.id);
     const sourceDescriptor = ["V", "I", "VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component, state.settings.analysis) : null;
-    const rawValue = sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "";
+    const rawValue = formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
     const value = escapeHtml(sourceDescriptor ? `${sourceDescriptor.label} ${rawValue} ${sourceDescriptor.unit}` : rawValue);
     const editProp = sourceDescriptor?.prop ?? (component.props?.value !== undefined ? "value" : component.props?.gain !== undefined ? "gain" : "");
     const geometryVersion = circuitGeometryVersion(state.circuit);

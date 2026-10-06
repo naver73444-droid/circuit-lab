@@ -118,7 +118,7 @@ export function shortcutFor(event, { typing = false, textSelection = false } = {
     return { action: "nudge", dx, dy, steps: event.shiftKey ? NUDGE_STEPS_SHIFT : NUDGE_STEPS, repeat: Boolean(event.repeat) };
   }
   if (letter === "r") return { action: "rotate", direction: event.shiftKey ? -1 : 1 };
-  if (letter === "y") return { action: "yDelta" };
+  if (letter === "y") return { action: "yDelta", ...(event.repeat ? { ignore: true } : {}) }; // a held Y converts once, like Ctrl+D/V
   if (letter === "w") return { action: "tool", tool: "wire" };
   if (letter === "v") return { action: "tool", tool: "select" };
   return null;
