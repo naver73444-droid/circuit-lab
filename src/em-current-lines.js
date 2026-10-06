@@ -3,7 +3,7 @@
 // on rings (wires, segments) or on the line across the loop axis / a sheet; each line is traced forward until it returns to its
 // seed (closed) and, if it leaves the view instead, backward too, so a line that crosses the view is one polyline.
 import { traceStreamline } from './em-fieldlines.js';
-import { isActive, planeBasis, sheetLineDirection } from './em-current-field.js';
+import { isActive, planeBasis, sheetLineDirection, wireHit } from './em-current-field.js';
 import { dot3 } from './em-physics.js';
 
 const QUALITY = {
@@ -14,13 +14,8 @@ const FIRST_RING = 0.1;
 const RING_RATIO = 1.5;
 const SEED_TOLERANCE = 0.1; // a seed closer than this fraction of its radius to an existing line adds nothing
 
-/** The point where a wire meets the viewed plane (its normal coordinate = fixed), or null for a wire lying in the plane. */
-export function wirePierce(source, plane, fixed) {
-  const normal = 3 - planeBasis(plane).axes[0] - planeBasis(plane).axes[1], along = source.direction[normal];
-  if (Math.abs(along) < 0.5) return null;
-  const t = (fixed - source.position[normal]) / along;
-  return source.position.map((value, i) => value + t * source.direction[i]);
-}
+/** The point where a wire meets the viewed plane (its normal coordinate = fixed), or null for a wire lying in the plane (the shared test). */
+export const wirePierce = wireHit;
 
 const ringRadii = rings => Array.from({ length: rings }, (_, k) => FIRST_RING * RING_RATIO ** k);
 
@@ -47,11 +42,13 @@ export function currentSeeds(sources, plane, fixed, reach, rings) {
   for (const source of sources.filter(isActive)) {
     index += 1;
     if (source.type === 'wire') {
-      const hit = wirePierce(source, plane, fixed);
-      if (hit) seeds.push(...ringSeeds(coords(hit), rings, index * 0.9));
+      const hit = wirePierce(source, plane, fixed), [wu, wv] = coords(source.position);
+      // A wire that meets the plane far outside the picture (nearly in the plane) looks like a line in it, so it is seeded like one.
+      const near = hit && Math.hypot(coords(hit)[0] - wu, coords(hit)[1] - wv) <= reach;
+      if (near) seeds.push(...ringSeeds(coords(hit), rings, index * 0.9));
       else {
         // A wire lying in the viewed plane: its lines run across the picture, so seed along the line across it.
-        const [wu, wv] = coords(source.position), [du, dv] = [dot3(source.direction, a), dot3(source.direction, b)], length = Math.hypot(du, dv);
+        const [du, dv] = [dot3(source.direction, a), dot3(source.direction, b)], length = Math.hypot(du, dv);
         if (length > 1e-9) seeds.push(...ladderSeeds([wu, wv], [-dv / length, du / length], ladder.map(f => f * 0.5).concat(ringRadii(rings).slice(2))));
       }
     } else if (source.type === 'segment') {

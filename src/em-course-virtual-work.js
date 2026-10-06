@@ -25,10 +25,14 @@ function gapForceCompute(p, x) {
   if (x < 0) return excluded('unsupported', '공극 길이 x는 0 이상이어야 합니다.', 'negative-gap');
   const L = gapInductance(p, x), F = gapForce(p, x), denominator = p.coreLength + p.muR * x;
   const B = p.turns * p.current * MU0 * p.muR / denominator, dx = p.dx;
-  const L2 = gapInductance(p, x + dx), linkage = L * p.current, linkage2 = L2 * p.current, w1 = 0.5 * L * p.current ** 2;
+  // Energy balance over the window x ± dx/2 (central difference): the error of "input − increase" against F·dx is of order dx³,
+  // where a one-sided window x … x+dx gives a second-order error that is large for finite dx. Near x = 0 the window is moved to [0, dx].
+  const xc = Math.max(x, dx / 2), La = gapInductance(p, xc - dx / 2), Lb = gapInductance(p, xc + dx / 2), Fc = gapForce(p, xc);
+  const linkage = L * p.current, w1 = 0.5 * L * p.current ** 2;
   const constantFlux = p.constraint === 1;
-  const dWfield = constantFlux ? linkage ** 2 / (2 * L2) - linkage ** 2 / (2 * L) : 0.5 * L2 * p.current ** 2 - w1;
-  const dWelec = constantFlux ? 0 : p.current * (linkage2 - linkage);
+  const linkageC = gapInductance(p, xc) * p.current; // the flux that stays fixed is the one at the window centre
+  const dWfield = constantFlux ? linkageC ** 2 / (2 * Lb) - linkageC ** 2 / (2 * La) : 0.5 * (Lb - La) * p.current ** 2;
+  const dWelec = constantFlux ? 0 : p.current * (Lb - La) * p.current;
   const scalars = [scalar('F', '공극 면에 작용하는 힘 F = ½I² dL/dx (− 인력)', F, 'N'), scalar('Fcheck', '자속밀도 식 −B²S/(2μ₀)', -B * B * p.area / (2 * MU0), 'N'),
     scalar('Finf', 'μ → ∞ 극한 −½N²I²μ₀S/x²', x > 0 ? -0.5 * (p.turns * p.current) ** 2 * MU0 * p.area / (x * x) : Number.NaN, 'N'),
     scalar('B', '공극 자속밀도 B = μ₀μ NI/(μ₀l + μx) (μ = μ₀μ_r에서 정리)', B, 'T'), scalar('L', '인덕턴스 L(x) = N²μ₀μS/(μ₀l + μx)', L, 'H'),
@@ -36,10 +40,11 @@ function gapForceCompute(p, x) {
     scalar('pressure', '단위 면적당 힘 B²/(2μ₀)', B * B / (2 * MU0), 'Pa'),
     scalar('dWelec', constantFlux ? '전원이 넣은 에너지 (Λ 고정이면 0)' : '전원이 넣은 에너지 I dΛ', dWelec, 'J'),
     scalar('dWfield', '자기장 에너지 증가 dW', dWfield, 'J'), scalar('mechanical', '역학적 일 F dx (에너지 수지: 투입 − 증가)', dWelec - dWfield, 'J'),
-    scalar('Fdx', '해석적 F·dx', F * dx, 'J')];
+    scalar('Fdx', '해석적 F·dx', Fc * dx, 'J')];
   if (!Number.isFinite(scalars[2].value)) scalars.splice(2, 1);
   return { region: constantFlux ? 'constant-flux' : 'constant-current', vectors: {}, scalars,
     notes: ['공극이 커지는 방향(dx > 0)의 일 F dx < 0은 끌어당기는 힘(공극이 닫히려 함)입니다.',
+      `에너지 수지는 x ± dx/2 구간의 중심차분으로 계산해 dx → 0에서 F·dx와 일치합니다(유한 dx의 차이는 dx³ 차수, 한쪽 차분이면 dx² 차수로 훨씬 큼).${xc === x ? '' : ' x < dx/2이므로 구간을 0 … dx로 옮겼고 F·dx는 그 구간 중심(x = dx/2)의 힘으로 계산했습니다.'}`,
       '힘의 크기는 두 조건에서 같고 에너지 수지의 해석만 다릅니다. 일정 전류: 투입 I dΛ = F dx + dW(자기장 에너지는 ½IdΛ만 증가, 나머지 ½IdΛ가 일). 일정 쇄교자속: 투입 0, F dx = −dW.',
       '공극 단면 하나에 작용하는 힘이며 단위 면적당 B²/(2μ₀)입니다. 철심(μ 큼)에서는 R_m이 공극 g/(μ₀S)가 지배해 μ → ∞ 식에 가까워집니다.'] };
 }

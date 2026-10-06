@@ -51,23 +51,41 @@ function tableError(p) {
   return '';
 }
 
-/** Fixed-point iteration of the lecture (b33): guess μ, solve the linear circuit, read B, update μ = B/H(B). */
+/**
+ * Fixed-point iteration of the lecture (b33): guess μ, solve the linear circuit, read B, update μ = B/H(B).
+ * The plain lecture step (B ← the B just read) is kept while the residual |B_read − B| keeps shrinking. In saturation the map
+ * f(B) = NI·B/NI(B) has slope 1 − B·NI'(B)/NI far below −1 and the plain step oscillates or diverges. B_read − B has the sign
+ * of B* − B (NI(B) is increasing), so the step is damped: B ← B + α (B_read − B), α halved whenever the residual does not shrink
+ * and doubled back after two steps in the same direction, and a step that leaves the bracket of known signs is replaced by its
+ * midpoint (also after 150 steps). Each list row keeps the lecture's reading (assumed μ → B_read) and the α used.
+ */
 function iterate(p, curve, ni) {
-  const length = coreLength(p), list = [];
-  let mu = p.coreModel === 1 ? MU0 * p.muR : p.b1 / p.h1, previous = 0, converged = false;
+  const length = coreLength(p), list = [], mu0 = p.coreModel === 1 ? MU0 * p.muR : p.b1 / p.h1;
+  if (!(ni > 0)) return { b: 0, list: [{ k: 1, mur: mu0 / MU0, b: 0, alpha: 1 }], converged: true, damped: false };
+  let mu = mu0, state = 0, alpha = 1, damped = false, residual = Infinity, lo = 0, hi = Infinity, lastSign = 0, run = 0, converged = false;
   for (let k = 1; k <= 500; k++) {
-    const b = ni / (length / mu + p.gap / MU0), h = curve.H(b);
-    list.push({ k, mur: mu / MU0, b });
-    converged = Math.abs(b - previous) <= 1e-13 * Math.max(b, 1e-300);
-    previous = b;
-    if (converged || h === 0) break;
-    mu = b / h;
+    const read = ni / (length / mu + p.gap / MU0), delta = read - state, step = Math.abs(delta), sign = Math.sign(delta);
+    if (k > 1 && step >= residual) { alpha /= 2; run = 0; } else if (sign === lastSign) { if (++run >= 2) { alpha = Math.min(1, alpha * 2); run = 0; } } else run = 0;
+    list.push({ k, mur: mu / MU0, b: read, alpha });
+    converged = step <= 1e-13 * Math.max(read, 1e-300);
+    if (converged) { state = read; break; }
+    if (sign > 0) lo = Math.max(lo, state); else hi = Math.min(hi, state);
+    // in saturation the reading amplifies the last digit of B by μ_r, so the residual floors at ≈ μ_r·ε: the bracket closing is the exact test
+    if (Number.isFinite(hi) && hi - lo <= 4e-16 * hi) { converged = true; state = (lo + hi) / 2; break; }
+    let next = k === 1 ? read : state + alpha * delta;
+    if (k > 1 && Number.isFinite(hi) && (next <= lo || next >= hi || k > 150)) { next = (lo + hi) / 2; damped = true; } // k > 150: very flat knee, bisect the bracket
+    if (alpha < 1) damped = true;
+    residual = step; lastSign = sign; state = next;
+    const h = curve.H(state);
+    if (h === 0) break;
+    mu = state / h;
   }
-  return { b: previous, list, converged };
+  return { b: state, list, converged, damped };
 }
 
 /** Independent solution of NI(B) = N·I by bisection (NI(B) is increasing). */
 function bisect(p, curve, ni) {
+  if (!(ni > 0)) return 0;
   let lo = 0, hi = 1;
   while (totalNI(p, curve, hi) < ni && hi < 1e6) hi *= 2;
   for (let i = 0; i < 200; i++) {
@@ -97,9 +115,17 @@ function gapCompute(p, probeB) {
   const s = gapSolve(p), flux = s.b * p.area, rCore = s.length / (s.muSecant * p.area), rGap = p.gap / (MU0 * p.area);
   const notes = ['기자력 V_m = NI = ∮H·dl = H_core l + H_gap g, 자속 Φ = B S, 자기저항 R_m = l/(μS) (전기 회로의 V = IR, I = ∫J·ds와 대응). 공극은 코어 B와 같은 B에서 H = B/μ₀로 매우 큰 H가 필요합니다.',
     '단일 직렬 자기회로이며 공극 가장자리의 퍼짐(fringing)과 누설자속은 무시합니다.'];
+  if (p.coreModel === 0 && (s.b > p.b2 || probeB > p.b2)) {
+    notes.push(`[표 밖 외삽] B = ${plainText(Math.max(s.b, probeB), 4)} T는 B–H 표의 마지막 점 B₂ = ${plainText(p.b2, 4)} T 위입니다. 표 밖 외삽(기울기 μ₀ 가정): 실제 재료 곡선이 아니므로 필요한 NI는 참고용입니다.`);
+  }
   if (s.iteration) {
-    for (const row of s.iteration.list.slice(0, 6)) notes.push(`반복 ${row.k}: 가정한 μ_r = ${plainText(row.mur, 4)} → B = ${plainText(row.b, 5)} T`);
-    notes.push(s.iteration.converged ? `${s.iteration.list.length}회 만에 수렴: B = ${plainText(s.iteration.b, 6)} T` : '500회 안에 수렴하지 않았습니다.');
+    const rows = s.iteration.list;
+    for (const row of rows.slice(0, 6)) {
+      notes.push(`반복 ${row.k}: 가정한 μ_r = ${plainText(row.mur, 4)} → B = ${plainText(row.b, 5)} T${row.alpha < 1 ? ` (감쇠 α = ${plainText(row.alpha, 3)})` : ''}`);
+    }
+    if (s.iteration.damped) notes.push('이 입력은 포화 쪽이라 필기의 μ 갱신을 그대로 반복하면 B가 진동·발산합니다. 잔차가 줄지 않을 때마다 갱신 폭을 절반으로 줄이는 감쇠(필요하면 해가 낀 구간의 중점)를 적용해 같은 해로 수렴시켰습니다.');
+    notes.push(s.iteration.converged ? `${rows.length}회 만에 수렴: B = ${plainText(s.iteration.b, 6)} T`
+      : '500회 안에 수렴하지 않았습니다. 감쇠를 적용해도 잔차가 허용값 아래로 내려가지 않아 반복의 B는 쓰지 않고 이분법의 B를 보였습니다.');
   }
   const probeNI = totalNI(p, s.curve, probeB);
   return {
@@ -118,18 +144,19 @@ function gapCompute(p, probeB) {
 function gapVerify(p) {
   const error = tableError(p);
   if (error) return [{ label: '자기회로 검증', method: 'input validation', status: 'skipped', reason: error, unit: '' }];
-  const method = 'independent re-evaluation of the circuit relations', s = gapSolve(p), flux = s.b * p.area, scale = Math.abs(s.ni) + 1e-300;
+  const method = 'independent re-evaluation of the circuit relations', s = gapSolve(p), flux = s.b * p.area;
+  const absTol = Math.max(1e-12 * Math.abs(s.ni), 1e-12); // absolute floor: NI = 0 gives B = 0 and no relative scale
   const rows = [
-    checkRow('암페어 법칙: H_core l + H_gap g = NI', method, s.hCore * s.length + (s.b / MU0) * p.gap, s.ni, 'A·turn', 1e-9, 1e-12 * scale),
-    checkRow('자기 옴의 법칙: Φ (R_core + R_gap) = NI', method, flux * (s.length / (s.muSecant * p.area) + p.gap / (MU0 * p.area)), s.ni, 'A·turn', 1e-9, 1e-12 * scale),
+    checkRow('암페어 법칙: H_core l + H_gap g = NI', method, s.hCore * s.length + (s.b / MU0) * p.gap, s.ni, 'A·turn', 1e-9, absTol),
+    checkRow('자기 옴의 법칙: Φ (R_core + R_gap) = NI', method, flux * (s.length / (s.muSecant * p.area) + p.gap / (MU0 * p.area)), s.ni, 'A·turn', 1e-9, absTol),
   ];
   if (p.mode === 1) {
     rows.push(s.iteration.converged ? checkRow('고정점 반복의 B = 이분법의 B', 'fixed-point iteration (μ → B → μ) vs bisection on NI(B)', s.iteration.b, s.b, 'T', 1e-9, 1e-12)
-      : { label: '고정점 반복의 수렴', method, status: 'unconverged', reason: '500회 반복에서 수렴하지 않았습니다.', unit: 'T' });
+      : { label: '고정점 반복의 수렴', method, status: 'skipped', reason: '500회 반복(감쇠 포함)에서 수렴하지 않아 반복과 이분법의 비교를 건너뜁니다.', unit: 'T' });
   } else {
     const back = iterate(p, s.curve, s.ni);
     rows.push(back.converged ? checkRow('왕복: 이 NI로 반복해 얻은 B = 목표 B', 'iterating the lecture procedure on the NI just found', back.b, s.b, 'T', 1e-8, 1e-12)
-      : { label: '왕복 반복의 수렴', method, status: 'unconverged', reason: '500회 반복에서 수렴하지 않았습니다.', unit: 'T' });
+      : { label: '왕복 반복의 수렴', method, status: 'skipped', reason: '500회 반복(감쇠 포함)에서 수렴하지 않아 왕복 비교를 건너뜁니다.', unit: 'T' });
   }
   return rows;
 }
@@ -215,7 +242,13 @@ function hysteresisCompute(p, phase) {
 
 function hysteresisVerify(p) {
   const method = 'independent trapezoid of ∮H dB around the closed loop (4000 points per branch, vertical closing segments)', model = loopModel(p), count = 4000;
-  const hs = linspace(-p.Hmax, p.Hmax, count), pts = [];
+  if (!(Number.isFinite(model.width) && model.width > 0 && Number.isFinite(model.area))) {
+    return [{ label: '히스테리시스 루프 검산', method: 'input validation', status: 'skipped', reason: '곡선 폭 w나 루프 면적이 유한한 양수로 정의되지 않아 검산하지 않습니다.', unit: '' }];
+  }
+  // The branches differ by 4B_s e^(−2(|H|−H_c)/w) beyond H_c, so past H_c + 40 w the loop is closed to e^−80: a grid over that range keeps
+  // the spacing a small fraction of w however large H_max is (a grid over ±H_max alone steps over the loop when H_max ≫ w).
+  const reach = Math.min(p.Hmax, p.Hc + 40 * model.width);
+  const hs = linspace(-reach, reach, count), pts = [];
   for (const h of hs) pts.push([h, model.up(h)]);
   for (const h of [...hs].reverse()) pts.push([h, model.down(h)]);
   let loop = 0;
@@ -223,7 +256,9 @@ function hysteresisVerify(p) {
     const a = pts[i], b = pts[(i + 1) % pts.length];
     loop += (a[0] + b[0]) / 2 * (b[1] - a[1]);
   }
-  let lo = -p.Hmax, hi = p.Hmax;
+  // the descending branch is increasing and crosses zero at −H_c, which may lie outside ±H_max (H_c > H_max): bracket both
+  const span = Math.max(p.Hmax, 2 * p.Hc);
+  let lo = -span, hi = span;
   for (let i = 0; i < 200; i++) { const mid = (lo + hi) / 2; if (model.down(mid) < 0) lo = mid; else hi = mid; }
   return [checkRow('루프 면적: 닫힌 꼴 = 수치 ∮H dB', method, loop, model.area, 'J/m³', 1e-6, 1e-9),
     checkRow('H = 0에서 내려오는 가지의 B = B_r', 'direct evaluation of the branch', model.down(0), p.Br, 'T', 1e-9, 1e-12),

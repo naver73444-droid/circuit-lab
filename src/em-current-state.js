@@ -92,10 +92,12 @@ export function createCurrentEditor(initial = {}) {
     addSegment: (current = 10, start = [-0.75, 0, 0], end = [0.75, 0, 0]) => addSource({ type: 'segment', current, start, end }),
     addLoop: (current = 10, position = [0, 0, 0], radius = 0.5, normal = [1, 0, 0]) => addSource({ type: 'loop', current, position, radius, normal }),
     addSheet: (K = 20, position = [0, 0, 0], normal = [0, 1, 0], direction = [0, 0, 1]) => addSource({ type: 'sheet', K, position, normal, direction }),
-    cloneSelected() {
+    /** Copy the selected source 0.3 m along the horizontal axis of the viewed `plane` (x for xy / xz, y for yz), so it never lands on the original. */
+    cloneSelected(plane = 'xy') {
       const source = selected();
       if (!source) return null;
-      const shift = value => value.map((component, axis) => component + (axis === 0 ? 0.3 : 0));
+      const across = planeBasis(plane).axes[0];
+      const shift = value => value.map((component, axis) => component + (axis === across ? 0.3 : 0));
       const { id, ...rest } = clone(source);
       if (source.type === 'segment') return addSource({ ...rest, start: shift(source.start), end: shift(source.end) });
       return addSource({ ...rest, position: shift(source.position) });

@@ -6,23 +6,27 @@
 //
 //   ampereEnclosure   which sources pierce the disk (I_enc), which only miss it, and which make the comparison unsupported
 //   ampereCoarse      a cheap midpoint-rule circulation (while dragging) with the extremes of |H| along the path
-//   amperePrecise     the converged circulation (circle: loopCirculation of em-playground-calculus; rectangle: doubled midpoint rule)
-import { dot3, scale3, sub3, norm3, MU0 } from './em-physics.js';
-import { circleBasis, createCurrentEvaluator, hFromB, isActive, planeBasis, strengthOf } from './em-current-field.js';
-import { loopCirculation } from './em-playground-calculus.js';
+//   amperePrecise     the converged circulation (circle: doubled midpoint rule; rectangle: doubled 5-point Gauss-Legendre panels)
+import { dot3, sub3, norm3, MU0 } from './em-physics.js';
+import { circleBasis, createCurrentEvaluator, hFromB, isActive, planeBasis, strengthOf, wirePierces } from './em-current-field.js';
 
 export const AMPERE_MIN = 0.05;
 export const AMPERE_MAX = 5;
 const EDGE = 0.001; // a source this close to the path is "on" it: the integrand is singular there
 
-/** Keep an Ampere loop inside the supported size and coordinate range. */
-export function clampAmpere(loop) {
+/**
+ * Keep an Ampere loop inside the supported size and coordinate range. A value that is not a finite number (NaN, ±Infinity,
+ * a missing field) is not passed through: the same field of `previous` is kept, else the default (size 1 / 1 / 0.7, centre 0).
+ */
+export function clampAmpere(loop, previous = null) {
+  const pick = (value, old, fallback) => (Number.isFinite(value) ? value : Number.isFinite(old) ? old : fallback);
   const clamp = value => Math.min(AMPERE_MAX, Math.max(AMPERE_MIN, value));
-  const radius = clamp(loop.radius ?? 1), halfWidth = clamp(loop.halfWidth ?? 1), halfHeight = clamp(loop.halfHeight ?? 0.7);
+  const radius = clamp(pick(loop.radius, previous?.radius, 1)), halfWidth = clamp(pick(loop.halfWidth, previous?.halfWidth, 1));
+  const halfHeight = clamp(pick(loop.halfHeight, previous?.halfHeight, 0.7));
   const reach = loop.shape === 'rect' ? Math.hypot(halfWidth, halfHeight) : radius, limit = 20 - reach;
   return {
     ...loop, radius, halfWidth, halfHeight, orientation: loop.orientation === -1 ? -1 : 1,
-    center: loop.center.map(value => Math.min(limit, Math.max(-limit, value))),
+    center: [0, 1, 2].map(i => Math.min(limit, Math.max(-limit, pick(loop.center?.[i], previous?.center?.[i], 0)))),
   };
 }
 
@@ -73,7 +77,7 @@ export function ampereEnclosure(sources, loop, plane) {
     if (source.type === 'segment') { openIds.push(id); continue; }
     if (source.type === 'wire') {
       const along = dot3(source.direction, n);
-      if (Math.abs(along) > 1e-9) {
+      if (wirePierces(source.direction, n)) { // the same test the picture uses for its dot / cross and the field-line seeds
         const t = dot3(sub3(center, source.position), n) / along, hit = source.position.map((value, i) => value + t * source.direction[i]);
         const where = place(id, hit, source.current * Math.sign(along) * orientation);
         if (where === 'inside') enclosedIds.push(id); else if (where === 'outside') outsideIds.push(id);
@@ -213,28 +217,24 @@ export function ampereCoarse(evaluate, loop, plane, count = 96) {
 }
 
 /**
- * The converged circulation of H. The circle goes through loopCirculation (128 and 256 samples must agree); the rectangle
- * doubles 5-point Gauss-Legendre panels until two passes agree to 1e-9. `converged` is false when they did not.
+ * The converged circulation of H. Both shapes double their sample count until two passes agree to 1e-9: the circle takes midpoint
+ * samples (exact for a periodic integrand, error ~ (r/R)^N for a wire at r/R of the path, so a wire 0.1 m inside a 1 m path needs
+ * ~512 samples where a fixed 128 / 256 pair cannot agree), the rectangle 5-point Gauss-Legendre panels. `converged` is false when
+ * the largest pass still disagrees with the one before it (a wire practically on the path).
  */
 export function amperePrecise(evaluate, loop, plane) {
-  const evaluateH = hOf(evaluate), shape = pass(evaluateH, loop, plane, 192);
-  if (shape.status !== 'valid') return shape;
-  const { n } = planeBasis(plane);
-  if (loop.shape !== 'rect') {
-    const result = loopCirculation(evaluateH, loop.center, loop.radius, scale3(n, loop.orientation === -1 ? -1 : 1), []);
-    if (result.status !== 'valid') return { status: 'excluded', reason: result.reason ?? '암페어 경로가 모델 제외영역에 닿았습니다.' };
-    return { status: 'valid', circulation: result.circulation, maxH: shape.maxH, minH: shape.minH, samples: result.samples, converged: result.converged };
-  }
-  let previous = null, last = shape;
-  for (let count = 80; count <= 2560; count *= 2) {
-    last = pass(evaluateH, loop, plane, count, { gauss: true });
+  const evaluateH = hOf(evaluate), circle = loop.shape !== 'rect';
+  const first = circle ? 128 : 80, limit = circle ? 16384 : 2560, options = circle ? {} : { gauss: true };
+  let previous = null, last = null;
+  for (let count = first; count <= limit; count *= 2) {
+    last = pass(evaluateH, loop, plane, count, options);
     if (last.status !== 'valid') return last;
     if (previous !== null && Math.abs(last.circulation - previous) <= 1e-9 + 1e-9 * Math.abs(last.circulation)) {
       return { status: 'valid', circulation: last.circulation, maxH: last.maxH, minH: last.minH, samples: count, converged: true };
     }
     previous = last.circulation;
   }
-  return { status: 'valid', circulation: last.circulation, maxH: last.maxH, minH: last.minH, samples: 2560, converged: false };
+  return { status: 'valid', circulation: last.circulation, maxH: last.maxH, minH: last.minH, samples: limit, converged: false };
 }
 
 /** Circulation (A) of H along the Ampere loop for a validated source list: the one call the plane controller needs. */

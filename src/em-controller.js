@@ -56,7 +56,7 @@ export function createEMController(root) {
   let storedField = 'electric';
   try { if (sessionStorage.getItem(FIELD_KEY) === 'magnetic') storedField = 'magnetic'; } catch { /* storage may be blocked */ }
   const lab = {
-    tab: 'plane', scene: 'playground', field: storedField, presetNote: '',
+    tab: 'plane', scene: 'playground', field: storedField, presetNote: '', presetSources: '',
     chips: { lines: true, contours: true, gauss: false, mcolor: true, arrows: true, hfield: false, ampere: false, force: false },
     gauss: null, ampere: null, view: { span: 3, offset: [0, 0] }, quality: 'final', error: '',
   };
@@ -141,6 +141,8 @@ export function createEMController(root) {
     $('#em-current-inspector').hidden = !magnetic;
     $('#em-wave-controls').hidden = lab.scene !== 'wave';
     $('#em-play').textContent = s.playing ? '정지' : '재생';
+    // The preset text describes the sources it loaded: after an undo, a drag or any edit it no longer does.
+    if (lab.presetNote && JSON.stringify(cs.sources) !== lab.presetSources) lab.presetNote = '';
     $('#em-readout-target').textContent = magnetic ? '측정점 (B · H)' : sandbox ? '시험전하' : sceneTitle(lab.scene);
     $('#em-hint').textContent = lab.tab === '3d' ? HINTS['3d'] : magnetic ? (lab.presetNote || HINTS.current) : sandbox ? HINTS.sandbox : HINTS.scene;
     $('#em-plane').setAttribute('aria-label', magnetic
@@ -300,6 +302,7 @@ export function createEMController(root) {
     lab.ampere = preset.ampere ? clampAmpere(preset.ampere) : null;
     modes.current.moveSensor(preset.sensor);
     lab.presetNote = `${CURRENT_PRESETS[name]}: ${preset.note}`;
+    lab.presetSources = JSON.stringify(cs.sources);
     announce(lab.presetNote);
     plane.invalidate();
   }
@@ -382,7 +385,7 @@ export function createEMController(root) {
       interaction.begin('ampere-slider');
       const size = Number(event.target.value);
       lab.ampere = clampAmpere(lab.ampere.shape === 'rect'
-        ? { ...lab.ampere, halfWidth: size, halfHeight: size * 0.7 } : { ...lab.ampere, radius: size });
+        ? { ...lab.ampere, halfWidth: size, halfHeight: size * 0.7 } : { ...lab.ampere, radius: size }, lab.ampere);
       requestRender();
       return;
     }

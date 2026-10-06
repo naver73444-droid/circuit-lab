@@ -93,10 +93,12 @@ export function createPointChargeEditor(initial = {}) {
     addInfiniteLine: (lambda = 1e-9, position = [0, 0, 0], direction = [1, 0, 0], sRef = 1) => addSource({
       type: 'infinite-line', lambda, position, direction, sRef, displayLength: 4,
     }),
-    cloneSelected() {
+    /** Copy the selected charge 0.2 m along the horizontal axis of the viewed `plane` (x for xy / xz, y for yz). */
+    cloneSelected(plane = 'xy') {
       const source = selected();
       if (!source) return null;
-      const shift = value => value.map((component, axis) => component + (axis === 0 ? 0.2 : 0));
+      const across = plane === 'yz' ? 1 : 0;
+      const shift = value => value.map((component, axis) => component + (axis === across ? 0.2 : 0));
       if (source.type === 'finite-line') return editor.addFiniteLine(source.lambda, shift(source.start), shift(source.end));
       if (source.type === 'infinite-line') return editor.addInfiniteLine(source.lambda, shift(source.position), source.direction, source.sRef);
       return editor.add(source.q, shift(source.position));

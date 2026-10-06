@@ -124,9 +124,13 @@ function coaxVerify(p) {
     energy += 0.5 * f2.b * (f2.b / f2.mu) * TWO_PI * r2 * (hi - lo);
   }
   const scale = Math.abs(m.total * I * I) + 1e-300;
+  const inner = coaxField(p, p.a * (1 - 1e-12)), outer = coaxField(p, p.a), hScale = Math.abs(I / (TWO_PI * p.a));
+  const hAtInterface = { inside: inner.b / inner.mu, outside: outer.b / outer.mu };
   return [checkRow('W′ = ½∫B·H dA = ½L′I² (단위 길이)', method, energy, 0.5 * m.total * I * I, 'J/m', 1e-6, 1e-12 * scale),
     checkRow('내부 쇄교자속 Λ′_int = ∫(r²/a²)B dr = μ₀I/(8π)', method, linkageInner, MU0 * I / (8 * Math.PI), 'Wb/m', 1e-8, 1e-18),
-    checkRow('L′_int = μ₀/(8π) = 5×10⁻⁸ H/m', 'closed form', m.internal, MU0 / (8 * Math.PI), 'H/m', 1e-12)];
+    checkRow('L′_int = μ₀/(8π) = 5×10⁻⁸ H/m', 'closed form', m.internal, MU0 / (8 * Math.PI), 'H/m', 1e-12),
+    checkRow('r = a에서 H 연속: H(a⁻) = H(a⁺)', 'both branches of the field, evaluated at the interface', hAtInterface.inside, hAtInterface.outside, 'A/m', 1e-9, 1e-12 * hScale),
+    checkRow('r = a에서 H = I/(2πa) (B는 μ_r ≠ 1이면 불연속)', 'Ampère loop around the inner conductor', hAtInterface.outside, I / (TWO_PI * p.a), 'A/m', 1e-9, 1e-12 * hScale)];
 }
 
 const coax = defineLecture({
@@ -145,7 +149,7 @@ const coax = defineLecture({
   assumptions: ['무한 동축: 내부 도체(반지름 a)에 균일 DC 전류 +I, 외부는 얇은 원통(r = b) 귀환 −I, 도체 사이 선형 매질 μ. 도체 자체는 비자성(μ₀).',
     '프리셋 a = 10 mm, b = 30 mm는 기존 동축 전류 실험과 같습니다: L′_ext = 2×10⁻⁷ ln3 = 219.7 nH/m, L′_int = 50 nH/m, 합 269.7 nH/m(앱이 계산한 값).'],
   validity: ['0 < a < b. r 좌표는 0 … 1.5b에서 그립니다.', 'I의 부호는 B의 방향만 바꾸고 L′은 같습니다.'],
-  singularities: ['특이점은 없습니다. r = 0에서 B = 0, r = a는 연속입니다.'],
+  singularities: ['특이점은 없습니다. r = 0에서 B = 0입니다. r = a에서는 H = I/(2πa)가 연속(접선 성분)이고, 도체(μ₀)와 매질(μ)의 투자율이 다르면 B는 μ₀H에서 μH로 뛰어 μ_r ≠ 1이면 B는 불연속입니다.'],
   formulas: [{ label: '외부 인덕턴스', text: "L′_ext = (μ/2π) ln(b/a)", unit: 'H/m' }, { label: '내부 인덕턴스', text: "L′_int = μ₀/(8π)", unit: 'H/m' },
     { label: '에너지 확인', text: "½ L′ I² = ½ ∫ B·H dA", unit: 'J/m' }],
   references: [hayt('8.10', 'Inductance of the coaxial cable'), REF.self],

@@ -1,6 +1,6 @@
 // Hayt Ch.8 §8.5–8.7 lecture experiments: magnetic materials, bound currents and magnetic boundary conditions. Pure: no DOM.
 import {
-  FOUR_PI, MU0, REF, TWO_PI, checkRow, coordinate, defineLecture, excluded, hayt, linspace, parameter, choiceParameter, scalar, series,
+  FOUR_PI, MU0, REF, TWO_PI, checkRow, coordinate, defineLecture, excluded, hayt, linspace, parameter, choiceParameter, scalar, series, skippedRow,
 } from './em-course-lecture.js';
 
 const TOPIC = 'materials';
@@ -153,7 +153,8 @@ const boundaryParameters = [
 function boundaryFields(p, theta1) {
   const mu1 = MU0 * p.mu1R, mu2 = MU0 * p.mu2R, b1n = p.B1 * Math.cos(theta1), b1t = p.B1 * Math.sin(theta1);
   const h1t = b1t / mu1, h2t = h1t + p.K, b2t = mu2 * h2t, b2n = b1n;
-  return { mu1, mu2, b1n, b1t, h1t, h1n: b1n / mu1, h2t, h2n: b2n / mu2, b2t, b2n, theta2: Math.atan2(b2t, b2n) };
+  // B₂ = 0 (B₁ = 0 and K = 0) has no direction: θ₂ is undefined (NaN), not atan2(0, 0) = 0
+  return { mu1, mu2, b1n, b1t, h1t, h1n: b1n / mu1, h2t, h2n: b2n / mu2, b2t, b2n, theta2: b2t === 0 && b2n === 0 ? NaN : Math.atan2(b2t, b2n) };
 }
 
 function boundaryCompute(p, theta1) {
@@ -161,13 +162,16 @@ function boundaryCompute(p, theta1) {
   const f = boundaryFields(p, theta1), magnitude = Math.hypot(f.b2t, f.b2n);
   return {
     region: 'region-2', vectors: { B: [f.b2t, 0, f.b2n], H: [f.h2t, 0, f.h2n] },
-    scalars: [scalar('theta1', '영역 1의 각 θ₁ (법선 기준)', theta1 * 180 / Math.PI, '°'), scalar('theta2', '영역 2의 각 θ₂', f.theta2 * 180 / Math.PI, '°'),
-      ...(theta1 > 0 ? [scalar('tanRatio', 'tanθ₂/tanθ₁ (K = 0이면 μ₂/μ₁)', Math.tan(f.theta2) / Math.tan(theta1), '1')] : []), scalar('muRatio', 'μ₂/μ₁', f.mu2 / f.mu1, '1'),
+    scalars: [scalar('theta1', '영역 1의 각 θ₁ (법선 기준)', theta1 * 180 / Math.PI, '°'),
+      ...(Number.isFinite(f.theta2) ? [scalar('theta2', '영역 2의 각 θ₂', f.theta2 * 180 / Math.PI, '°')] : []),
+      ...(theta1 > 0 && Number.isFinite(f.theta2) && f.b2n !== 0 ? [scalar('tanRatio', 'tanθ₂/tanθ₁ (K = 0이면 μ₂/μ₁)', Math.tan(f.theta2) / Math.tan(theta1), '1')] : []),
+      scalar('muRatio', 'μ₂/μ₁', f.mu2 / f.mu1, '1'),
       scalar('B1n', '영역 1의 법선 B₁n', f.b1n, 'T'), scalar('B2n', '영역 2의 법선 B₂n (연속)', f.b2n, 'T'),
       scalar('H1t', '영역 1의 접선 H₁t', f.h1t, 'A/m'), scalar('H2t', '영역 2의 접선 H₂t = H₁t + K', f.h2t, 'A/m'),
       scalar('B1t', '영역 1의 접선 B₁t', f.b1t, 'T'), scalar('B2t', '영역 2의 접선 B₂t = μ₂H₂t', f.b2t, 'T'),
       scalar('B2', '영역 2의 |B₂|', magnitude, 'T'), scalar('H2', '영역 2의 |H₂|', Math.hypot(f.h2t, f.h2n), 'A/m')],
-    notes: ['법선 B는 항상 연속(B₁n = B₂n), 접선 H는 자유 면전류 K만큼 점프합니다: (H₁ − H₂) × a_N12 = K, a_N12는 영역 1에서 2로 향하는 법선.',
+    notes: [...(Number.isFinite(f.theta2) ? [] : ['B₁ = 0이고 K = 0이면 영역 2의 B₂ = 0이라 방향이 없어 θ₂와 tanθ₂/tanθ₁는 정의되지 않습니다(표시하지 않음).']),
+      '법선 B는 항상 연속(B₁n = B₂n), 접선 H는 자유 면전류 K만큼 점프합니다: (H₁ − H₂) × a_N12 = K, a_N12는 영역 1에서 2로 향하는 법선.',
       'K = 0이면 H_t가 연속이고 tanθ₂/tanθ₁ = μ₂/μ₁. 투자율이 큰 쪽에서 장선이 법선에서 멀어져 경계면과 거의 평행해집니다(철 속 장선).',
       'μ₂ ≫ μ₁이면 영역 2에서 H_t ≈ H₁t(작음)이고 B₂t = μ₂H₂t는 아주 큽니다. 이 선형 모형은 포화를 무시합니다.'],
   };
@@ -177,7 +181,9 @@ function boundaryVerify(p) {
   const method = 'independent boundary relations (B_n continuity, H_t continuity, Ampère loop)', theta = 0.5;
   const base = boundaryCompute({ ...p, K: 0 }, theta), value = (r, key) => r.scalars.find(s => s.key === key).value;
   const withK = boundaryCompute(p, theta), law = Math.atan2(p.mu2R * Math.sin(theta), p.mu1R * Math.cos(theta)), dl = 1e-3;
-  return [checkRow('K = 0: tanθ₂ = (μ₂/μ₁) tanθ₁ (θ₁ = 0.5 rad)', method, value(base, 'theta2') * Math.PI / 180, law, 'rad', 1e-12, 1e-12),
+  const refraction = p.B1 === 0 ? skippedRow('K = 0: tanθ₂ = (μ₂/μ₁) tanθ₁ (θ₁ = 0.5 rad)', 'B₁ = 0이면 K = 0일 때 B₂ = 0이라 θ₂가 정의되지 않아 굴절 검산을 건너뜁니다.', method, 'rad')
+    : checkRow('K = 0: tanθ₂ = (μ₂/μ₁) tanθ₁ (θ₁ = 0.5 rad)', method, value(base, 'theta2') * Math.PI / 180, law, 'rad', 1e-12, 1e-12);
+  return [refraction,
     checkRow('B₂n = B₁n', method, value(withK, 'B2n'), value(withK, 'B1n'), 'T', 1e-12, 1e-30),
     checkRow('얇은 직사각 암페어 경로 ∮H·dl = (H₂t − H₁t) Δl = K Δl', method, (value(withK, 'H2t') - value(withK, 'H1t')) * dl, p.K * dl, 'A', 1e-9, 1e-12 * Math.abs(value(withK, 'H1t') * dl) + 1e-30)];
 }

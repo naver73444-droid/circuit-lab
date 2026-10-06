@@ -142,12 +142,28 @@ export function currentFieldAt(sources, point, options) {
 /** H = B / mu0 (A/m, vacuum). The magnetic field strength is the "source" quantity of Ampere's law. */
 export const hFromB = B => scale3(B, 1 / MU0);
 
+/**
+ * One test for "does this infinite wire pierce the viewed plane?", used by the Ampere loop (which counts the pierced current), the
+ * field-line seeds and the dot / cross symbol, so what the picture shows is what I_enc counts. A wire with any component along the
+ * normal meets the plane at exactly one point; only a wire exactly in the plane (to rounding) does not.
+ */
+export const WIRE_PIERCE_MIN = 1e-9;
+export const wirePierces = (direction, normal) => Math.abs(dot3(direction, normal)) > WIRE_PIERCE_MIN;
+
+/** The point where an infinite wire meets the viewed plane (normal coordinate = fixed), or null for a wire lying in the plane. */
+export function wireHit(source, plane, fixed) {
+  const { n, axes } = planeBasis(plane), normal = 3 - axes[0] - axes[1];
+  if (!wirePierces(source.direction, n)) return null;
+  const t = (fixed - source.position[normal]) / source.direction[normal];
+  return source.position.map((value, i) => value + t * source.direction[i]);
+}
+
 /** Sign (+1 out of the screen / -1 into it / 0 in the plane) of a source current seen in a view with normal `viewNormalVector`. */
 export function screenSense(source, viewNormalVector) {
   const direction = source.type === 'wire' || source.type === 'sheet' ? source.direction : source.type === 'loop' ? source.normal : null;
   if (!direction) return 0;
   const along = dot3(direction, viewNormalVector);
-  if (Math.abs(along) < 0.5) return 0;
+  if (source.type === 'wire' ? !wirePierces(direction, viewNormalVector) : Math.abs(along) < 0.5) return 0;
   return Math.sign(strengthOf(source) * along);
 }
 

@@ -11,7 +11,7 @@ import { cssRgb, cssRgba, mixRgb } from './em-palette.js';
 import { sourceCenter } from './em-playground-state.js';
 import { strengthText } from './em-source-edit.js';
 import { strengthText as currentStrengthText } from './em-current-edit.js';
-import { circleBasis, planeBasis, screenSense, sheetLineDirection, strengthOf } from './em-current-field.js';
+import { circleBasis, planeBasis, screenSense, sheetLineDirection, strengthOf, wireHit } from './em-current-field.js';
 import { dot3 } from './em-physics.js';
 
 const FONT = 'system-ui, "Malgun Gothic", sans-serif';
@@ -196,8 +196,10 @@ function drawCurrentSource(ctx, source, scene, palette, selected) {
   ctx.strokeStyle = color; ctx.fillStyle = color;
   let [cx, cy] = at(source.type === 'segment' ? source.start.map((value, i) => (value + source.end[i]) / 2) : source.position);
   if (source.type === 'wire') {
-    if (sense !== 0) currentGlyph(ctx, cx, cy, sense > 0, color, palette);
-    else {
+    // A wire that pierces the plane (the test I_enc counts with) is marked by a dot / cross AT the piercing point. One that is
+    // pierced at a slant (|along| < 0.5) also keeps its dashed in-plane trace, so the picture shows what the loop counts.
+    const hit = sense !== 0 ? wireHit(source, plane, scene.fixed) : null;
+    if (sense === 0 || Math.abs(dot3(source.direction, n)) < 0.5) {
       const [dx, dy] = flat(source.direction), length = Math.hypot(dx, dy) || 1, far = Math.max(view.width, view.height) * 2;
       const ux = dx / length * Math.sign(strength || 1), uy = dy / length * Math.sign(strength || 1);
       ctx.lineWidth = 3; ctx.setLineDash([8, 6]);
@@ -206,6 +208,7 @@ function drawCurrentSource(ctx, source, scene, palette, selected) {
       ctx.beginPath(); ctx.arc(cx, cy, 7, 0, 2 * Math.PI); ctx.fill();
       arrowHead(ctx, cx + ux * 34, cy + uy * 34, ux, uy, 9);
     }
+    if (hit) { const [hx, hy] = at(hit); currentGlyph(ctx, hx, hy, sense > 0, color, palette); }
   } else if (source.type === 'segment') {
     const [x1, y1] = at(source.start), [x2, y2] = at(source.end), dx = x2 - x1, dy = y2 - y1, length = Math.hypot(dx, dy) || 1;
     const flip = strength >= 0 ? 1 : -1;

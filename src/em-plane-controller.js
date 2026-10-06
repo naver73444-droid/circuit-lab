@@ -224,7 +224,7 @@ export function createPlaneController({
       drag.editor.previewDrag(point.map((v, i) => v + drag.offset[i]));
     } else if (drag.type === 'ampere-move') {
       const point = pointOnPlane(view, plane, mode.fixed(), x, y);
-      lab.ampere = clampAmpere({ ...lab.ampere, center: point.map((v, i) => v + drag.offset[i]) });
+      lab.ampere = clampAmpere({ ...lab.ampere, center: point.map((v, i) => v + drag.offset[i]) }, lab.ampere);
     } else if (drag.type === 'ampere-resize') {
       const [a, b] = planeAxes(plane), [world0, world1] = view.toWorld(x, y), loop = lab.ampere;
       const du = Math.abs(world0 - loop.center[a]), dv = Math.abs(world1 - loop.center[b]);
@@ -232,8 +232,8 @@ export function createPlaneController({
         lab.ampere = clampAmpere({
           ...loop, halfWidth: drag.part === 'edge-y' ? loop.halfWidth : Math.max(AMPERE_MIN, du),
           halfHeight: drag.part === 'edge-x' ? loop.halfHeight : Math.max(AMPERE_MIN, dv),
-        });
-      } else lab.ampere = clampAmpere({ ...loop, radius: Math.hypot(du, dv) });
+        }, loop);
+      } else lab.ampere = clampAmpere({ ...loop, radius: Math.hypot(du, dv) }, loop);
     } else if (drag.type === 'gauss-move') {
       const point = pointOnPlane(view, plane, mode.fixed(), x, y);
       lab.gauss = clampGauss({ ...lab.gauss, center: point.map((v, i) => v + drag.offset[i]) });

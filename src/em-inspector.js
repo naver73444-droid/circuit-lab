@@ -117,7 +117,7 @@ export function createInspector({ host, editor, request, getPlane, signal, annou
       if (patch) { editor.updateSource(before.id, patch); editor.endEdit(); refocusAction = action; }
     } else if (action === 'clone') {
       // The clone becomes the selection and the inspector is rebuilt for it: the focus follows to its strength field.
-      const clone = editor.cloneSelected();
+      const clone = editor.cloneSelected(getPlane());
       if (clone) { focusStrength = true; announce(`복제했습니다: ${sourceTitle(selected() ?? before)}`); }
     } else if (action === 'delete') {
       // The button that was pressed disappears with the source: hand the focus to the plane so keyboard work can continue.
