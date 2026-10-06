@@ -156,3 +156,29 @@ test('lessons text: variable lambda and the Flip-Shift-Multiply-Integrate proced
     assert.doesNotMatch(convolutionLesson.describe({ family, params: Object.fromEntries(controls.map((c) => [c.key, c.initial])), cursor: spec.initial, extra: {} }), /NaN/);
   }
 });
+
+test('product pane: the axis holds the overlap at every cursor, flip 0 and 1 (area equals y)', () => {
+  const area = (setup, t, flip) => {
+    const { product } = continuousFrame(setup, t, 20000, flip);
+    let sum = 0;
+    for (let i = 1; i < product.length; i++) sum += (product[i][0] - product[i - 1][0]) * (product[i][1] + product[i - 1][1]) / 2;
+    return sum;
+  };
+  const cases = [['rc-step', {}], ['rc-pulse', { tau: 2 }], ['ex222', {}], ['rect-rect', {}], ['tri-rect', {}], ['exp-rect', {}], ['exp-exp', { alpha: 1, beta: 2 }]];
+  for (const [family, params] of cases) {
+    for (const flip of [0, 1]) {
+      const setup = convolutionSetup(family, { ...params, flip });
+      const { min, max } = setup.domain;
+      for (const t of [min, (min + max) / 2, max]) {
+        const span = overlapInterval(setup, t);
+        if (span && Number.isFinite(span[1])) assert.ok(span[0] >= setup.axis.lo - 1e-9 && span[1] <= setup.axis.hi + 1e-9, `${family} flip ${flip} t=${t}`);
+        const y = setup.y(t);
+        const a = area(setup, t, flip);
+        assert.ok(Math.abs(a - y) <= 1e-3 * Math.max(Math.abs(y), 1e-3), `${family} flip ${flip} t=${t}: ${a} versus ${y}`);
+      }
+    }
+  }
+  const setup = convolutionSetup('rc-pulse', { tau: 2, flip: 1 });
+  near(setup.y(13), 0.000759574515, 1e-9);
+  assert.ok(setup.axis.hi >= 13.5);
+});

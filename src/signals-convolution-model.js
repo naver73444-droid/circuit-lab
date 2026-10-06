@@ -158,6 +158,15 @@ function continuousSetup(family, p) {
   const cursor0 = family === 'exp-exp' ? 1 / Math.min(p.alpha, p.beta) : family === 'exp-rect' ? p.T2
     : family === 'rc-step' ? 2 * p.tau : family === 'rc-pulse' ? 0.5 : family === 'ex222' ? 1 : Math.min(p.T1, p.T2);
   const wide = family === 'rc-pulse' ? { lo: -1.1, hi: end } : family === 'ex222' ? { lo: -1, hi: 5 } : null;
+  const domain = wide ? { min: wide.lo + 0.1, max: wide.hi, step: (wide.hi - wide.lo) / 200, unit: 's' } : { min: -0.1 * end, max: 1.1 * end, step: end / 200, unit: 's' };
+  // The shared axis must hold the overlap interval of either flip at every cursor t of the domain (otherwise the product pane clips it).
+  const axis = { ...(wide ?? { lo: -0.2 * end, hi: 1.2 * end }) };
+  for (const t of [domain.min, domain.max]) {
+    for (const [fixed, moving] of [[xSupport, hSupport], [hSupport, xSupport]]) {
+      const span = overlapSpan(fixed, moving, t);
+      if (span && Number.isFinite(span[0]) && Number.isFinite(span[1])) { axis.lo = Math.min(axis.lo, span[0]); axis.hi = Math.max(axis.hi, span[1]); }
+    }
+  }
   return {
     discrete: false,
     family,
@@ -169,8 +178,8 @@ function continuousSetup(family, p) {
     xSupport,
     hSupport,
     flip: p.flip === 1 ? 1 : 0,
-    domain: wide ? { min: wide.lo + 0.1, max: wide.hi, step: (wide.hi - wide.lo) / 200, unit: 's' } : { min: -0.1 * end, max: 1.1 * end, step: end / 200, unit: 's' },
-    axis: wide ?? { lo: -0.2 * end, hi: 1.2 * end },
+    domain,
+    axis,
     cursor0,
   };
 }
@@ -250,7 +259,10 @@ export function continuousFrame(setup, t, count = 400, flip = setup.flip ?? 0) {
 
 // Interval of the integration variable where the fixed copy and the flipped, shifted copy both live; null when they do not overlap (y = 0).
 export function overlapInterval(setup, t) {
-  const [fixed, moving] = setup.flip === 1 ? [setup.hSupport, setup.xSupport] : [setup.xSupport, setup.hSupport];
+  return setup.flip === 1 ? overlapSpan(setup.hSupport, setup.xSupport, t) : overlapSpan(setup.xSupport, setup.hSupport, t);
+}
+
+function overlapSpan(fixed, moving, t) {
   const lo = Math.max(fixed[0], t - moving[1]);
   const hi = Math.min(fixed[1], t - moving[0]);
   return hi > lo ? [lo, hi] : null;
