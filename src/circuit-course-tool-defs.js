@@ -3,7 +3,7 @@
 import { complexPower } from './circuit-course-model.js';
 import { cz, scale, magnitude, conjugate, snap, sum } from './circuit-course-complex.js';
 import { evaluateComplexExpression } from './circuit-course-complex-expr.js';
-import { solveThreePhase, pfFromLineData } from './circuit-course-threephase.js';
+import { solveThreePhase, pfFromLineData, twoWattmeter } from './circuit-course-threephase.js';
 import { combineLoads, LOAD_KINDS, MAX_LOADS } from './circuit-course-loads.js';
 import { maxPowerTransfer } from './circuit-course-maxpower.js';
 import { fmt, polarShort, short, zText, capacitanceText } from './circuit-course-format.js';
@@ -65,6 +65,7 @@ export const THREE_PHASE_TOOL = {
     ...zField('za', '부하 a (Y: AN · Δ: AB)', 10, 8, { showIf: isCircuit }),
     ...zField('zb', '부하 b (Y: BN · Δ: BC)', 10, 8, { showIf: unbalanced }),
     ...zField('zc', '부하 c (Y: CN · Δ: CA)', 10, 8, { showIf: unbalanced }),
+    choice('wattmeter', '전력계 표시 (평형 해석)', 'none', [['none', '없음'], ['two', '2전력계법 (a·c 선에 계기)']], { showIf: v => isCircuit(v) && v.balanced === 'yes' }),
     amp('invVL', '선간전압 VL', 'V', 220, 1e-6, 1e12, { showIf: isInverse }),
     amp('invIL', '선전류 IL', 'A', 18.2, 1e-9, 1e12, { showIf: isInverse }),
     num('invP', '유효전력 P', 'W', 5600, 1e-9, 1e15, { showIf: isInverse }),
@@ -94,6 +95,12 @@ export const THREE_PHASE_TOOL = {
       expect: [{ key: 'IAMag', label: '|Ia|', value: 4.8, unit: 'A' }, { key: 'IAAng', label: '∠Ia', value: -36.87, unit: '°' }, { key: 'INMag', label: '|In|', value: 0, unit: 'A', abs: 1e-6 }] },
     { label: '연습 12.14 Y 전원 100 V · 선로 1+j2 · Δ 부하 12+j12', basis: 'rms', values: { voltage: 100, lineR: 1, lineX: 2, loadConnection: 'delta', zaR: 12, zaX: 12 },
       expect: [{ key: 'IAMag', label: '|Ia|', value: 12.8, unit: 'A' }, { key: 'IAAng', label: '∠Ia', value: -50.19, unit: '°' }] },
+    { label: '2전력계법 · Y 부하 5+j8.66 Ω (θ=60°, W1≈0) · 상전압 110 V', basis: 'rms', values: { voltage: 110, wattmeter: 'two', zaR: 5, zaX: 8.660254037844386 },
+      expect: [{ key: 'W1', label: 'W1 = VL·IL·cos(θ+30°)', value: 0, unit: 'W', abs: 1e-6, note: 'pf=0.5 경계: 한 계기가 0 · 닫힌 꼴 검산 (교재 풀이 아님)' },
+        { key: 'W2', label: 'W2 = VL·IL·cos(θ−30°)', value: 1815.0, unit: 'W' },
+        { key: 'Wsum', label: 'W1+W2 = P', value: 1815.0, unit: 'W' }] },
+    { label: '2전력계법 · Y 부하 2+j10 Ω (pf<0.5, W1 음수) · 상전압 110 V', basis: 'rms', values: { voltage: 110, wattmeter: 'two', zaR: 2, zaX: 10 },
+      expect: [{ key: 'W1', label: 'W1 (음수)', value: -658.55, unit: 'W', note: '닫힌 꼴 검산' }, { key: 'W2', label: 'W2 (양수)', value: 1356.63, unit: 'W' }, { key: 'Wsum', label: 'W1+W2 = P', value: 698.08, unit: 'W' }] },
     { label: '불평형 4선식 (120 V Y 전원, 부하 j5·10·−j10 Ω) · In=−(Ia+Ib+Ic)', basis: 'rms', values: { voltage: 120, neutral: 'ideal', balanced: 'no', zaR: 0, zaX: 5, zbR: 10, zbX: 0, zcR: 0, zcX: -10 },
       expect: [{ key: 'IAMag', label: '|Ia|=120/5', value: 24, unit: 'A' }, { key: 'IBMag', label: '|Ib|=120/10', value: 12, unit: 'A' }, { key: 'ICMag', label: '|Ic|=120/10', value: 12, unit: 'A' },
         { key: 'INMag', label: '|In|=|24∠−90°+12∠−120°+12∠210°|', value: 43.5918, unit: 'A', note: '교재는 풀이 없이 회로만 제시 · 닫힌 꼴 검산' }] },
@@ -134,13 +141,20 @@ export const THREE_PHASE_TOOL = {
       ...(magnitude(IN) > 0 ? [{ label: 'In', unit: 'A', z: IN }] : [])];
     const powerRows = [pqRow('전원 (공급)', r.power.source), pqRow('선로 Zℓ', r.power.line), pqRow('부하', r.power.load)];
     if (r.neutral === 'impedance') powerRows.push(pqRow('중성선 Zn', r.power.neutral));
+    const two = v.balanced === 'yes' && v.wattmeter === 'two' ? twoWattmeter(r, za) : null;
+    if (two) { values.W1 = two.W1; values.W2 = two.W2; values.Wsum = two.total; values.Wq = two.reactive; }
     const note = r.balanced ? '평형: In=0 이라 단상 등가(a상)만 풀면 b, c는 ∓120° 이동입니다.' : r.neutral === 'none' ? '불평형 3선식: Ia+Ib+Ic=0 (메시 해석과 대조 완료).' : '불평형: 중성선 전류 In=−(Ia+Ib+Ic)≠0 입니다.';
-    return { status: 'valid', values, balanced: r.balanced, checks: r.checks, phasors, triangles: [triangleOf(r.power.load, '부하 복소전력 S=P+jQ')],
-      read: 'Ia=' + polarK(r.lineCurrents[0]) + ' A, Ib=' + polarK(r.lineCurrents[1]) + ' A, Ic=' + polarK(r.lineCurrents[2]) + ' A · In=' + polarK(IN) + ' A · ' + note,
-      metrics: [metric('|Ia|', short(magnitude(r.lineCurrents[0]) * k), 'A'), metric('부하 P', fmt(r.power.load.re), 'W'), metric('부하 Q', fmt(r.power.load.im), 'var'), metric('부하 pf', pfText(r.power.load))],
+    const wText = two ? ' · 2전력계법: W1=' + fmt(two.W1) + ' W, W2=' + fmt(two.W2) + ' W (W1+W2=' + fmt(two.total) + ' W,'
+      + ' √3(W2−W1)=' + fmt(two.reactive) + ' var)'
+      + (two.negative ? ' · θ=' + short(two.thetaDeg) + '°, |θ|>60° (역률<0.5)라 한 계기(' + two.negative + ')가 음수입니다.' : '') : '';
+    return { status: 'valid', values, balanced: r.balanced, checks: two ? [...r.checks, ...two.checks] : r.checks, phasors, triangles: [triangleOf(r.power.load, '부하 복소전력 S=P+jQ')],
+      read: 'Ia=' + polarK(r.lineCurrents[0]) + ' A, Ib=' + polarK(r.lineCurrents[1]) + ' A, Ic=' + polarK(r.lineCurrents[2]) + ' A · In=' + polarK(IN) + ' A · ' + note + wText,
+      metrics: [metric('|Ia|', short(magnitude(r.lineCurrents[0]) * k), 'A'), metric('부하 P', fmt(r.power.load.re), 'W'), metric('부하 Q', fmt(r.power.load.im), 'var'), metric('부하 pf', pfText(r.power.load)),
+        ...(two ? [metric('W1 (' + two.W1Line + '선 · cos(θ+30°))', fmt(two.W1), 'W'), metric('W2 (' + two.W2Line + '선 · cos(θ−30°))', fmt(two.W2), 'W')] : [])],
       tables: [{ title: '전류 · 전압 (' + (k > 1 ? 'peak' : 'rms') + ')', headers: ['양', '크기∠위상 (A 또는 V)'], rows: [...rows, ...loadV] },
         { title: '복소전력 분배 (S전원 = S선로 + S부하' + (r.neutral === 'impedance' ? ' + S중성선' : '') + ')', headers: ['구분', 'P (W)', 'Q (var)', '|S| (VA)', 'pf'], rows: powerRows }],
-      notes: [note, natureText(r.power.load) + ' (부하 기준)'], figure: { kind: 'three-phase', source: v.sourceConnection, load: v.loadConnection, neutral: r.neutral, hasLine: v.lineR !== 0 || v.lineX !== 0 } };
+      notes: [note, natureText(r.power.load) + ' (부하 기준)', ...(two ? ['2전력계법 규약: 교재 §12.10 (Alexander & Sadiku; 강의 슬라이드에는 없음) — W1=VL·IL·cos(θ+30°), W2=VL·IL·cos(θ−30°), P=W1+W2, Q=√3(W2−W1).', '2전력계법: 계기는 a·c 선, 전압코일 공통은 b선(부하 단자 선간전압). 계기 a=Re(Vab·Ia*), 계기 c=Re(Vcb·Ic*).'
+        + (two.negative ? ' 역률 0.5 미만이면 한 계기가 음수를 가리킵니다(' + two.negative + ' < 0): 계기 극성을 뒤집어 읽고 부호를 붙여 합산합니다.' : '')] : [])], figure: { kind: 'three-phase', source: v.sourceConnection, load: v.loadConnection, neutral: r.neutral, hasLine: v.lineR !== 0 || v.lineX !== 0 } };
   }
 };
 

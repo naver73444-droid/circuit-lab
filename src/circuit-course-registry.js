@@ -255,3 +255,37 @@ export function evaluateExperiment(id, p) {
     return result;
   } catch (e) { return { status: 'invalid', reason: e.message }; }
 }
+// "Example applied" summary: which fields an example changed (the amplitude basis first when it changed). Pure text; the callers decide what changed.
+const BASIS_NAME = { peak: 'peak', rms: 'RMS' };
+const tidyLabel = label => String(label).replace(/\s*[(（][^)）]*[)）]/g, '').replace(/\s+/g, ' ').trim();
+/** Short field name for the summary: parentheses dropped, an "… 저항 R" / "… 리액턴스 X" pair collapsed into one "… Z". */
+export function exampleFieldName(label) {
+  const t = tidyLabel(label), m = t.match(/^(.*?)\s*(저항 R|리액턴스 X)$/);
+  return m ? (m[1] ? m[1] + ' Z' : 'Z') : t;
+}
+export function exampleChangeNote({ basisBefore, basisAfter, labels = [] }) {
+  const names = [...new Set(labels.map(exampleFieldName))].filter(Boolean);
+  const parts = [];
+  if (basisBefore && basisAfter && basisBefore !== basisAfter) parts.push('기준 ' + (BASIS_NAME[basisBefore] ?? basisBefore) + ' → ' + (BASIS_NAME[basisAfter] ?? basisAfter));
+  if (names.length) parts.push(names.join('·') + ' 변경');
+  return '예제 적용: ' + (parts.length ? parts.join(', ') : '바뀐 값 없음');
+}
+const sameNumber = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+/** Experiments 1–5 (and the problem): labels of the shown parameters whose physical value differs between two draft sets (amplitudes compared in RMS). */
+export function changedParameterLabels(experiment, before, after, shownParams) {
+  const out = [];
+  for (const p of experiment.parameters) {
+    if (p.key === 'basis' || (p.showIf && !p.showIf(shownParams))) continue;
+    const a = before[p.key], b = after[p.key];
+    let same;
+    if (p.choices || p.text) same = a === b;
+    else {
+      const rms = (text, basis) => (String(text ?? '').trim() === '' ? NaN : Number(text) * p.displayScale / (p.amplitude ? basisScale(basis) : 1));
+      const na = rms(a, before.basis), nb = rms(b, after.basis);
+      same = Number.isFinite(na) && Number.isFinite(nb) ? sameNumber(na, nb) : String(a) === String(b);
+    }
+    if (!same) out.push(p.label);
+  }
+  return out;
+}
+const basisScale = b => (b === 'peak' ? Math.SQRT2 : 1);

@@ -133,3 +133,25 @@ export function pfFromLineData({ lineVoltageRms, lineCurrentRms, pWatts, nature 
     return { status: 'valid', apparentVA, pf, thetaDeg: theta * 180 / Math.PI * (nature === 'lagging' ? 1 : -1), pWatts, qVars: q, nature };
   } catch (e) { return { status: 'invalid', reason: e.message }; }
 }
+
+// Two-wattmeter method (balanced load): meters in lines a and c, common (voltage-coil) line b, read at the load terminals.
+//   meter a: Re(Vab·Ia*), meter c: Re(Vcb·Ic*). W1 is the reading V_L·I_L·cos(θ+30°), W2 the one V_L·I_L·cos(θ−30°) (θ = load impedance angle; Alexander & Sadiku §12.10 convention):
+//   for abc the a meter is W1 and the c meter W2, for acb the roles swap. W1+W2 = P and √3(W2−W1) = Q (Q>0 inductive).
+// The meters are computed from the solved voltages and currents; the checks compare them with the closed forms, so the two paths are independent.
+export function twoWattmeter(r, loadZ) {
+  const [Vab, Vbc] = r.terminalLineVoltages, Vcb = neg(Vbc), Ia = r.lineCurrents[0], Ic = r.lineCurrents[2];
+  const meterA = sconj(Vab, Ia).re, meterC = sconj(Vcb, Ic).re, abc = r.sequence !== 'acb';
+  const W1 = abc ? meterA : meterC, W2 = abc ? meterC : meterA;
+  const thetaDeg = Math.atan2(loadZ.im, loadZ.re) * 180 / Math.PI, th = thetaDeg * Math.PI / 180, d30 = Math.PI / 6;
+  const VL = magnitude(Vab), IL = (magnitude(r.lineCurrents[0]) + magnitude(r.lineCurrents[1]) + magnitude(r.lineCurrents[2])) / 3;
+  const P = r.power.load.re, Q = r.power.load.im, scale = Math.max(Math.sqrt(3) * VL * IL, 1e-12), tol = 1e-9 * scale + 1e-9;
+  const mk = (label, actual, expected) => ({ label, actual, expected, unit: 'W', tol, pass: Math.abs(actual - expected) <= tol });
+  const checks = [
+    mk('W1 = V_L·I_L·cos(θ+30°)', W1, VL * IL * Math.cos(th + d30)),
+    mk('W2 = V_L·I_L·cos(θ−30°)', W2, VL * IL * Math.cos(th - d30)),
+    mk('W1 + W2 = P (부하 유효전력)', W1 + W2, P),
+    { ...mk('√3(W2 − W1) = Q (부하 무효전력)', Math.sqrt(3) * (W2 - W1), Q), unit: 'var' }
+  ];
+  const negative = thetaDeg > 60 + 1e-9 ? 'W1' : thetaDeg < -60 - 1e-9 ? 'W2' : null;
+  return { W1, W2, meterA, meterC, W1Line: abc ? 'a' : 'c', W2Line: abc ? 'c' : 'a', thetaDeg, lineVoltage: VL, lineCurrent: IL, total: W1 + W2, reactive: Math.sqrt(3) * (W2 - W1), negative, checks, pass: checks.every(c => c.pass) };
+}

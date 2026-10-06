@@ -234,6 +234,11 @@ export function createCircuitCourseView(host) {
   }
   function toolPanel(toolId) { return host.querySelector('[data-circuit-course-tool-panel="' + toolId + '"]'); }
   function status(message, kind = 'valid') { q('status').textContent = message; q('status').dataset.kind = kind; }
+  /** One-line note in front of the status text; the next input rewrites the status line, which removes it. toolId: a course tool panel, omitted for the experiments. */
+  function statusNote(note, toolId) {
+    const el = toolId ? toolPanel(toolId)?.querySelector('[data-cc-status]') : q('status');
+    if (el) el.textContent = note + (el.textContent ? ' · ' + el.textContent : '');
+  }
   function dirty() { status('미적용 입력이 있습니다. 입력 적용을 누르면 새 결과를 계산합니다.', 'draft'); q('results').hidden = true; }
   function projection(result, fraction = 0) {
     const root = q('projection'); if (!root || !result.traces?.length) return;
@@ -297,6 +302,6 @@ export function createCircuitCourseView(host) {
     q('results').innerHTML = html;mathCards(q('results'));if(result.symbolicData?.status==='supported')renderSymbolic(q('symbolic-companion'),result.symbolicData); projection(result);
   }
   function showBasis(basis) { host.querySelectorAll('[data-circuit-course-basis]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.circuitCourseBasis === basis))); }
-  return { showForm, showResult, showTool, toolPanel, status, dirty, projection, showBasis,
+  return { showForm, showResult, showTool, toolPanel, status, statusNote, dirty, projection, showBasis,
     revealInput(key) { const input=host.querySelector('[data-circuit-course-key="'+key+'"]');const folded=input?.closest?.('[data-circuit-course-display-settings]');if(folded){folded.open=true;settingsOpen=true;}input?.scrollIntoView?.({block:'center'});input?.focus?.({preventScroll:true}); }, revealAnswer() { q('answers')?.scrollIntoView?.({block:'start'}); }, clear() { host.removeEventListener('toggle', onToggle, true);host.replaceChildren(); host.classList.remove('circuit-course'); } };
 }

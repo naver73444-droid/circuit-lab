@@ -1,5 +1,5 @@
 import { preserveCourseFocus } from './course-focus.js';
-import { EXPERIMENTS, getExperiment, initialParameters, evaluateExperiment, verifyExample, draftsOf, exampleDrafts, convertCoordinateDrafts } from './circuit-course-registry.js';
+import { EXPERIMENTS, getExperiment, initialParameters, evaluateExperiment, verifyExample, draftsOf, exampleDrafts, convertCoordinateDrafts, exampleChangeNote, changedParameterLabels } from './circuit-course-registry.js';
 import { parseProblemQuantity } from './circuit-course-problem.js';
 import { createCircuitCourseView } from './circuit-course-view.js';
 import { createYDeltaTool } from './y-delta-tool-controller.js';
@@ -7,6 +7,7 @@ import { TOOLS } from './circuit-course-tools.js';
 import { createCourseTool } from './circuit-course-tool-controller.js';
 import { parseCourseNumber } from './circuit-course-format.js';
 import { basisFactor } from './circuit-course-complex.js';
+import { dataFields, isShown, labelOf } from './circuit-course-tool-common.js';
 export { parseCourseNumber };
 const draftNumber = n => String(Number(n.toPrecision(10)));
 // Numeric experiments follow the course-wide amplitude toggle; the free problem keeps its own given-voltage basis.
@@ -140,6 +141,7 @@ export function createCircuitCourseController(host) {
       const experiment = getExperiment(id), index = Number(target.dataset.circuitCourseExample), example = experiment.examples[index];
       if (!example) return;
       // A lecture example is written in its own amplitude basis (peak for Ch.9–10, RMS later): the course toggle follows it.
+      const beforeDrafts = { ...current().drafts }, basisBefore = beforeDrafts.basis ?? basis;
       if (followsBasis(experiment) && example.values.basis) switchBasis(example.values.basis);
       // The example becomes a complete state: defaults (in the basis just chosen) overwritten by the example's own values, never on top of earlier edits.
       const state = newState(experiment);
@@ -149,11 +151,31 @@ export function createCircuitCourseController(host) {
       render(); apply();
       state.activeExample = example.expect ? index : -1;
       if (state.activeExample >= 0 && !state.validationFailed) view.showResult(state.result, id, state.params, verification());
+      if (!state.validationFailed) view.statusNote(exampleChangeNote({ basisBefore, basisAfter: state.drafts.basis ?? basis, labels: changedParameterLabels(experiment, beforeDrafts, state.drafts, displayParams()) }));
     }
   }
+  // Course tools: the preset button is handled inside the tool (its own listener, deeper in the DOM). A capture listener here records the state just before,
+  // and the bubble listener after it reads the state again and writes the "example applied" note into that tool's status line.
+  let presetBefore = null;
+  const toolPresetOf = event => { const b = event.target.closest?.('[data-cc-preset]'), panel = b?.closest('[data-circuit-course-tool-panel]'); return b && panel && host.contains(panel) ? panel.dataset.circuitCourseToolPanel : null; };
+  const onPresetCapture = event => {
+    const toolId = toolPresetOf(event), t = toolId && courseTools.get(toolId);
+    presetBefore = t ? { toolId, snapshot: t.inspect() } : null;
+  };
+  const onPresetNote = event => {
+    const toolId = toolPresetOf(event), before = presetBefore;
+    presetBefore = null;
+    if (!before || before.toolId !== toolId) return;
+    const def = TOOLS.find(d => d.id === toolId), after = courseTools.get(toolId).inspect();
+    if (!def || after.destroyed || after.status !== 'valid') return;
+    const differs = (x, y) => (typeof x === 'number' && typeof y === 'number' ? Math.abs(x - y) > 1e-9 * Math.max(1, Math.abs(x), Math.abs(y)) : x !== y);
+    const labels = dataFields(def).filter(f => isShown(f, after.values) && differs(before.snapshot.values?.[f.key], after.values[f.key])).map(f => labelOf(f, after.values));
+    view.statusNote(exampleChangeNote({ basisBefore: before.snapshot.basis, basisAfter: after.basis, labels }), toolId);
+  };
   function onSubmit(event) { if (event.target.matches('[data-circuit-course-form]')) { event.preventDefault(); apply(id !== 'problem'); } }
   const onChange = event => { if (event.target.tagName === 'SELECT') onInput(event); };
   host.addEventListener('input', onInput); host.addEventListener('change', onChange); host.addEventListener('click', onClick); host.addEventListener('submit', onSubmit);
+  host.addEventListener('click', onPresetCapture, true); host.addEventListener('click', onPresetNote);
   host.hidden = true; host.inert = true; render();
   return {
     activate() { if (destroyed) return; active = true; host.hidden = false; host.inert = false; },
@@ -169,7 +191,8 @@ export function createCircuitCourseController(host) {
     },
     destroy() {
       if (destroyed) return; this.deactivate(); yDelta.destroy(); for (const t of courseTools.values()) t.destroy();
-      host.removeEventListener('input', onInput); host.removeEventListener('change', onChange); host.removeEventListener('click', onClick); host.removeEventListener('submit', onSubmit); view.clear(); destroyed = true; states.clear();
+      host.removeEventListener('input', onInput); host.removeEventListener('change', onChange); host.removeEventListener('click', onClick); host.removeEventListener('submit', onSubmit);
+      host.removeEventListener('click', onPresetCapture, true); host.removeEventListener('click', onPresetNote); view.clear(); destroyed = true; states.clear();
     }
   };
 }
