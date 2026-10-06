@@ -1,6 +1,7 @@
 // Shared pieces of the live course tools: field builders, validation, evaluation, and textbook-expectation checks. Pure, no DOM.
 // Tool values are stored as internal RMS numbers; amplitude fields are shown and typed in the display basis (peak or RMS).
 import { closeTo, basisFactor } from './circuit-course-complex.js';
+import { parseCourseNumber } from './circuit-course-format.js';
 
 export const num = (key, label, unit, initial, min, max, extra = {}) => ({ kind: 'number', key, label, unit, initial, min, max, ...extra });
 export const amp = (key, label, unit, initial, min, max, extra = {}) => num(key, label, unit, initial, min, max, { amplitude: true, ...extra });
@@ -30,6 +31,24 @@ export function validateField(field, value) {
 }
 export function validateValues(def, values) {
   for (const field of dataFields(def)) if (isShown(field, values)) validateField(field, values[field.key]);
+}
+
+// Draft text of a number: ten significant digits, no float noise (0.30000000000000004 → 0.3).
+export const draftText = n => String(Number(n.toPrecision(10)));
+export const FIELD_KEPT = ' 마지막 유효 값을 쓰고 있습니다.';
+/**
+ * Re-read every shown number field from its on-screen text before a calculation. A draft that still equals the text of the stored value is
+ * left exactly as stored; a different one is parsed and range-checked. Returns { candidate, errors } — errors is { fieldKey: message } for each
+ * shown field whose text cannot be used, so one bad field is never hidden by editing another.
+ */
+export function reviewDrafts(def, values, drafts, basis) {
+  const candidate = { ...values }, errors = {};
+  for (const field of dataFields(def)) {
+    if (field.kind !== 'number' || !isShown(field, candidate) || drafts[field.key] === undefined) continue;
+    if (drafts[field.key] === draftText(toDisplay(field, values[field.key], basis))) continue;
+    try { const internal = fromDisplay(field, parseCourseNumber(drafts[field.key]), basis); validateField(field, internal); candidate[field.key] = internal; } catch (e) { errors[field.key] = e.message + FIELD_KEPT; }
+  }
+  return { candidate, errors };
 }
 
 export function evaluateTool(def, values, basis = 'rms') {

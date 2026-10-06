@@ -1,5 +1,6 @@
 import { polar, rmsPhasor, magnitude, rectangularPolar, phaseDifference, add, sub, impedanceNetwork, balancedThreePhase, correction, sampledPowerCheck, waveSample } from './circuit-course-model.js';
 import { solveSymbolicProblem } from './circuit-course-problem-symbolic.js';
+import { COUPLING_TOOL_GUIDE } from './circuit-course-format.js';
 const UNIT_MAP = {
   resistance: { ohm: 1, kohm: 1e3, Mohm: 1e6, mohm: 1e-3 },
   inductance: { H: 1, mH: 1e-3, uH: 1e-6 },
@@ -54,7 +55,7 @@ function desiredAnswers(goal, result, kind) {
     if (goal === 'phase-voltage') return result.loadVoltages.map((v, k) => complexAnswer('부하 상' + (k + 1) + ' 전압 RMS', v, 'V'));
   }
   if (kind === 'correction') {
-    if (goal === 'capacitance') return [answer('각 커패시터 C', result.recommendedCapacitanceF * 1e6, 'µF'), answer('커패시터 총 Q', result.qCapacitorVars, 'var')];
+    if (goal === 'capacitance') return [answer('각 커패시터 C', result.recommendedCapacitanceF * 1e6, 'µF'), answer('Qc 필요한 보상량 (양수, S_C=−jQc)', -result.qCapacitorVars, 'var')];
     if (goal === 'source-current') return [answer('보상 전 공급 전류 RMS', result.sourceCurrentBeforeRms, 'A'), answer('보상 후 공급 전류 RMS', result.sourceCurrentAfterRms, 'A')];
   }
   throw new RangeError('이 문제 유형에서 구할 수 없는 값을 선택했습니다.');
@@ -140,8 +141,8 @@ export function solveCourseProblem(p) {
       goal = p.correctionGoal; r.power = r.after; r.phasors = []; r.traces = [];
       givens.push(p.phases === '3' ? '균형 3상 선간전압 · C뱅크 ' + p.connection : '단상 부하 단자전압', 'P총=' + n(pWatts) + ' W', 'Q총=' + n(qVars) + ' var', 'f=' + n(frequencyHz) + ' Hz', '목표 지상 PF=' + n(targetPF));
       steps.push(step('목표 무효전력', 'Q목표=P tan(acos(PF목표))', n(pWatts) + '×tan(acos(' + n(targetPF) + '))', n(r.desiredQ) + ' var'));
-      steps.push(step('커패시터 무효전력', 'Qcap=Q목표−Q부하', n(r.desiredQ) + '−(' + n(qVars) + ')', n(r.qCapacitorVars) + ' var'));
-      steps.push(step('각 커패시터', 'C_each=−Qcap/(Nω Vcap²)', '−(' + n(r.qCapacitorVars) + ')/(' + p.phases + '×2π×' + n(frequencyHz) + '×' + n(r.capacitorVoltageRms) + '²)', n(r.recommendedCapacitanceF * 1e6) + ' µF'));
+      steps.push(step('필요한 보상량', 'Qc=Q부하−Q목표 (양수) · 커패시터 복소전력 S_C=−jQc', n(qVars) + '−(' + n(r.desiredQ) + ')', n(-r.qCapacitorVars) + ' var'));
+      steps.push(step('각 커패시터', 'C_each=Qc/(Nω Vcap²)', n(-r.qCapacitorVars) + '/(' + p.phases + '×2π×' + n(frequencyHz) + '×' + n(r.capacitorVoltageRms) + '²)', n(r.recommendedCapacitanceF * 1e6) + ' µF'));
       steps.push(step('보상 후 전류', p.phases === '3' ? '|I선|=√(P²+Q_after²)/(√3V선)' : '|I|=√(P²+Q_after²)/V',
         '√(' + n(pWatts) + '²+' + n(r.qAfterVars) + '²)/(' + (p.phases === '3' ? '√3×' : '') + n(vRms) + ')', n(r.sourceCurrentAfterRms) + ' A RMS'));
       notes.push('C_each는 각 소자의 값입니다. 뱅크 합계와 혼동하지 마세요. 전압은 단상 단자 또는 3상 선간 값입니다.');
@@ -188,6 +189,7 @@ export const PROBLEM_EXPERIMENT = {
   ],
   assumptions: ['지원: 주어진 전압으로 구동하는 단상 직렬/병렬 R/L/C, 균형 abc 3상 수동 동일 부하, 병렬 커패시터 보상.',
     '임의 연결 회로, 불평형, 중성선 이동, 고조파, 과도응답은 이 문제풀이 모드에서 지원하지 않습니다.',
+    '자기결합·변압기 문제는 여기서 풀지 않습니다. ' + COUPLING_TOOL_GUIDE,
     '사진/PDF 자동 인식·OCR·수식 자동 해석은 미지원입니다. 문제의 수치 조건을 직접 입력하세요.',
     '주어진 위상이 없으면 입력한 0°를 기준으로 삼습니다. 3상은 주어진 Vab/부하 상전압의 위상을 뜻합니다.',
     '빈 필수 조건은 오류로 표시합니다. 3상에 Z가 직접 주어지면 주파수 없이 페이저 답을 구하고 파형을 생략합니다.'],

@@ -4,10 +4,9 @@ import { escapeHtml as esc } from './safe-dom.js';
 import { phasorGraphs, waves, triangle, table, verificationTable } from './circuit-course-view.js';
 import { fmt } from './circuit-course-format.js';
 import { toolFigure } from './circuit-course-figures.js';
-import { isShown, labelOf, unitOf, sliderOf, toDisplay } from './circuit-course-tool-common.js';
+import { isShown, labelOf, unitOf, sliderOf, toDisplay, draftText } from './circuit-course-tool-common.js';
 
-// Draft text of a number: ten significant digits, no float noise (0.30000000000000004 → 0.3).
-export const draftText = n => String(Number(n.toPrecision(10)));
+export { draftText };
 
 function lineChart(curve) {
   const pts = curve.points, xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
@@ -75,7 +74,7 @@ export function createCourseToolView(host, def) {
       if (result.figure) html += '<section class="circuit-course-card">' + toolFigure(result.figure) + '</section>';
       if (result.metrics?.length) html += '<div class="circuit-course-metrics">' + result.metrics.map(m => '<div class="circuit-course-metric"><span>' + esc(m.label) + '</span><strong>' + esc(m.text) + '</strong>' + esc(m.unit)
         + '</div>').join('') + '</div>';
-      if (verification?.length) html += verificationTable(verification);
+      if (verification?.length) html += verificationTable(verification, basis);
       html += (result.tables ?? []).map(t => '<section class="circuit-course-card"><h3>' + esc(t.title) + '</h3>' + table(t.headers, t.rows) + '</section>').join('');
       html += '<div class="circuit-course-graphs">' + (result.phasors?.length ? phasorGraphs(result.phasors, basis) : '') + (result.triangles ?? []).map(t => triangle(t.p, t.title)).join('')
         + (result.curves ?? []).map(lineChart).join('') + (result.traces?.length ? waves(result.traces, result.frequencyHz) : '') + '</div>';

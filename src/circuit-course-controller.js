@@ -1,5 +1,5 @@
 import { preserveCourseFocus } from './course-focus.js';
-import { EXPERIMENTS, getExperiment, initialParameters, evaluateExperiment, verifyExample, draftsOf, exampleDrafts } from './circuit-course-registry.js';
+import { EXPERIMENTS, getExperiment, initialParameters, evaluateExperiment, verifyExample, draftsOf, exampleDrafts, convertCoordinateDrafts } from './circuit-course-registry.js';
 import { parseProblemQuantity } from './circuit-course-problem.js';
 import { createCircuitCourseView } from './circuit-course-view.js';
 import { createYDeltaTool } from './y-delta-tool-controller.js';
@@ -109,7 +109,8 @@ export function createCircuitCourseController(host) {
     const key = target.dataset?.circuitCourseKey;
     if (!key) return;
     const state = current(), live = id !== 'problem';
-    state.drafts[key] = target.value; state.validationFailed = false; state.origin = 'manual-conditions'; state.activeExample = -1;
+    state.drafts[key] = target.value; state.validationFailed = false;
+    if (id === 'phasor-wave' && key === 'coordinate') state.drafts = convertCoordinateDrafts(state.drafts, target.value); state.origin = 'manual-conditions'; state.activeExample = -1;
     if (live) {
       if (target.tagName === 'SELECT') render();
       apply(true);

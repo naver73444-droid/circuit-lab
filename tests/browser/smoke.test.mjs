@@ -3461,7 +3461,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
     let props = (await component("K1")).props;
     assert.deepEqual([props.L1, props.L2, props.coupling, props.M], ["5", "6", "M", "3"]);
     assert.match(await inspector(), /유도값 k = M\/√\(L1·L2\) = 0\.54772/, "the other of k and M is shown derived");
-    assert.equal(await ev(`document.querySelector('.component[data-id="K1"] .value-label').textContent`), "5 · 6 · M 3");
+    assert.equal(await ev(`document.querySelector('.component[data-id="K1"] .value-label').textContent`), "L1 5H · L2 6H · M 3H");
     const dotY = () => ev(`[...document.querySelectorAll('.component[data-id="K1"] .ideal-mark')].map((dot) => Number(dot.getAttribute("cy")))`);
     assert.deepEqual(await dotY(), [-12, -12]);
     await select('#inspector-content [data-prop="dots"]', "opposite");

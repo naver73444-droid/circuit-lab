@@ -78,23 +78,24 @@ export function solveSymbolicProblem(p){
       ensureChoice(p.connection,['Y','delta'],'3상 부하');ensureChoice(p.voltageKnown,['line','phase'],'주어진 전압 종류');
       const Z=symbol(p,'symbolZ');symbols.push(Z);goal=p.threeGoal;
       const knownVan=p.connection==='Y'&&p.voltageKnown==='phase';
-      const Van=knownVan?rms:'('+rms+'/√3)e^(−jπ/6)';
-      const Vab=knownVan?'√3('+rms+')e^(jπ/6)':rms;
+      const acb=p.sequence==='acb',seq=acb?'acb':'abc',lead=acb?'e^(−jπ/6)':'e^(jπ/6)',lag=acb?'e^(jπ/6)':'e^(−jπ/6)',second=acb?'e^(j2π/3)':'e^(−j2π/3)',third=acb?'e^(−j2π/3)':'e^(j2π/3)';
+      const Van=knownVan?rms:'('+rms+'/√3)'+lag;
+      const Vab=knownVan?'√3('+rms+')'+lead:rms;
       const loadV=p.connection==='Y'?Van:Vab,loadI='('+loadV+')/'+Z;
-      const Ia=p.connection==='Y'?loadI:'√3('+loadI+')e^(−jπ/6)';
+      const Ia=p.connection==='Y'?loadI:'√3('+loadI+')'+lag;
       const k=p.connection==='Y'&&p.voltageKnown==='line'?1:3;
       const S=(k===1?'':'3×')+'('+v2+')/'+Z+'*',P=(k===1?'':'3×')+'('+v2+') Re('+Z+')/|'+Z+'|²',Q=(k===1?'':'3×')+'('+v2+') Im('+Z+')/|'+Z+'|²';
-      canonical={kind:'three',connection:p.connection,voltageKnown:p.voltageKnown,Van,Vab,loadV,loadI,Ia,S,P,Q,rms,voltageSquare:v2,powerMultiplier:k};
-      givens.push('균형 abc · '+(p.connection==='Y'?'Y':'Δ')+' · 상 임피던스 '+Z, V+'='+ (knownVan?'Van':p.voltageKnown==='line'?'Vab (선간)':'Vab (Δ 부하 상전압)'));
+      canonical={kind:'three',sequence:seq,connection:p.connection,voltageKnown:p.voltageKnown,Van,Vab,loadV,loadI,Ia,S,P,Q,rms,voltageSquare:v2,powerMultiplier:k};
+      givens.push('균형 '+seq+' · '+(p.connection==='Y'?'Y':'Δ')+' · 상 임피던스 '+Z, V+'='+ (knownVan?'Van':p.voltageKnown==='line'?'Vab (선간)':'Vab (Δ 부하 상전압)'));
       domains.push(Z+'≠0, Re('+Z+')≥0. 균형 동일 부하만 지원하며 불평형/중성선 이동은 제외합니다.');
-      steps.push(step('abc 상순서','Vbn=Van e^(−j2π/3), Vcn=Van e^(j2π/3)','Vab=Van−Vbn=√3 Van e^(jπ/6)','Van='+Van+'; Vab='+Vab));
+      steps.push(step(seq+' 상순서','Vbn=Van '+second+', Vcn=Van '+third,'Vab=Van−Vbn=√3 Van '+lead,'Van='+Van+'; Vab='+Vab));
       steps.push(step('상전압·상전류',p.connection==='Y'?'V상=Van, I상=Van/Z':'V상=Vab, Iab=Vab/Z','Z상='+Z,'V상='+loadV+'; I상='+loadI));
-      steps.push(step('선전류',p.connection==='Y'?'Ia=I상':'Ia=Iab−Ica=√3 Iab e^(−jπ/6)','Y: 선전류=상전류 / Δ: 30° 지연 포함','Ia='+Ia+'; Ib=Ia e^(−j2π/3); Ic=Ia e^(j2π/3)'));
+      steps.push(step('선전류',p.connection==='Y'?'Ia=I상':'Ia=Iab−Ica=√3 Iab '+lag,'Y: 선전류=상전류 / Δ: 30° '+(acb?'진상':'지연')+' 포함','Ia='+Ia+'; Ib=Ia '+second+'; Ic=Ia '+third));
       steps.push(step('총 피상전력의 크기','|S₃|=√(P²+Q²)=3 |V상_RMS| |I상_RMS|','P,Q는 각각 총 유효·무효전력입니다.','|S₃|='+(k===1?'':'3×')+'('+v2+')/|'+Z+'| VA'));
-      steps.push(step('3상 총 전력','S₃=3 V상 I상*=3 Van Ia*','선간 전압을 쓸 때 S₃=√3 Vab Ia*e^(−jπ/6)','S₃='+S+' VA; P='+P+' W; Q='+Q+' var'));
-      if(goal==='line-current')answers=[A('Ia 선전류',Ia,'A RMS'),A('Ib 선전류','('+Ia+')e^(−j2π/3)','A RMS'),A('Ic 선전류','('+Ia+')e^(j2π/3)','A RMS')];
-      else if(goal==='phase-current')answers=[A('첫 부하 상전류',loadI,'A RMS'),A('둘째 부하 상전류','('+loadI+')e^(−j2π/3)','A RMS'),A('셋째 부하 상전류','('+loadI+')e^(j2π/3)','A RMS')];
-      else if(goal==='phase-voltage')answers=[A('첫 부하 상전압',loadV,'V RMS'),A('둘째 부하 상전압','('+loadV+')e^(−j2π/3)','V RMS'),A('셋째 부하 상전압','('+loadV+')e^(j2π/3)','V RMS')];
+      steps.push(step('3상 총 전력','S₃=3 V상 I상*=3 Van Ia*','선간 전압을 쓸 때 S₃=√3 Vab Ia*'+lag,'S₃='+S+' VA; P='+P+' W; Q='+Q+' var'));
+      if(goal==='line-current')answers=[A('Ia 선전류',Ia,'A RMS'),A('Ib 선전류','('+Ia+')'+second,'A RMS'),A('Ic 선전류','('+Ia+')'+third,'A RMS')];
+      else if(goal==='phase-current')answers=[A('첫 부하 상전류',loadI,'A RMS'),A('둘째 부하 상전류','('+loadI+')'+second,'A RMS'),A('셋째 부하 상전류','('+loadI+')'+third,'A RMS')];
+      else if(goal==='phase-voltage')answers=[A('첫 부하 상전압',loadV,'V RMS'),A('둘째 부하 상전압','('+loadV+')'+second,'V RMS'),A('셋째 부하 상전압','('+loadV+')'+third,'V RMS')];
       else if(goal==='power')answers=[A('총 복소전력 S₃',S,'VA'),A('총 유효전력 P',P,'W'),A('총 무효전력 Q',Q,'var'),A('총 피상전력 |S₃|','√(P²+Q²) = '+(k===1?'':'3×')+'('+v2+')/|'+Z+'|','VA')];
       else if(goal==='pf')answers=[A('역률','Re('+Z+')/|'+Z+'|'),A('전류 지상각 φ','arg('+Z+')','rad')];
       else throw new RangeError('3상에서 지원하지 않는 구할 값입니다.');
@@ -175,7 +176,7 @@ export function courseSymbolicData(result, p = {}) {
   const keys=['symbolVoltage','symbolOmega', ...(kind==='single'?[...solution.canonical.elements].map(k=>'symbol'+k):kind==='three'?['symbolZ']:kind==='correction'?['symbolP','symbolQ','symbolPF']:kind==='power'?['symbolCurrent','symbolPhi']:[])];
   const definitions={symbolVoltage:['전압 복소 페이저 ('+(p.basis==='peak'?'peak':'RMS')+')','V','복소 위상 기준 e^(jωt)'],symbolOmega:['각주파수','rad/s','ω>0'],symbolR:['저항','Ω','R>0'],symbolL:['인덕턴스','H','L>0'],symbolC:['정전용량','F','C>0'],symbolZ:['각 부하 상의 동일 임피던스','Ω','Z≠0, Re(Z)≥0'],symbolP:['보상 전 총 유효전력','W','P>0'],symbolQ:['보상 전 총 무효전력','var','지상 양수, 진상 음수'],symbolPF:['목표 지상 역률','1','0<PF_t≤1'],symbolCurrent:['전류 복소 페이저 ('+(p.basis==='peak'?'peak':'RMS')+')','A','부하 +단자에 들어가는 전류'],symbolPhi:['전압 위상 − 전류 위상','rad','φ=arg(V)−arg(I)']};
   const defaults={...names,symbolCurrent:'I',symbolPhi:'φ'};
-  return {status:'supported',title:'AC 문자식 정답 · '+({single:'RLC '+(solution.canonical.topology==='series'?'직렬':'병렬'),three:'균형 abc '+(solution.canonical.connection==='Y'?'Y':'Δ'),correction:'역률 보상',phasor:'복소수와 파형',power:'복소전력'}[kind]||'문제 풀이'),reason:'',
+  return {status:'supported',title:'AC 문자식 정답 · '+({single:'RLC '+(solution.canonical.topology==='series'?'직렬':'병렬'),three:'균형 '+(solution.canonical.sequence??'abc')+' '+(solution.canonical.connection==='Y'?'Y':'Δ'),correction:'역률 보상',phasor:'복소수와 파형',power:'복소전력'}[kind]||'문제 풀이'),reason:'',
     givens:keys.map(key=>({symbol:p[key]??defaults[key],meaning:definitions[key][0],unit:definitions[key][1],constraint:definitions[key][2].replace(/(?<![A-Za-z0-9_])(R|L|C|Z|P|V|ω|PF_t)(?![A-Za-z0-9_])/gu, token => p[{R:'symbolR',L:'symbolL',C:'symbolC',Z:'symbolZ',P:'symbolP',V:'symbolVoltage',ω:'symbolOmega',PF_t:'symbolPF'}[token]]??(token==='PF_t'?'pf_t':token))})),
     assumptions:['정현파 정상상태, 이상 선형 소자, 공통 각주파수.', '코사인·e^(jωt) 기준. 전류는 부하 +단자로 들어가는 수동부호.'],
     conditions:solution.givens,

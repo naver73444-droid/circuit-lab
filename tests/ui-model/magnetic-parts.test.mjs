@@ -143,8 +143,9 @@ test("기호: 점은 1a·2a(위쪽), opposite면 2차 점이 2b(아래쪽), 변�
   assert.ok(!same.includes("M-3-20V20"));
   assert.ok(magneticSymbolMarkup({ type: "XFMR_IDEAL", props: {} }).includes("M-3-20V20M3-20V20"));
   assert.equal(magneticValueLabel({ type: "XFMR_IDEAL", props: { n: "2" } }), "1 : 2");
-  assert.equal(magneticValueLabel({ type: "COUPLED_L", props: { L1: "5", L2: "6", coupling: "M", M: "3" } }), "5 · 6 · M 3");
-  assert.equal(magneticValueLabel({ type: "COUPLED_L", props: { L1: "10m", L2: "10m", coupling: "k", k: "0.5" } }), "10m · 10m · k 0.5");
+  assert.equal(magneticValueLabel({ type: "COUPLED_L", props: { L1: "5", L2: "6", coupling: "M", M: "3" } }), "L1 5H · L2 6H · M 3H");
+  assert.equal(magneticValueLabel({ type: "COUPLED_L", props: { L1: "10m", L2: "10m", coupling: "k", k: "0.5" } }), "10mH·10mH·k0.5");
+  assert.equal(magneticValueLabel({ type: "COUPLED_L", props: { L1: "5", L2: "6", coupling: "k", k: "0.5" } }), "L1 5H · L2 6H · k 0.5");
 });
 
 test("전류 흐름: 권선 1·2의 핀 전류가 각 권선 안에서 보존되고 KCL 배선 전류가 계산된다", () => {

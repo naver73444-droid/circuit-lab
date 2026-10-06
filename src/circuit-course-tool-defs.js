@@ -6,7 +6,7 @@ import { evaluateComplexExpression } from './circuit-course-complex-expr.js';
 import { solveThreePhase, pfFromLineData } from './circuit-course-threephase.js';
 import { combineLoads, LOAD_KINDS, MAX_LOADS } from './circuit-course-loads.js';
 import { maxPowerTransfer } from './circuit-course-maxpower.js';
-import { fmt, polarShort, short, zText } from './circuit-course-format.js';
+import { fmt, polarShort, short, zText, capacitanceText } from './circuit-course-format.js';
 import { num, amp, choice, textField, angleField, heading, putPolar, metric } from './circuit-course-tool-common.js';
 
 const z = (re, im) => ({ re, im });
@@ -15,7 +15,7 @@ const natureText = S => (Math.abs(S.im) <= 1e-9 * Math.max(magnitude(S), 1e-300)
 const pfText = S => { const m = magnitude(S); return m === 0 ? '미정' : short(Math.abs(S.re) / m) + (Math.abs(S.im) <= 1e-9 * m ? '' : S.im > 0 ? ' lagging' : ' leading'); };
 const pqRow = (label, S) => [label, fmt(S.re), fmt(S.im), fmt(magnitude(S)), pfText(S)];
 const triangleOf = (S, title) => ({ title, p: { pWatts: S.re, qVars: S.im, apparentVA: magnitude(S) } });
-const capText = F => (F >= 1e-6 ? short(F * 1e6) + ' µF' : F >= 1e-9 ? short(F * 1e9) + ' nF' : short(F * 1e12) + ' pF');
+const capText = F => capacitanceText(F, short);
 const zField = (key, label, r, x, extra = {}) => [num(key + 'R', label + ' 저항 R', 'Ω', r, 0, 1e9, extra), num(key + 'X', label + ' 리액턴스 X', 'Ω', x, -1e9, 1e9, extra)];
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -205,12 +205,12 @@ export const LOADS_TOOL = {
       metric(phases === 3 ? '선전류 IL' : '전류 I', short(r.lineCurrentRms * k), 'A')];
     const triangles = [triangleOf(S, '합성 전력삼각형 (보상 전)')];
     if (c) {
-      metrics.push(metric('Qc (보상 용량)', fmt(c.qcVars / 1e3), 'kvar'), metric(phases === 3 ? '각 C (3개)' : 'C', capText(c.capacitanceF)), metric('보상 후 pf', short(c.after.pf) + (c.after.nature === 'leading' ? ' leading' : ' lagging')),
+      metrics.push(metric('Qc (필요한 보상량, 양수)', fmt(c.qcVars / 1e3), 'kvar'), metric('S_C = −jQc', '−j' + fmt(c.qcVars / 1e3), 'kvar'), metric(phases === 3 ? '각 C (3개)' : 'C', capText(c.capacitanceF)), metric('보상 후 pf', short(c.after.pf) + (c.after.nature === 'leading' ? ' leading' : ' lagging')),
         metric('보상 후 전류', short(c.sourceCurrentAfterRms * k), 'A'));
       triangles.push(triangleOf(z(r.P, c.qAfterVars), '보상 후 (Q−Qc)'));
     }
     const notes = ['Σ|Sk|=' + fmt(r.sumOfApparent / 1e3) + ' kVA ≠ |S|=' + fmt(r.S / 1e3) + ' kVA : 피상전력은 그대로 더할 수 없습니다. ' + natureText(S)];
-    if (c) notes.push(...(c.warnings ?? []), 'Qc = P(tanθ_old − tanθ_new), C = Qc/(ωV²)' + (phases === 3 ? ' · 3개로 나누면 각 C=(Qc/3)/(ωV²) (Δ는 V=VL)' : '') + '.');
+    if (c) notes.push(...(c.warnings ?? []), 'Qc = 필요한 보상량(양수) = P(tanθ_old − tanθ_new), 커패시터 복소전력 S_C = −jQc, C = Qc/(ωV²)' + (phases === 3 ? ' · 3개로 나누면 각 C=(Qc/3)/(ωV²) (Δ는 V=VL)' : '') + '.');
     return { status: 'valid', values, metrics, triangles, notes, read: 'ΣP=' + fmt(r.P / 1e3) + ' kW, ΣQ=' + fmt(r.Q / 1e3) + ' kvar → pf=' + pfText(S) + ', I=' + short(r.lineCurrentRms * k) + ' A' + (c ? ' · C='
       + capText(c.capacitanceF) : ''),
       tables: [{ title: '부하별 · 합성 (kW, kvar, kVA)', headers: ['부하', 'P (kW)', 'Q (kvar)', '|S| (kVA)', 'pf'], rows }],
@@ -253,8 +253,8 @@ export const MAXPOWER_TOOL = {
       read: 'ZTh=' + zText(r.zth) + ' Ω → ZL=ZTh*=' + zText(r.optimum) + ' Ω, Pmax=|VTh|²/(' + (k > 1 ? '8' : '4') + 'RTh)=' + fmt(r.pmaxClosed) + ' W · 지금 ZL의 P=' + fmt(pLoad) + ' W (' + fmt((r.fraction ?? 0) * 100) + ' %)',
       metrics: [metric('VTh (' + (k > 1 ? 'peak' : 'rms') + ')', short(vm) + '∠' + short(Math.atan2(r.vth.im, r.vth.re) * 180 / Math.PI) + '°', 'V'), metric('ZTh', zText(r.zth), 'Ω'), metric('ZL = ZTh*', zText(r.optimum), 'Ω'),
         metric('Pmax', fmt(r.pmaxClosed), 'W'),
-        metric('지금 ZL', zText(r.zl), 'Ω'), metric('지금 P', fmt(pLoad), 'W'), metric('P / Pmax', fmt((r.fraction ?? 0) * 100), '%'), metric('효율 RL/(RTh+RL)', fmt(r.efficiency * 100), '%')],
-      notes: ['최대전력 전달은 최대 효율이 아닙니다: 정합일 때 효율은 RL/(RTh+RL)=' + fmt(r.efficiency * 100) + ' %.', ...(r.derived ? ['VTh=Vs·Zp/(Zs+Zp), ZTh=Zo+Zs∥Zp'] : [])],
+        metric('지금 ZL', zText(r.zl), 'Ω'), metric('지금 P', fmt(pLoad), 'W'), metric('P / Pmax', fmt((r.fraction ?? 0) * 100), '%'), metric('현재 효율 η=RL/(RTh+RL)', fmt(r.efficiency * 100), '%'), metric('켤레 정합 효율', '50', '%')],
+      notes: ['최대전력 전달은 최대 효율이 아닙니다. 현재 ZL의 효율은 η=RL/(RTh+RL)=' + fmt(r.efficiency * 100) + ' % 이고, 켤레 정합(ZL=ZTh*, RL=RTh)의 효율은 RTh/(2RTh)=50 % 입니다.', ...(r.derived ? ['VTh=Vs·Zp/(Zs+Zp), ZTh=Zo+Zs∥Zp'] : [])],
       curves: [{ title: 'P(RL) · XL=' + fmt(r.zl.im) + ' Ω 고정', xLabel: 'RL (Ω)', yLabel: 'P (W)', points: r.curveR, mark: [r.zl.re, pLoad], best: r.curveBestR },
         { title: 'P(XL) · RL=' + fmt(r.zl.re) + ' Ω 고정', xLabel: 'XL (Ω)', yLabel: 'P (W)', points: r.curveX, mark: [r.zl.im, pLoad], best: r.curveBestX }],
       phasors: [{ label: 'VTh', unit: 'V', z: r.vth }, { label: 'I (지금 ZL)', unit: 'A', z: r.iNow }] };

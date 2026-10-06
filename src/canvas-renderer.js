@@ -46,12 +46,15 @@ export function formatCanvasValueLabel(raw) {
   return shown.length < text.length ? shown : text;
 }
 
-/** The value text of a coupled inductor ("5 · 6 · M 3") or ideal transformer ("1 : 2"); the inspector keeps the raw props. */
+/** The value text of a coupled inductor ("L1 5H · L2 6H · M 3H", or "5H·6H·M3H" when that is too long) or ideal transformer ("1 : 2"); the inspector keeps the raw props. */
 export function magneticValueLabel(component) {
   const p = component.props ?? {};
   if (component.type === "XFMR_IDEAL") return `1 : ${formatCanvasValueLabel(p.n ?? "2")}`;
-  const coupling = p.coupling === "M" ? `M ${formatCanvasValueLabel(p.M ?? "")}` : `k ${formatCanvasValueLabel(p.k ?? "")}`;
-  return `${formatCanvasValueLabel(p.L1 ?? "")} · ${formatCanvasValueLabel(p.L2 ?? "")} · ${coupling}`;
+  // A plain number (with or without an SI prefix) gets the henry unit; anything else (a unit already there, a name) is shown as typed.
+  const henry = (raw) => { const text = formatCanvasValueLabel(raw ?? ""); return /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?[pnuµmkMG]?$/.test(text) ? `${text}H` : text; };
+  const second = p.coupling === "M" ? { name: "M", value: henry(p.M) } : { name: "k", value: formatCanvasValueLabel(p.k ?? "") };
+  const full = `L1 ${henry(p.L1)} · L2 ${henry(p.L2)} · ${second.name} ${second.value}`;
+  return full.length <= 22 ? full : `${henry(p.L1)}·${henry(p.L2)}·${second.name}${second.value}`;
 }
 
 /**

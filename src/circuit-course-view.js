@@ -3,7 +3,7 @@ import { appendCourseMath } from './course-math-view.js';
 import { magnitude, waveSample } from './circuit-course-model.js';
 import { EXPERIMENTS, REFERENCES } from './circuit-course-registry.js';
 import { escapeHtml as esc } from './safe-dom.js';
-import { formatNumber, fmt, zText, polarText } from './circuit-course-format.js';
+import { formatNumber, fmt, zText, polarText, capacitanceText } from './circuit-course-format.js';
 import { basisFactor } from './circuit-course-complex.js';
 import { TOOLS } from './circuit-course-tools.js';
 export { formatNumber };
@@ -55,6 +55,8 @@ const style = [
 '.circuit-course .cc-field-row>input[type=range]{grid-column:1/-1}.circuit-course .cc-tool-error{color:var(--warning);min-height:0;grid-column:1/-1}.circuit-course .cc-tool-error:empty{display:none}',
 '.circuit-course .cc-tool-read{padding:10px 12px;border-left:4px solid var(--accent);background:var(--raised);margin:0 0 12px;overflow-wrap:anywhere}',
 '.circuit-course .cc-pass{color:var(--success)}.circuit-course .cc-fail{color:var(--warning);font-weight:bold}.circuit-course .cc-curve path.cc-line{fill:none;stroke:var(--accent);stroke-width:2.5}',
+// Phone width (390 px): tool fields stack label over input, sliders get a 44 px touch band, and text fields are 16 px so iOS does not zoom in on focus.
+'@media(max-width:480px){.circuit-course .cc-field-row{grid-template-columns:minmax(0,1fr)}.circuit-course input[type=range]{min-height:44px}.circuit-course input[type=text],.circuit-course input:not([type]),.circuit-course select,.circuit-course textarea{font-size:16px;min-height:44px}}',
 '@media(max-width:760px){.circuit-course{padding:10px}.circuit-course .circuit-course-layout{grid-template-columns:1fr}.circuit-course h2{font-size:21px}.circuit-course .circuit-course-tabs button{flex:1 1 150px}.circuit-course .circuit-course-graphs{grid-template-columns:1fr}}'
 ].join('\n');
 // Phasors arrive as internal RMS; they are drawn and printed in the display basis (peak = √2 · RMS). raw: true marks a quantity without that rule.
@@ -152,11 +154,17 @@ export function problemSymbolMap(params) {
 const symbolMapNote=params=>{const items=problemSymbolMap(params);return items.length?'<p class="circuit-course-note" data-circuit-course-symbol-map style="overflow-wrap:anywhere">원기호 ↔ 도식·수치 풀이: '+items.map(esc).join(' · ')+'</p>':'';};
 
 // Lecture preset vs. computed values: expected, computed, relative difference, and the textbook-rounding note.
-export function verificationTable(rows) {
-  const cells = rows.map(r => [r.label, fmt(r.expected) + (r.unit ? ' ' + r.unit : ''), fmt(r.actual) + (r.unit ? ' ' + r.unit : ''), r.expected === 0 ? fmt(Math.abs(r.actual ?? 0))
+// Amplitude quantities (V, A with an SI prefix) change with the peak/RMS toggle; powers, impedances and angles do not.
+const AMPLITUDE_UNIT = /^[mkMµ]?[VA]$/;
+/** rows may carry refBasis ('peak' | 'rms': the basis the textbook prints). When the screen basis differs, amplitude rows also show the converted value in parentheses. */
+export function verificationTable(rows, basis) {
+  const ref = rows.find(r => r.refBasis)?.refBasis, convert = ref && basis && ref !== basis ? basisFactor(basis) / basisFactor(ref) : 1;
+  const withUnit = (n, r) => fmt(n) + (r.unit ? ' ' + r.unit : '') + (convert !== 1 && AMPLITUDE_UNIT.test(r.unit ?? '') && Number.isFinite(n) ? ' (' + basis + ' ' + fmt(n * convert) + ' ' + r.unit + ')' : '');
+  const cells = rows.map(r => [r.label, withUnit(r.expected, r), withUnit(r.actual, r), r.expected === 0 ? fmt(Math.abs(r.actual ?? 0))
     : fmt(Math.abs(r.actual - r.expected) < 1e-9 * Math.abs(r.expected) ? 0 : (r.actual - r.expected) / r.expected * 100) + ' %', r.pass ? 'PASS' : 'FAIL', r.note || '']);
-  const pass = rows.every(r => r.pass);
-  return '<section class="circuit-course-card" data-circuit-course-verification><h3>강의 기대값 대조 · <span class="' + (pass ? 'cc-pass' : 'cc-fail') + '">' + (pass ? '모두 일치' : '불일치 있음') + '</span></h3>' + table(['항목', '교재 값', '계산 값', '차이',
+  const pass = rows.every(r => r.pass), basisNote = ref ? '<p class="circuit-course-note" data-circuit-course-verification-basis>교재 기준: ' + (ref === 'peak' ? 'peak (최댓값)' : 'RMS (실효값)')
+    + (convert !== 1 ? ' · 괄호는 지금 화면 기준(' + (basis === 'peak' ? 'peak' : 'RMS') + ')으로 환산한 값' : '') + '</p>' : '';
+  return '<section class="circuit-course-card" data-circuit-course-verification><h3>강의 기대값 대조 · <span class="' + (pass ? 'cc-pass' : 'cc-fail') + '">' + (pass ? '모두 일치' : '불일치 있음') + '</span></h3>' + basisNote + table(['항목', '교재 값', '계산 값', '차이',
     '결과', '비고'], cells) + '<p class="circuit-course-note">허용 오차는 항목마다 0.1 % 안팎이며, 교재가 중간값을 반올림한 경우는 비고에 적었습니다.</p></section>';
 }
 
@@ -211,7 +219,7 @@ export function createCircuitCourseView(host) {
     q('form').innerHTML = primary.map(fieldHtml).join('') + (anyShown ? '<details class="circuit-course-display" data-circuit-course-display-settings' + (settingsOpen ? ' open' : '') + '><summary>표시 설정 · 입력 기준 · 기호 이름</summary>'
       + display.map(fieldHtml).join('') + '</details>' : display.map(fieldHtml).join(''));
     q('examples').innerHTML = experiment.examples.map((e, i) => '<button type="button" data-circuit-course-example="' + i + '">' + esc(e.label) + '</button>').join('');
-    q('theory').innerHTML = '<h3>공식 · 읽는 기준</h3>' + experiment.formulas.map(f => '<div class="circuit-course-formula">' + esc(f) + '</div>').join('') + '<details open><summary>가정 · 지원 범위</summary><ul>'
+    q('theory').innerHTML = '<h3>공식 · 읽는 기준</h3>' + (typeof experiment.formulas === 'function' ? experiment.formulas(params) : experiment.formulas).map(f => '<div class="circuit-course-formula">' + esc(f) + '</div>').join('') + '<details open><summary>가정 · 지원 범위</summary><ul>'
       + experiment.assumptions.map(a => '<li>' + esc(a) + '</li>').join('')
         + '</ul></details><details><summary>공개 교재 출처</summary><p class="circuit-course-note">MIT 교재 일부는 peak를 사용해 ½가 나타납니다. 이 실험은 RMS로 환산한 식을 씁니다. 보상식은 S와 커패시터 Y=jωC에서 유도했습니다.</p>' + REFERENCES.map(r => '<p><a href="' + esc(r.url)
           + '" target="_blank" rel="noopener noreferrer">' + esc(r.title) + '</a></p>').join('') + '</details>';
@@ -272,11 +280,11 @@ export function createCircuitCourseView(host) {
       html += '<p class="circuit-course-note">Δ Iab: a→b, Ibc: b→c, Ica: c→a. Ia=Iab−Ica. 같은 Z를 Y→Δ로 바꾸면 부하 전압과 총 전력이 달라집니다.</p>';
     }
     if (id === 'correction') {
-      html += '<p>권장 C_each=' + esc(result.recommendedCapacitanceF === null ? '커패시터로 목표 불가' : fmt(result.recommendedCapacitanceF * 1e6) + ' µF') + '</p><p>적용 C_each=' + esc(fmt(result.selectedCapacitanceF * 1e6)) + ' µF · 각 C 단자='
+      html += '<p>권장 C_each=' + esc(result.recommendedCapacitanceF === null ? '커패시터로 목표 불가' : capacitanceText(result.recommendedCapacitanceF)) + '</p><p>적용 C_each=' + esc(capacitanceText(result.selectedCapacitanceF)) + ' · 각 C 단자='
         + esc(fmt(result.capacitorVoltageRms * k)) + ' V' + esc(tag) + ' · ' + (result.phases === 3 ? esc(result.connection === 'Y' ? 'Y · C 3개' : 'Δ · C 3개') : '단상 · C 1개') + '</p>';
       html += table(['구분', 'P (W)', 'Q (var)', '|S| (VA)', 'PF', '|I공급| (A' + tag + ')'], [['보상 전', fmt(result.pWatts), fmt(result.qVars), fmt(result.before.apparentVA), fmt(result.before.pf), fmt(result.sourceCurrentBeforeRms * k)],
         ['보상 후', fmt(result.pWatts), fmt(result.qAfterVars), fmt(result.after.apparentVA), fmt(result.after.pf), fmt(result.sourceCurrentAfterRms * k)]]);
-      html += '<p>Qcap=' + esc(fmt(result.qCapacitorVars)) + ' var · Q목표=' + esc(fmt(result.desiredQ)) + ' var</p>' + result.warnings.map(w => '<p class="circuit-course-warning">' + esc(w) + '</p>').join('');
+      html += '<p>Qc=' + esc(fmt(-result.qCapacitorVars)) + ' var (필요한 보상량, 양수) · 커패시터 복소전력 S_C=−jQc=−j' + esc(fmt(-result.qCapacitorVars)) + ' var · Q목표=' + esc(fmt(result.desiredQ)) + ' var</p>' + result.warnings.map(w => '<p class="circuit-course-warning">' + esc(w) + '</p>').join('');
       html += '<p class="circuit-course-note">커패시터는 부하 양 단자(단상), a-n/b-n/c-n(Y), a-b/b-c/c-a(Δ)에 병렬 연결합니다. 부하 P는 그대로입니다.</p>';
     }
     html += '</section><div class="circuit-course-linked-results"><div class="circuit-course-graphs">' + phasorGraphs(result.phasors ?? [], basis) + (result.power ? triangle(result.power, id === 'correction' ? '보상 후 전력삼각형' : '전력삼각형')

@@ -181,21 +181,21 @@ export function createInspector(deps) {
     } catch {
       derived = "L1, L2와 결합 입력값이 올바르면 유도값이 여기에 표시됩니다.";
     }
-    return field("1차 인덕턴스 L1 (H)", "L1", p.L1 ?? "10m", "핀 1(1a, 점) · 핀 2(1b)")
-      + field("2차 인덕턴스 L2 (H)", "L2", p.L2 ?? "10m", "핀 3(2a, 점) · 핀 4(2b)")
+    return field("1차 인덕턴스 L1 (H)", "L1", p.L1 ?? "10m", "핀 1(1a) · 핀 2(1b) · 점 위치는 아래 설정")
+      + field("2차 인덕턴스 L2 (H)", "L2", p.L2 ?? "10m", "핀 3(2a) · 핀 4(2b) · 점 위치는 아래 설정")
       + field("결합 입력", "coupling", p.coupling === "M" ? "M" : "k", "", [["k", "결합계수 k"], ["M", "상호 인덕턴스 M"]])
       + (p.coupling === "M" ? field("상호 인덕턴스 M (H)", "M", p.M ?? "5m", `${derived}<br>0 ≤ M ≤ √(L1·L2)`) : field("결합계수 k (0~1)", "k", p.k ?? "0.5", `${derived}<br>k=1은 완전 결합(특이해질 수 있음)`))
       + field("점 위치", "dots", p.dots === "opposite" ? "opposite" : "same", "", [["same", "같은 쪽 · 점이 1a, 2a (M 항 +)"], ["opposite", "반대쪽 · 점이 1a, 2b (M 항 −)"]])
       + field("1차 초기 전류 IC1 (A)", "ic1", p.ic1 ?? "0", "시간응답 시작 시 핀 1(1a)로 들어가는 전류")
       + field("2차 초기 전류 IC2 (A)", "ic2", p.ic2 ?? "0", "시간응답 시작 시 핀 3(2a)로 들어가는 전류")
-      + `<p class="model-note">v1 = L1·di1/dt + M·di2/dt, v2 = M·di1/dt + L2·di2/dt. i1, i2는 점 핀 1a, 2a로 들어가는 방향이 양수이며, 점이 서로 반대쪽이면 M 항의 부호가 −입니다. DC에서는 두 코일이 모두 단락이고 AC에서는 jωL1, jωL2, jωM으로 계산합니다. 1차와 2차 회로는 서로 절연되어 각각 GND 기준이 필요합니다. 전류 프로브는 I 프로브 도구로 부품의 왼쪽 절반(I(K.1)) 또는 오른쪽 절반(I(K.2))을 누르세요.</p>`;
+      + `<p class="model-note">v1 = L1·di1/dt + M·di2/dt, v2 = M·di1/dt + L2·di2/dt. 전류 방향은 화면 기준으로 고정입니다: i1은 1a→1b, i2는 2a→2b(각각 위 핀으로 들어가 아래 핀으로 나가는 방향). 점 위치는 전류 방향이 아니라 M 항의 부호에만 영향을 줍니다: 점이 같은 쪽(1a, 2a)이면 +M, 반대쪽(1a, 2b)이면 −M. DC에서는 두 코일이 모두 단락이고 AC에서는 jωL1, jωL2, jωM으로 계산합니다. 1차와 2차 회로는 서로 절연되어 각각 GND 기준이 필요합니다. 전류 프로브는 I 프로브 도구로 부품의 왼쪽 절반(I(K.1)) 또는 오른쪽 절반(I(K.2))을 누르세요.</p>`;
   }
 
   /** Fields of an XFMR_IDEAL part: turns ratio n = N2/N1 and dot placement; the sign convention follows the lecture table. */
   function transformerFields(p) {
     return field("권수비 n = N2/N1", "n", p.n ?? "2", "1 : n · 2차/1차 권수비 (n > 0)")
       + field("점 위치", "dots", p.dots === "opposite" ? "opposite" : "same", "", [["same", "같은 쪽 · 점이 1a, 2a (+n)"], ["opposite", "반대쪽 · 점이 1a, 2b (−n)"]])
-      + `<div class="connection-detail status-referenced"><strong>이상 변압기 부호 규약</strong><span>V1, V2 점 극성 같으면 +n; I1, I2 모두 점으로 들어가면 −n.</span><small>v2 = ±n·v1, i1 = ∓n·i2 (i1, i2는 점 핀 1a, 2a로 들어가는 방향이 양수). S1 = S2, Zin = ZL/n². 핀 1(1a)·2(1b)가 1차, 핀 3(2a)·4(2b)가 2차이며 각각 GND 기준이 필요합니다. 전류 프로브는 I 프로브 도구로 부품의 왼쪽 절반(I(T.1)) 또는 오른쪽 절반(I(T.2))을 누르세요.</small></div>`;
+      + `<div class="connection-detail status-referenced"><strong>이상 변압기 부호 규약</strong><span>V1, V2 점 극성 같으면 +n; I1, I2 모두 점으로 들어가면 −n.</span><small>v2 = ±n·v1, i1 = ∓n·i2. 전류 방향은 화면 기준 고정(i1: 1a→1b, i2: 2a→2b)이고, 점 위치는 부호(±n)에만 영향을 줍니다. 전력은 S1(흡수) + S2(흡수) = 0 ⇔ 1차 입력 = 2차 출력이며, Zin = ZL/n². 핀 1(1a)·2(1b)가 1차, 핀 3(2a)·4(2b)가 2차이며 각각 GND 기준이 필요합니다. 전류 프로브는 I 프로브 도구로 부품의 왼쪽 절반(I(T.1)) 또는 오른쪽 절반(I(T.2))을 누르세요.</small></div>`;
   }
 
   function selectedConnectionStatus(componentId) {

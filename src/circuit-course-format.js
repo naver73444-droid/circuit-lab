@@ -22,6 +22,19 @@ export const polarShort = z => {
   const p = rectangularPolar(z);
   return short(p.magnitude) + '∠' + (p.angleDeg === null ? '?' : short(p.angleDeg) + '°');
 };
+// One-line map between the Ch.13 course tools and the circuit editor, shown at the end of each of those tool descriptions.
+export const COUPLING_TOOL_GUIDE = '어느 도구? 고정 2루프·T/π 등가 → 자기결합 도구 · 이상·정격·단권 → 변압기 도구 · 임의 배선 → 회로 편집기 예제 "결합 코일 (예제 13.1)".';
+// Capacitance in the unit that keeps the number readable: F, mF, µF, nF or pF (0 stays "0 µF"). format: fmt (7 digits) or short (4 digits).
+export function capacitanceText(farads, format = fmt) {
+  if (!Number.isFinite(farads)) return '미정';
+  const size = Math.abs(farads);
+  if (size === 0) return '0 µF';
+  if (size >= 1) return format(farads) + ' F';
+  if (size >= 1e-3) return format(farads * 1e3) + ' mF';
+  if (size >= 1e-6) return format(farads * 1e6) + ' µF';
+  if (size >= 1e-9) return format(farads * 1e9) + ' nF';
+  return format(farads * 1e12) + ' pF';
+}
 // Text field → finite number (plain decimal or e-notation), the one parser every course form uses.
 export function parseCourseNumber(text) {
   const trimmed = String(text).trim();

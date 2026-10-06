@@ -110,7 +110,10 @@ export const EXPERIMENTS = [
       select('reference', '기준 위상의 대상', 'Van', [['Van', 'Van (Y 전원 기준)'], ['Vab', 'Vab (Δ 전원 기준)']]), num('phaseDeg', '기준 위상각', '°', 0, -36000, 36000),
       select('sequence', '상순서', 'abc', [['abc', 'abc (정상순)'], ['acb', 'acb (역상순)']])],
     assumptions: [...common, '동일한 3개 부하, 균형 전원. Y의 n은 균형 스타점 기준. 대문자(VAN, IAB)는 부하 쪽, 소문자(Van)는 전원 쪽 표기.', '불평형·중성선 전위 이동·고조파·변압기 결선은 계산하지 않습니다.'],
-    formulas: ['Van,Vbn,Vcn: θ, θ−120°, θ+120°', 'Vab=Van−Vbn=√3 Van∠+30°', 'Y: V상=V선/√3, I선=I상', 'Δ: V상=V선, Ia=Iab−Ica=√3 Iab∠−30°', 'S₃=Σ(V상 I상*)=3 Van Ia*', '√3|V선||I선|∠φ 는 크기·역률각 식. 복소식은 √3 Vab Ia*e^(−j30°)'],
+    // The phase relations follow the chosen sequence: abc has Vbn=−120°, Vab=+30°, Ia=Iab−30°; acb mirrors every sign.
+    formulas: p => { const acb = p?.sequence === 'acb', s = acb ? '−' : '+', t = acb ? '+' : '−', seq = acb ? 'acb (역상순)' : 'abc (정상순)'; return [
+      '상순서 ' + seq + ': Van,Vbn,Vcn = θ, θ' + t + '120°, θ' + s + '120°', 'Vab=Van−Vbn=√3 Van∠' + s + '30°', 'Y: V상=V선/√3, I선=I상',
+      'Δ: V상=V선, Ia=Iab−Ica=√3 Iab∠' + t + '30°', 'S₃=Σ(V상 I상*)=3 Van Ia*', '√3|V선||I선|∠φ 는 크기·역률각 식. 복소식은 √3 Vab Ia*e^(' + t + 'j30°)']; },
     examples: [{ label: 'Y: 8+j6 Ω', values: { connection: 'Y', lineVoltageRms: 400, r: 8, x: 6 } },
       { label: '등가 Δ: 24+j18 Ω', values: { connection: 'delta', lineVoltageRms: 400, r: 24, x: 18 } },
       { label: '동일 Z로 Δ 재연결 → 전력 3배', values: { connection: 'delta', lineVoltageRms: 400, r: 8, x: 6 } },
@@ -159,7 +162,7 @@ export const EXPERIMENTS = [
       select('capacitorMode', 'C 선택', 'recommended', [['recommended', '목표 PF로 계산'], ['custom', '직접 C 입력']]),
       { ...num('capacitanceF', '각 커패시터 C · 0은 미설치', 'µF', 138.15533254504802e-6, 0, 1e3, 1e-6), showIf: p => p.capacitorMode === 'custom' }],
     assumptions: [...common, '부하의 P와 Q는 보상 전후 일정, 전원전압 일정. C는 병렬 접속.', '3상 C는 뱅크 합계가 아닌 각 커패시터 값. 총 P/Q를 입력하세요.', '지상 PF 개선을 위한 이상 소자 교육식. 실제 설비 선정·공진·보호 설계는 범위 밖.'],
-    formulas: ['Q목표=P tan(acos(PF목표))≥0', 'Qcap=Q목표−Q부하≤0', '단상 C=−Qcap/(ωV²)', '3상 Y: C_each=−Qcap/(ωV선²) · Δ: C_each=−Qcap/(3ωV선²)', '공급원 Q_after=Q부하+Qcap · Q_after<0이면 과보상', '|I단상|=|S|/V · |I3상 선|=|S₃|/(√3V선)'],
+    formulas: ['Q목표=P tan(acos(PF목표))≥0', 'Qc=Q부하−Q목표 (필요한 보상량, 양수) · 커패시터 복소전력 S_C=−jQc', '단상 C=Qc/(ωV²)', '3상 Y: C_each=Qc/(ωV선²) · Δ: C_each=Qc/(3ωV선²)', '공급원 Q_after=Q부하−Qc · Q_after<0이면 과보상', '|I단상|=|S|/V · |I3상 선|=|S₃|/(√3V선)'],
     examples: [{ label: '단상 .8 → 1', values: { phases: '1', frequencyHz: 60, voltageRms: 120, pWatts: 1000, qVars: 750, targetPF: 1, capacitorMode: 'recommended' } },
       { label: '3상 .8 → .95 · Δ', values: { phases: '3', connection: 'delta', frequencyHz: 50, voltageRms: 400, pWatts: 10000, qVars: 7500, targetPF: .95, capacitorMode: 'recommended' } },
       { label: 'C 300 µF · 과보상 확인', values: { phases: '1', frequencyHz: 60, voltageRms: 120, pWatts: 1000, qVars: 750, targetPF: 1, capacitorMode: 'custom', capacitanceF: 300e-6 } },
@@ -207,6 +210,19 @@ const draftNumber = n => String(Number(n.toPrecision(10)));
 const draftOf = (p, value) => (p.choices || p.text ? value : value === null ? '' : draftNumber(value / p.displayScale));
 // Form drafts (text) for parameters already written in the display basis.
 export function draftsOf(experiment, params) { return Object.fromEntries(experiment.parameters.map(p => [p.key, draftOf(p, params[p.key])])); }
+// Switching the complex notation of experiment 1 keeps the same voltage: rectangular a+jb ⇄ polar |V|∠θ (display-basis numbers, typed text in and out).
+// A draft that is empty or not a number leaves the target fields as they were.
+export function convertCoordinateDrafts(drafts, next) {
+  const out = { ...drafts }, read = text => (String(text ?? '').trim() === '' ? NaN : Number(text)), tidy = (v, scale) => draftNumber(Math.abs(v) < 1e-12 * scale ? 0 : v);
+  if (next === 'polar') {
+    const re = read(drafts.re), im = read(drafts.im);
+    if (Number.isFinite(re) && Number.isFinite(im)) { const magnitudeNow = Math.hypot(re, im); out.amplitude = draftNumber(magnitudeNow); out.angleDeg = magnitudeNow === 0 ? '0' : tidy(Math.atan2(im, re) * DEG, 180); }
+  } else {
+    const size = read(drafts.amplitude), angle = read(drafts.angleDeg);
+    if (Number.isFinite(size) && Number.isFinite(angle)) { const rad = angle / DEG; out.re = tidy(size * Math.cos(rad), size); out.im = tidy(size * Math.sin(rad), size); }
+  }
+  return out;
+}
 // Applying a lecture example: start from the complete default drafts and overwrite only what the example sets, so nothing typed or picked earlier (e.g. the acb sequence) survives.
 export function exampleDrafts(experiment, example, defaultDrafts) {
   const drafts = { ...defaultDrafts };

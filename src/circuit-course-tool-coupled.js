@@ -1,7 +1,7 @@
 // Live tool definitions for Ch.13: coupled coils with T/π equivalents, and the transformer tool (ideal, rating, autotransformer, 3-phase bank). Pure, no DOM.
 import { scale, magnitude } from './circuit-course-complex.js';
 import { coupledCoils, idealTransformer, idealRating, autotransformer, threePhaseBank, BANK_CONNECTIONS } from './circuit-course-coupled.js';
-import { fmt, polarShort, short, zText } from './circuit-course-format.js';
+import { fmt, polarShort, short, zText, COUPLING_TOOL_GUIDE } from './circuit-course-format.js';
 import { num, amp, choice, angleField, putPolar, metric } from './circuit-course-tool-common.js';
 
 const z = (re, im) => ({ re, im });
@@ -16,7 +16,7 @@ const piHenry = L => (L === Infinity ? '개방 (∞ H, 가지 없음)' : henry(L
 const byK = v => v.couplingMode === 'k';
 export const COUPLED_TOOL = {
   id: 'coupled', title: '12 · 자기결합 코일 · T/π 등가', tab: 'Ch.13',
-  lead: '두 코일의 L1, L2, M(또는 k)과 점 위치를 정하면 두 전류, 반사 임피던스, 저장 에너지 w(t), T·π 등가 인덕턴스가 바로 나옵니다. 점 같은 쪽/반대쪽이 M 항의 부호를 바꿉니다.',
+  lead: '두 코일의 L1, L2, M(또는 k)과 점 위치를 정하면 두 전류, 반사 임피던스, 저장 에너지 w(t), T·π 등가 인덕턴스가 바로 나옵니다. 점 같은 쪽/반대쪽이 M 항의 부호를 바꿉니다. ' + COUPLING_TOOL_GUIDE,
   fields: [
     num('omega', '각주파수 ω', 'rad/s', 4, 1e-6, 1e9),
     num('l1', '코일 1 자기 인덕턴스 L1', 'H', 5, 1e-12, 1e9), num('l2', '코일 2 자기 인덕턴스 L2', 'H', 4, 1e-12, 1e9),
@@ -46,6 +46,12 @@ export const COUPLED_TOOL = {
         { key: 'I2Mag', label: '|I2|', value: 0.06, unit: 'A' }, { key: 'I2Ang', label: '∠I2', value: 90.57, unit: '°', note: '교재는 j0.06 → 90°로 반올림 (정확값 90.57°)' },
         { key: 'I1Mag', label: '|I1|', value: 0.6708, unit: 'A', note: '교재는 0.6+j0.3 으로 반올림 (정확값 0.598+j0.306)' }, { key: 'VoMag', label: '|Vo|', value: 0.6, unit: 'V', rel: 2e-3 }] }
   ],
+  // Switching between M and k keeps the same coupling: the newly shown field is filled from the one that was in use (k = M/√(L1L2), M = k√(L1L2)).
+  onSelect(v, key) {
+    if (key !== 'couplingMode') return null;
+    const root = Math.sqrt(v.l1 * v.l2);
+    return v.couplingMode === 'k' ? { k: v.m / root } : { m: v.k * root };
+  },
   evaluate(v, { k }) {
     const r = coupledCoils({ frequencyHz: v.omega / (2 * Math.PI), l1: v.l1, l2: v.l2, couplingMode: v.couplingMode, m: v.m, k: v.k, dots: v.dots, z1: z(v.z1R, v.z1X), zl: z(v.zlR, v.zlX),
       voltageRms: v.voltage, voltageDeg: v.voltageDeg });
@@ -76,7 +82,7 @@ const mode = name => v => v.mode === name;
 const BANKS = Object.keys(BANK_CONNECTIONS).map(key => [key, key.replace('delta', 'Δ') + (key === 'Y-delta' ? ' (13.12)' : '')]);
 export const TRANSFORMER_TOOL = {
   id: 'transformer', title: '13 · 변압기 (이상 · 단권 · 3상)', tab: 'Ch.13',
-  lead: '이상 변압기는 n=N2/N1 로 V2=±nV1, I2=±I1/n, 부하는 ZL/n² 로 보입니다. 점 위치와 I2 기준 방향의 네 경우, 정격, 단권변압기, 3상 변압기 결선을 고릅니다.',
+  lead: '이상 변압기는 n=N2/N1 로 V2=±nV1, I2=±I1/n, 부하는 ZL/n² 로 보입니다. 점 위치와 I2 기준 방향의 네 경우, 정격, 단권변압기, 3상 변압기 결선을 고릅니다. ' + COUPLING_TOOL_GUIDE,
   fields: [
     choice('mode', '종류', 'ideal', [['ideal', '이상 변압기 + 회로'], ['rating', '정격 (V1, V2, kVA → n, I)'], ['auto', '단권변압기'], ['bank', '3상 변압기 결선']]),
     num('turns1', '1차 권수 N1', '회', 1, 1e-9, 1e12, { showIf: mode('ideal') }), num('turns2', '2차 권수 N2', '회', 2, 1e-9, 1e12, { showIf: mode('ideal') }),

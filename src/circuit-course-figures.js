@@ -44,13 +44,18 @@ function ideal(f) {
   return svg('이상 변압기, 점 위치와 전류 방향', body);
 }
 
+// A terminal pair: two open circles joined by a dashed bracket that stands for the voltage across them.
+const terminals = (x, y1, y2) => '<path d="M' + x + ' ' + y1 + 'V' + y2 + '" style="stroke:var(--muted)" stroke-width="2" stroke-dasharray="5 4" fill="none"/>'
+  + [y1, y2].map(y => '<circle cx="' + x + '" cy="' + y + '" r="6" ' + FILL + '/>').join('');
+// Coil taps: top (y 30) – N1 – middle (y 108) – N2 – bottom (y 186). Step-down: source over N1+N2, load over N2. Step-up: source over N1 only, load over N1+N2.
 function auto(f) {
   const down = f.mode === 'down';
-  let body = coil(250, 30, 6, 26) + '<path d="M250 30H200 M250 186H200 M250 108H200" ' + WIRE + '/>';
-  body += down ? '<path d="M200 30H110V186H200 M200 108H300V108 M250 108H350V186H250" ' + WIRE + '/>' : '<path d="M200 108H110V186H200 M200 30H300 M250 30H350V186H250" ' + WIRE + '/>';
-  body += text(60, 110, down ? 'V1 (N1+N2)' : 'V1 (N1)', 15, 'middle') + text(410, 110, down ? 'V2 (N2)' : 'V2 (N1+N2)', 15, 'middle');
+  let body = coil(250, 30, 6, 26) + '<path d="M250 30H200 M250 108H200 M250 186H200" ' + WIRE + '/>';
+  body += down ? '<path d="M200 30H110 M200 186H110 M250 108H390 M250 186H390" ' + WIRE + '/>' + terminals(110, 30, 186) + terminals(390, 108, 186)
+    : '<path d="M200 30H110 M200 108H110 M250 30H390 M250 186H390" ' + WIRE + '/>' + terminals(110, 30, 108) + terminals(390, 30, 186);
+  body += down ? text(98, 112, '입력 V1 (N1+N2)', 15, 'end') + text(402, 152, '출력 V2 (N2)', 15) : text(98, 72, '입력 V1 (N1)', 15, 'end') + text(402, 112, '출력 V2 (N1+N2)', 15);
   body += text(262, 75, 'N1', 15) + text(262, 150, 'N2', 15) + text(10, 220, '단권: 1·2차가 한 코일 · 전기적으로 연결(절연 안 됨)', 14);
-  return svg('단권변압기 ' + (down ? '강압' : '승압') + ' 결선', body);
+  return svg('단권변압기 ' + (down ? '강압' : '승압') + ' 결선: 입력 단자쌍과 출력 단자쌍', body);
 }
 
 function bank(f) {
