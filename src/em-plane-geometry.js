@@ -40,17 +40,29 @@ export function handlesOf(source) {
   return [{ handle: 'body', position: source.position }];
 }
 
-/** Nearest handle of a visible source within `radius` pixels of (x, y), or null. Ties prefer later sources (drawn on top). */
+// Two handles at the same pixel (a line perpendicular to the view plane projects its body and its direction tip onto one
+// point) are a tie: pressing there moves the source, so 'body' wins. Other ties keep the first handle.
+const TIE_PIXELS = 0.5;
+
+/**
+ * Nearest handle of a visible source within `radius` pixels of (x, y), or null. Within one source a tie (distances within
+ * half a pixel) prefers the body handle; between sources ties prefer the later source (drawn on top).
+ */
 export function hitSource(sources, view, plane, x, y, radius = 22) {
   const axes = AXES[plane];
   let best = null;
   for (const source of sources) {
     if (source.visible === false) continue;
+    let mine = null;
     for (const { handle, position } of handlesOf(source)) {
       const [px, py] = view.toCanvas(position[axes[0]], position[axes[1]]);
       const distance = Math.hypot(px - x, py - y);
-      if (distance <= radius && (!best || distance <= best.distance)) best = { source, handle, position, distance };
+      if (distance > radius) continue;
+      const closer = !mine || distance < mine.distance - TIE_PIXELS;
+      const tiedBody = mine && Math.abs(distance - mine.distance) <= TIE_PIXELS && handle === 'body';
+      if (closer || tiedBody) mine = { source, handle, position, distance };
     }
+    if (mine && (!best || mine.distance <= best.distance)) best = mine;
   }
   return best;
 }

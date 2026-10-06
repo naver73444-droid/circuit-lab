@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compress, compressedLevels, contourSegments, contourSet, typicalMagnitude } from '../../../src/em-contour.js';
+import { compress, compressedLevels, contourSegments, contourSet, saddleDecision, typicalMagnitude } from '../../../src/em-contour.js';
 
 const grid = (cols, rows, f) => Array.from({ length: cols * rows }, (_, i) => f(i % cols, Math.floor(i / cols)));
 
@@ -62,4 +62,29 @@ test('compression is odd and monotonic; the typical magnitude is the median of |
   assert.ok(compress(1, 5) < compress(2, 5));
   assert.equal(typicalMagnitude([1, -3, 2, NaN, 5], 1), 3);
   assert.equal(typicalMagnitude([NaN, NaN], 1), 0);
+});
+
+test('saddle cells use the asymptotic decider, not the corner average: [10, -4, -4, 1] keeps the positive corners apart', () => {
+  // tl=10 tr=-4 / bl=-4 br=1 at level 0: the average is +0.75 (old rule joined the positive corners), but the bilinear
+  // surface has its saddle at (10*1 - (-4)(-4)) / (10 + 1 + 4 + 4) = -6/19 < 0, so the two positive regions are separate.
+  assert.equal(saddleDecision(10, -4, -4, 1, 0), 'low');
+  const segments = contourSegments([10, -4, -4, 1], 2, 2, 0);
+  assert.equal(segments.length, 8, 'two separate segments');
+  const pieces = [segments.slice(0, 4), segments.slice(4)];
+  // one cuts off the top-left corner (touches the top and left edges), the other the bottom-right corner
+  const touches = (piece, test) => [[piece[0], piece[1]], [piece[2], piece[3]]].every(([x, y]) => test(x, y));
+  assert.ok(pieces.some(piece => touches(piece, (x, y) => x === 0 || y === 0)), 'top-left corner cut: ends on the top and left edges');
+  assert.ok(pieces.some(piece => touches(piece, (x, y) => x === 1 || y === 1)), 'bottom-right corner cut: ends on the bottom and right edges');
+  // the mirrored case (negative corners on the diagonal) is decided the same way: here the average and the decider agree
+  assert.equal(saddleDecision(-10, 4, 4, -1, 0), 'high');
+});
+
+test('an exact saddle value gives two straight lines crossing at the saddle', () => {
+  assert.equal(saddleDecision(1, -1, -1, 1, 0), 'cross');
+  const segments = contourSegments([1, -1, -1, 1], 2, 2, 0);
+  assert.equal(segments.length, 8);
+  const lines = [segments.slice(0, 4), segments.slice(4)].map(piece => JSON.stringify(piece));
+  assert.deepEqual(new Set(lines), new Set(['[0.5,0,0.5,1]', '[0,0.5,1,0.5]']));
+  // the existing [0,1,1,0] at 0.5 is also an exact saddle
+  assert.equal(saddleDecision(0, 1, 1, 0, 0.5), 'cross');
 });

@@ -8,7 +8,7 @@ import { renderSymbolic } from './course-symbolic-view.js';
 import { siText, siVector } from './em-format.js';
 import { createPalette } from './em-palette.js';
 import { paramSpec, parseParam, topicOf, valueFromRange } from './em-course-params.js';
-import { advanceTime, clampTime, instantProfiles, timeSpec, timeTrace } from './em-course-time.js';
+import { advanceTime, clampTime, instantProfiles, normalizeTime, timeSpec, timeTrace } from './em-course-time.js';
 import { highlightSymbolic } from './em-course-symbolic.js';
 import {
   SHELL, buildParameterStrip, renderChecks, renderRequested, renderStatics, renderValues, sectionize, statusLabel, syncParameterStrip, list,
@@ -25,7 +25,8 @@ export function createEMCourseController(root, { onClose } = {}) {
   let active = false, selectedId = EXPERIMENTS.find(d => d.id === 'coax-current')?.id || EXPERIMENTS[0]?.id;
   let playing = false, playFrame = null, lastTick = 0, checkTimer = null, renderFrame = null;
   root.innerHTML = SHELL;
-  const palette = createPalette(root, () => { schedulePicture(); });
+  // A theme change recolours every canvas of the screen: the picture and the emf(t) time graph under it.
+  const palette = createPalette(root, () => { if (active) renderTime(definition(), record()); schedulePicture(); });
   const getPalette = () => palette.current();
 
   const definition = () => getExperiment(selectedId);
@@ -288,7 +289,9 @@ export function createEMCourseController(root, { onClose } = {}) {
 
   /** Apply one parameter. Returns false (and shows why) when the combination is not valid; the old value stays. */
   function setParam(key, value, { light = false } = {}) {
-    const def = definition(), data = record(), params = { ...data.params, [key]: value };
+    // The clock's range depends on the other parameters (frequency, omega, rail geometry): bring the stored time into the
+    // new range first, so the result, the curve and the cursor are all computed for the time that is displayed.
+    const def = definition(), data = record(), params = normalizeTime(def, { ...data.params, [key]: value });
     const result = evaluate(def, params, data.point);
     if (result.status === 'invalid') { data.error = result.reason || '모델 입력이 올바르지 않습니다.'; renderNumeric(); return false; }
     let nextProfiles;
@@ -349,14 +352,14 @@ export function createEMCourseController(root, { onClose } = {}) {
     data.symbolicOptions[key] = choice.value;
     if (['alignment', 'fieldRegime', 'motionRegime'].includes(key) && ['faraday-loop', 'motional-rod'].includes(def.id)) {
       const synced = inductionAfterStructural(def.id, data.params, data.symbolicOptions, key, data.illustrationMemory);
-      data.params = synced.params;
+      data.params = normalizeTime(def, synced.params);
       data.illustrationMemory = synced.memory;
       data.result = evaluate(def, data.params, data.point);
       data.profiles = profiles(def, data.params);
     }
     // These current templates use a magnitude; keep the example's magnitude and align its sign with the chosen direction.
     if (['wire-current', 'loop-axis'].includes(def.id) && key === 'direction') {
-      data.params = { ...data.params, current: (choice.value === 1 ? -1 : 1) * Math.abs(data.params.current) };
+      data.params = normalizeTime(def, { ...data.params, current: (choice.value === 1 ? -1 : 1) * Math.abs(data.params.current) });
       data.result = evaluate(def, data.params, data.point);
       data.profiles = profiles(def, data.params);
     }
@@ -369,7 +372,7 @@ export function createEMCourseController(root, { onClose } = {}) {
     const inRange = p => (p.min === undefined || choice.value >= p.min) && (p.max === undefined || choice.value <= p.max);
     const parameter = def.parameters.find(p => p.key === key && inRange(p));
     if (parameter && typeof choice.value === 'number') {
-      data.params = { ...data.params, [key]: choice.value };
+      data.params = normalizeTime(def, { ...data.params, [key]: choice.value });
       data.result = evaluate(def, data.params, data.point);
       data.profiles = profiles(def, data.params);
     }
@@ -500,7 +503,7 @@ export function createEMCourseController(root, { onClose } = {}) {
       const target = record(), next = definition();
       target.symbolicOptions = carryOptions;
       const carried = next.parameters.filter(p => previous.params[p.key] !== undefined).map(p => [p.key, previous.params[p.key]]);
-      target.params = { ...target.params, ...Object.fromEntries(carried) };
+      target.params = normalizeTime(next, { ...target.params, ...Object.fromEntries(carried) });
       target.point = previous.point;
       target.result = evaluate(next, target.params, target.point);
       target.profiles = profiles(next, target.params);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createPlaneView, handlesOf, hitGauss, hitSource, planeAxes, planeNormal, pointOnPlane, scaleBar, sectionRadius, zoomAbout,
 } from '../../src/em-plane-geometry.js';
-import { inspectorFields, patchFromField, sliderFromStrength, strengthFromSlider, strengthText } from '../../src/em-source-edit.js';
+import { cycleSelectionTarget, inspectorFields, patchFromField, sliderFromStrength, strengthFromSlider, strengthText } from '../../src/em-source-edit.js';
 import { validatePointSources } from '../../src/em-playground-physics.js';
 
 const view = createPlaneView({ width: 800, height: 600, span: 3 });
@@ -144,4 +144,39 @@ test('a new source keeps clear of an infinite line, not just its reference point
   ]);
   const spot = freeSpot(lines, 'xy', 0, [0, 3, 0]);
   assert.ok(Math.abs(spot[1]) >= 0.7 - 1e-9, `kept ${spot[1]} m from the line y=0`);
+});
+
+test('a line perpendicular to the view plane: body and direction handles coincide and the body wins the tie (centre click moves it)', () => {
+  const sources = validatePointSources([
+    { id: 'q1', type: 'infinite-line', lambda: 1e-9, position: [0, 0, 0], direction: [0, 0, 1], sRef: 1, displayLength: 4 },
+  ]);
+  const handles = handlesOf(sources[0]);
+  const [a, b] = [view.toCanvas(handles[0].position[0], handles[0].position[1]), view.toCanvas(handles[1].position[0], handles[1].position[1])];
+  assert.deepEqual(a, b, 'both handles project onto one pixel');
+  for (const [x, y] of [[400, 300], [405, 297], [390, 310]]) assert.equal(hitSource(sources, view, 'xy', x, y).handle, 'body');
+  // the same line seen from the side keeps both handles apart and still reaches the direction handle
+  const side = createPlaneView({ width: 800, height: 600, span: 3 });
+  assert.equal(hitSource(sources, side, 'xz', 400, 300 - 200).handle, 'direction');
+  assert.equal(hitSource(sources, side, 'xz', 400, 300).handle, 'body');
+  // a finite line along z also projects its two end points and centre onto one pixel: body again
+  const finite = validatePointSources([{ id: 'f', type: 'finite-line', lambda: 1e-9, start: [1, 0, -1], end: [1, 0, 1] }]);
+  assert.equal(hitSource(finite, view, 'xy', 500, 300).handle, 'body');
+});
+
+test('a tie between sources still prefers the later one (drawn on top)', () => {
+  const sources = validatePointSources([point('a', 1e-9, 0, 0), point('b', 1e-9, 0, 0)]);
+  assert.equal(hitSource(sources, view, 'xy', 400, 300).source.id, 'b');
+});
+
+test('keyboard selection walks the visible sources, wraps for brackets and stops at the ends for Tab', () => {
+  const sources = validatePointSources([point('a', 1e-9, 0, 0), point('b', 1e-9, 1, 0), { ...point('c', 1e-9, 2, 0), visible: false }, point('d', 1e-9, 3, 0)]);
+  assert.equal(cycleSelectionTarget(sources, null, 1).source.id, 'a');
+  assert.equal(cycleSelectionTarget(sources, null, -1).source.id, 'd');
+  assert.equal(cycleSelectionTarget(sources, 'b', 1).source.id, 'd', 'hidden sources are skipped');
+  assert.deepEqual([cycleSelectionTarget(sources, 'b', 1).index, cycleSelectionTarget(sources, 'b', 1).count], [2, 3]);
+  assert.equal(cycleSelectionTarget(sources, 'd', 1).source.id, 'a', 'wraps');
+  assert.equal(cycleSelectionTarget(sources, 'a', -1).source.id, 'd');
+  assert.equal(cycleSelectionTarget(sources, 'd', 1, false), null, 'Tab past the last source lets the focus leave');
+  assert.equal(cycleSelectionTarget(sources, 'a', -1, false), null);
+  assert.equal(cycleSelectionTarget([], null, 1), null);
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seedsAroundSources, traceSourceLines, traceStreamline } from '../../../src/em-fieldlines.js';
+import { lineChargeStop, seedsAroundSources, traceSourceLines, traceStreamline } from '../../../src/em-fieldlines.js';
 import { createPointChargeEvaluator, validatePointSources } from '../../../src/em-playground-physics.js';
 import { MU0 } from '../../../src/em-physics.js';
 
@@ -111,4 +111,66 @@ test('lines too short to read are dropped', () => {
   const sources = [point('a', 1e-9, 0, 0), point('b', -1e-9, 0.2, 0)];
   const lines = traceSourceLines(sources, fieldOf(sources), { ...planeOptions, ring: 0.12 });
   assert.ok(lines.every(line => line.points.length >= 4 || line.end.reason === 'stop'));
+});
+
+const traced = sources => {
+  const valid = validatePointSources(sources);
+  return { valid, lines: traceSourceLines(valid, fieldOf(valid), planeOptions) };
+};
+
+test('a positive line charge facing a negative one: lines end ON the negative line with a charge terminator, never past it', () => {
+  const { lines } = traced([
+    { id: 'p', type: 'infinite-line', lambda: 1e-9, position: [0, 1, 0], direction: [1, 0, 0], sRef: 1, displayLength: 4 },
+    { id: 'n', type: 'infinite-line', lambda: -1e-9, position: [0, -1, 0], direction: [1, 0, 0], sRef: 1, displayLength: 4 },
+  ]);
+  const absorbed = lines.filter(line => line.end.reason === 'charge');
+  assert.ok(absorbed.length >= 4, 'several lines run from + to -');
+  assert.ok(absorbed.every(line => line.sourceId === 'p'), 'only the positive line owns connecting lines');
+  for (const line of absorbed) assert.ok(Math.abs(line.points.at(-1)[1] + 1) < 1e-9, 'the last point sits on the negative line');
+  for (const line of lines) assert.ok(line.points.every(p => p[1] > -1 - 1e-9 || line.sourceId === 'n'), 'no line crosses y = -1 from above');
+  assert.equal(lines.filter(line => line.end.reason === 'zero').length, 0, 'no line dies of a field reversal behind the charge');
+});
+
+test('finite line charges are absorbing too (segment test, not only the end point)', () => {
+  const { lines } = traced([
+    { id: 'p', type: 'finite-line', lambda: 1e-9, start: [-1, 1, 0], end: [1, 1, 0] },
+    { id: 'n', type: 'finite-line', lambda: -1e-9, start: [-1, -1, 0], end: [1, -1, 0] },
+  ]);
+  const absorbed = lines.filter(line => line.end.reason === 'charge');
+  assert.ok(absorbed.length >= 4);
+  for (const line of absorbed) {
+    const [x, y] = line.points.at(-1);
+    assert.ok(Math.abs(y + 1) < 1e-9 && x >= -1 - 1e-9 && x <= 1 + 1e-9, 'ends on the segment');
+  }
+});
+
+test('a step that would jump over a thin line charge is caught by the segment test', () => {
+  const traces = traceStreamline({
+    field: () => [1, 0], seed: [-1, 0], bounds: { min: [-5, -5], max: [5, 5] }, step: { min: 1, max: 1, fraction: 1 },
+    stops: [{ center: [0.4, -2], end: [0.4, 2], radius: 0.02, reason: 'charge' }],
+  });
+  assert.equal(traces.end.reason, 'charge');
+  assert.ok(Math.abs(traces.points.at(-1)[0] - 0.4) < 1e-12);
+});
+
+test('a line charge perpendicular to the view plane is seeded by a ring around the point where it pierces the plane', () => {
+  for (const source of [
+    { id: 'q1', type: 'infinite-line', lambda: 1e-9, position: [0.5, -0.25, 0], direction: [0, 0, 1], sRef: 1, displayLength: 4 },
+    { id: 'q1', type: 'finite-line', lambda: 1e-9, start: [0.5, -0.25, -1], end: [0.5, -0.25, 1] },
+  ]) {
+    const valid = validatePointSources([source]);
+    const seeds = seedsAroundSources(valid, { axes: [0, 1], normal: 2, fixed: 0, maxPerSource: 12 });
+    assert.ok(seeds.length >= 3, `${source.type}: seeds exist`);
+    for (const seed of seeds) assert.ok(Math.abs(Math.hypot(seed.point[0] - 0.5, seed.point[1] + 0.25) - 0.12) < 1e-9, 'on a ring of radius 0.12');
+    const lines = traceSourceLines(valid, fieldOf(valid), planeOptions);
+    assert.ok(lines.length >= 3, `${source.type}: field lines exist (the default xy examples had none)`);
+    assert.ok(lines.every(line => line.end.reason === 'bounds'), 'radial lines leave the view');
+  }
+});
+
+test('a line charge that does not touch the view plane neither absorbs lines nor hides the ones around it', () => {
+  const offset = validatePointSources([{ id: 'f', type: 'finite-line', lambda: 1e-9, start: [-1, 0, 0.5], end: [1, 0, 0.5] }]);
+  assert.equal(lineChargeStop(offset[0], { axes: [0, 1], normal: 2, fixed: 0, radius: 0.06 }), null);
+  const inPlane = lineChargeStop(offset[0], { axes: [0, 1], normal: 2, fixed: 0.5, radius: 0.06 });
+  assert.deepEqual([inPlane.center, inPlane.end, inPlane.reason], [[-1, 0], [1, 0], 'charge']);
 });

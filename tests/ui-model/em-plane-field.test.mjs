@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { computePlaneLines, createSandboxField, createSceneField, sampleScalarGrid, sampleVectorGrid, sceneChargeSources, toDisplay, toMetres } from '../../src/em-plane-field.js';
-import { DEFAULT_SCENES } from '../../src/em-state.js';
+import { createEMState, DEFAULT_SCENES } from '../../src/em-state.js';
+import { createSceneMode } from '../../src/em-plane-modes.js';
 import { K, MU0 } from '../../src/em-physics.js';
 import { validatePointSources } from '../../src/em-playground-physics.js';
 
@@ -93,4 +94,33 @@ test('electric scenes reuse charge seeding; the plane wave has no lines', () => 
   const lines = computePlaneLines(createSceneField(dipole), { plane: 'xy', fixed: 0, area: mid, model: dipole });
   assert.ok(lines.length >= 6);
   assert.deepEqual(computePlaneLines(createSceneField(DEFAULT_SCENES.wave), { plane: 'xz', fixed: 0, area: mid, model: DEFAULT_SCENES.wave }), []);
+});
+
+test('current loop: the sensor and a finished render use the converged field (I = 1 A, R = 1 m, point 0.021 m from the wire)', () => {
+  const point = [1.021, 0, 0];
+  const converged = createSceneField(DEFAULT_SCENES.loop).evaluate(point);
+  assert.equal(converged.status, 'valid');
+  assert.ok(Math.abs(converged.vector[2] + 8.937e-6) / 8.937e-6 < 1e-3, `${converged.vector[2]} vs -8.937 uT`);
+  // the coarse 64-segment sum (kept only for the in-drag draft) is off by 74% here
+  const draft = createSceneField(DEFAULT_SCENES.loop, 0, 'draft').evaluate(point);
+  assert.ok(Math.abs(draft.vector[2] + 2.297e-6) / 2.297e-6 < 1e-3, `${draft.vector[2]} vs -2.297 uT`);
+  assert.ok(Math.abs(draft.vector[2] / converged.vector[2] - 1) > 0.7);
+  // far from the wire both qualities agree to rounding
+  const far = [0.2, 0.1, 0.3];
+  const a = createSceneField(DEFAULT_SCENES.loop).evaluate(far).vector, b = createSceneField(DEFAULT_SCENES.loop, 0, 'draft').evaluate(far).vector;
+  for (let i = 0; i < 3; i += 1) assert.ok(Math.abs(a[i] - b[i]) <= 1e-12 * Math.hypot(...a));
+});
+
+test('the scene mode hands out the draft field only on request and caches the two qualities apart', () => {
+  const store = createEMState();
+  store.setScene('loop');
+  const mode = createSceneMode(store);
+  const final = mode.field(), draft = mode.field('draft');
+  assert.notEqual(final, draft);
+  assert.notEqual(mode.fieldKey('draft'), mode.fieldKey('final'));
+  assert.equal(mode.field('final'), final);
+  assert.equal(mode.field(), final, 'converged by default (the sensor)');
+  const point = [1.021, 0, 0];
+  assert.ok(Math.abs(final.evaluate(point).vector[2] + 8.937e-6) < 1e-8);
+  assert.ok(Math.abs(draft.evaluate(point).vector[2] + 2.297e-6) < 1e-8);
 });

@@ -40,6 +40,18 @@ export function advanceTime(spec, time, seconds) {
 export const clampTime = (spec, time) => Math.min(spec.max, Math.max(spec.min, time));
 
 /**
+ * `params` with the clock parameter moved into the scrubber range that these very params define (the range depends on the
+ * frequency / omega / rail geometry). Returns the same object when nothing changes. Every computation that follows a
+ * parameter change must use the result, so the displayed time and the evaluated time can never differ.
+ */
+export function normalizeTime(definition, params) {
+  const spec = timeSpec(definition, params);
+  if (!spec || !Number.isFinite(params[spec.key])) return params;
+  const time = clampTime(spec, params[spec.key]);
+  return time === params[spec.key] ? params : { ...params, [spec.key]: time };
+}
+
+/**
  * emf(t) over the sweep for the traced experiments: { points: [{ t, value }], unit } or null.
  * Samples where the experiment is not valid are skipped.
  */
@@ -74,19 +86,64 @@ const INSTANT = {
   ],
 };
 
-export function instantProfiles(definition, params, domain, samples = 161) {
-  const spec = INSTANT[definition.id];
-  if (!spec || !(domain[1] > domain[0])) return null;
-  const series = spec.map(({ key, label, unit }) => ({ key, label, unit, points: [] }));
-  for (let i = 0; i < samples; i += 1) {
-    const z = domain[0] + (domain[1] - domain[0]) * i / (samples - 1);
+// Where the experiment is defined along z: the transmission line only between its input (z = -length) and its load (z = 0).
+// Outside it every sample would be skipped, so the span that sets the sample count is cut to this range.
+const SUPPORT = { 'transmission-lossless': params => [-params.length, 0] };
+
+export const MIN_SAMPLES = 161;
+export const SAMPLES_PER_WAVELENGTH = 16;
+export const MAX_SAMPLES = 4000;
+export const UNRESOLVED_TEXT = '미해상도 (파장이 너무 짧음)';
+
+// The shortest wavelength shown over `domain`, read from the experiment's own 'wavelength' scalar at both ends of the domain
+// (and on both sides of z = 0, where an interface changes the medium). null when the experiment does not report one.
+function shortestWavelength(definition, params, domain) {
+  const span = domain[1] - domain[0], tiny = 1e-9 * span;
+  const probes = [domain[0], domain[1]];
+  if (domain[0] < 0 && domain[1] > 0) probes.push(-tiny, tiny);
+  let shortest = Infinity;
+  for (const z of probes) {
     let result;
     try { result = definition.evaluate({ ...params }, [0, 0, z]); } catch { continue; }
-    if (result.status !== 'valid') continue;
+    const value = result.scalars?.find(item => item.key === 'wavelength')?.value;
+    if (Number.isFinite(value) && value > 0) shortest = Math.min(shortest, value);
+  }
+  return Number.isFinite(shortest) ? shortest : null;
+}
+
+/**
+ * Instantaneous v(z, t) / E_x(z, t)-style curves over `domain` for the wave and transmission-line experiments:
+ * [{ key, label, unit, points: [{ coordinate, value }] }], or null when the experiment has none.
+ *
+ * The sample count follows the display: at least SAMPLES_PER_WAVELENGTH samples per shortest wavelength (never fewer than
+ * MIN_SAMPLES). When that needs more than MAX_SAMPLES the curve would alias into a misleading flat line, so each series is
+ * returned with status 'unresolved', no points and the reason UNRESOLVED_TEXT instead of a wrong curve.
+ *
+ * Each series keeps every sample whose own quantity is finite. The experiment's overall status does not gate the
+ * plot: a transmission line with an open load reports 'singular' (the input impedance has a pole) while v(z, t) and
+ * i(z, t) are perfectly finite, and 'boundary' samples at the two terminals are valid limits too.
+ */
+export function instantProfiles(definition, params, requested, samples = null) {
+  const spec = INSTANT[definition.id];
+  if (!spec || !(requested[1] > requested[0])) return null;
+  const support = SUPPORT[definition.id]?.(params);
+  const domain = support ? [Math.max(requested[0], support[0]), Math.min(requested[1], support[1])] : requested;
+  if (!(domain[1] > domain[0])) return null;
+  const series = spec.map(({ key, label, unit }) => ({ key, label, unit, points: [], status: 'resolved' }));
+  const wavelength = shortestWavelength(definition, params, domain);
+  const needed = wavelength ? Math.ceil(SAMPLES_PER_WAVELENGTH * (domain[1] - domain[0]) / wavelength) + 1 : MIN_SAMPLES;
+  if (samples === null && needed > MAX_SAMPLES) {
+    return series.map(item => ({ ...item, status: 'unresolved', reason: UNRESOLVED_TEXT, requiredSamples: needed, wavelength }));
+  }
+  const count = samples ?? Math.max(MIN_SAMPLES, needed);
+  for (let i = 0; i < count; i += 1) {
+    const z = domain[0] + (domain[1] - domain[0]) * i / (count - 1);
+    let result;
+    try { result = definition.evaluate({ ...params }, [0, 0, z]); } catch { continue; }
     spec.forEach(({ read }, index) => {
       const value = read(result);
       if (Number.isFinite(value)) series[index].points.push({ coordinate: z, value });
     });
   }
-  return series.every(s => s.points.length > 1) ? series : null;
+  return series.every(item => item.points.length > 1) ? series : null;
 }

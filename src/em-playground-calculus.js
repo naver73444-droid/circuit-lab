@@ -126,8 +126,63 @@ function sphereRefusal(sources, center, radius) {
   return null;
 }
 
-/** Outward flux of E through the sphere (center, radius 0.05...5 m): 64x128 and 128x256 grids must agree. */
-export function sphereFlux(field, center, radius, sources = []) {
+// ---- refinement near a charge ------------------------------------------------------------------------------------
+
+// A point charge a few mm from the surface makes the integrand a narrow spike (width ~ the gap) that a uniform grid cannot
+// resolve: 76 instead of 113 V·m for a charge 3 mm inside a 1 m sphere. The refinement integrates in polar coordinates about
+// the direction of that charge, with cells growing geometrically from a fraction of the gap (and capped in width), so
+// the spike is resolved with ~100-300 cells. Two passes of different grading must agree before the result is called converged.
+const REFINE_RANGE = 0.25; // only when the nearest point charge is within this fraction of the radius from the surface
+
+function nearestPointCharge(sources, center, radius) {
+  let best = null;
+  for (const source of sources) {
+    if (!active(source) || source.type !== 'point') continue;
+    const gap = Math.abs(norm3(sub(source.position, center)) - radius);
+    if (gap > TOUCH && (!best || gap < best.gap)) best = { gap, source };
+  }
+  return best;
+}
+
+function gradedPass(field, center, radius, axis, firstCell, growth, maxWidth, phiCount) {
+  const seed = Math.abs(axis[2]) < 0.9 ? [0, 0, 1] : [0, 1, 0];
+  const e1 = scale3(cross3(seed, axis), 1 / norm3(cross3(seed, axis))), e2 = cross3(axis, e1);
+  const edges = [0];
+  for (let width = firstCell; edges[edges.length - 1] < Math.PI; width = Math.min(maxWidth, width * growth)) {
+    edges.push(Math.min(Math.PI, edges[edges.length - 1] + width));
+  }
+  const dPhi = 2 * Math.PI / phiCount;
+  let flux = 0;
+  for (let i = 0; i + 1 < edges.length; i++) {
+    const theta = (edges[i] + edges[i + 1]) / 2, weight = Math.cos(edges[i]) - Math.cos(edges[i + 1]); // exact integral of sin
+    const sine = Math.sin(theta), cosine = Math.cos(theta);
+    for (let j = 0; j < phiCount; j++) {
+      const phi = (j + 0.5) * dPhi;
+      const n = add3(scale3(axis, cosine), scale3(add3(scale3(e1, Math.cos(phi)), scale3(e2, Math.sin(phi))), sine));
+      const result = field(add3(center, scale3(n, radius)));
+      if (result.status !== 'valid') return { status: 'excluded' };
+      flux += dot3(result.E, n) * radius * radius * weight * dPhi;
+    }
+  }
+  return { status: 'valid', flux, samples: (edges.length - 1) * phiCount };
+}
+
+function refinedSphereFlux(field, center, radius, near) {
+  const axis = scale3(sub(near.source.position, center), 1 / norm3(sub(near.source.position, center)));
+  const first = near.gap / radius / 6;
+  const coarse = gradedPass(field, center, radius, axis, first, 1.06, 0.015, 64);
+  const fine = gradedPass(field, center, radius, axis, first / 2, 1.03, 0.0075, 128);
+  if (coarse.status !== 'valid' || fine.status !== 'valid') return null;
+  const difference = Math.abs(fine.flux - coarse.flux), limit = 0.05 + 0.001 * Math.abs(fine.flux);
+  return { flux: fine.flux, coarseFlux: coarse.flux, difference, converged: difference <= limit, samples: fine.samples };
+}
+
+/**
+ * Outward flux of E through the sphere (center, radius 0.05...5 m): 64x128 and 128x256 grids must agree.
+ * With options.refine, a result that did not converge because a point charge sits close to the surface is recomputed by the
+ * graded polar integration above (result.refined = true); if that does not converge either, converged stays false.
+ */
+export function sphereFlux(field, center, radius, sources = [], { refine = false } = {}) {
   if (!Number.isFinite(radius) || radius < 0.05 || radius > 5) throw new Error('구/루프 반경은 0.05…5 m여야 합니다.');
   if (center.some(value => !Number.isFinite(value) || Math.abs(value) + radius > 20)) {
     return { status: 'excluded', reason: '구면이 좌표 범위를 벗어납니다.' };
@@ -139,10 +194,16 @@ export function sphereFlux(field, center, radius, sources = []) {
   const fine = spherePass(field, center, radius, 128, 256);
   if (fine.status !== 'valid') return fine;
   const difference = Math.abs(fine.flux - coarse.flux), limit = 0.05 + 0.001 * Math.abs(fine.flux);
-  return {
+  const result = {
     ...fine, coarseFlux: coarse.flux, difference, converged: difference <= limit,
     noiseScale: Math.max(fine.maxField, coarse.maxField) * 4 * Math.PI * radius * radius,
   };
+  const near = refine && !result.converged ? nearestPointCharge(sources, center, radius) : null;
+  if (near && near.gap <= REFINE_RANGE * radius) {
+    const refined = refinedSphereFlux(field, center, radius, near);
+    if (refined?.converged) return { ...result, ...refined, refined: true };
+  }
+  return result;
 }
 
 // ---- circulation around a circle ---------------------------------------------------------------------------------

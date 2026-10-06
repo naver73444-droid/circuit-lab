@@ -215,20 +215,21 @@
 <section class="em-stage">
 <div class="em-toolbar">
 <div aria-label="전하 추가" class="em-palette" id="em-palette" role="group"><button data-em-pg-add="1" type="button">+q</button><button data-em-pg-add="-1" type="button">−q</button><button id="em-pg-add-infinite" type="button">무한선</button><button id="em-pg-add-finite" type="button">유한선</button></div>
-<div aria-label="표시" class="em-chips" role="group"><button aria-pressed="true" class="em-chip" data-em-chip="lines" type="button">장선</button><button aria-pressed="true" class="em-chip" data-em-chip="contours" id="em-chip-contours" type="button">등전위선</button><button aria-pressed="false" class="em-chip" data-em-chip="gauss" id="em-chip-gauss" type="button">가우스 면</button></div>
+<div aria-label="표시" class="em-chips" role="group"><button aria-pressed="true" class="em-chip" data-em-chip="lines" type="button">장선</button><button aria-pressed="true" class="em-chip" data-em-chip="contours" id="em-chip-contours" type="button">등전위선</button><button aria-pressed="false" class="em-chip" data-em-chip="gauss" id="em-chip-gauss" title="가우스 구의 단면 · 선속은 3D 구면에서 계산" type="button">가우스 면</button></div>
 </div>
 <div class="em-canvas-box">
 <canvas aria-hidden="true" id="em-plane-base"></canvas>
-<canvas aria-label="전하와 전기장 평면. 전하와 노란 시험전하를 끌어 움직이고, 휠로 확대합니다." id="em-plane" tabindex="0"></canvas>
+<canvas aria-label="전하와 전기장 평면. 전하와 노란 시험전하를 끌어 움직이고, 휠로 확대합니다. 키보드: 대괄호 [ ]로 전하를 고르고 화살표로 옮깁니다." id="em-plane" tabindex="0"></canvas>
 <canvas aria-describedby="em-renderer-status" aria-label="전자기장 3D 보기. 빈 곳을 끌면 시점이 회전하고, 전하는 선택한 평면에서 끌어 움직입니다." hidden id="em-canvas" tabindex="0"></canvas>
 </div>
 <div class="em-3d-bar" hidden id="em-3d-bar"><span id="em-renderer-status">WebGL 준비 중</span><span class="em-3d-views"><button data-em-view="x" type="button">+x</button><button data-em-view="y" type="button">+y</button><button data-em-view="z" type="button">+z</button><button data-em-view="reset" type="button">시점 초기화</button></span></div>
 <div class="em-wave-controls" hidden id="em-wave-controls"><button id="em-play" type="button">재생</button><label>시간 <input aria-label="시간 0…2T" id="em-time" max="2" min="0" step="0.005" type="range" value="0"></label><output id="em-time-text">t = 0</output></div>
 <p class="em-hint" id="em-hint">전하와 노란 시험전하를 끌어 보세요 · 휠로 확대</p>
+<p aria-live="polite" class="visually-hidden" id="em-live" role="status"></p>
 </section>
 <aside class="em-side">
 <section class="em-readout" id="em-readout"><div class="em-side-head"><strong>측정값</strong><span id="em-readout-target">시험전하</span></div><p id="em-sensor-text"></p><dl id="em-sensor-rows"></dl><p class="em-error" hidden id="em-error" role="alert"></p></section>
-<section class="em-readout" hidden id="em-gauss-readout"><div class="em-side-head"><strong>가우스 면</strong><span id="em-gauss-state"></span></div><div id="em-gauss-lines"></div><label class="em-slider-row">반지름 <input aria-label="가우스 면 반지름" id="em-gauss-radius" max="5" min="0.1" step="0.05" type="range" value="1"><output id="em-gauss-radius-text"></output></label></section>
+<section class="em-readout" hidden id="em-gauss-readout"><div class="em-side-head"><strong>가우스 구의 단면</strong><span id="em-gauss-state"></span></div><p class="em-note" id="em-gauss-note">선속은 3D 구면에서 계산</p><div id="em-gauss-lines"></div><label class="em-slider-row">구 반지름 <input aria-label="가우스 구 반지름" id="em-gauss-radius" max="5" min="0.1" step="0.05" type="range" value="1"><output id="em-gauss-radius-text"></output></label></section>
 <section class="em-inspector" id="em-inspector"></section>
 <details id="em-models"><summary>기본 모델</summary><div aria-label="기본 모델" class="em-model-buttons" role="group"><button aria-pressed="true" data-em-scene="playground" type="button">자유 배치</button><button aria-pressed="false" data-em-scene="charge" type="button">점전하</button><button aria-pressed="false" data-em-scene="dipole" type="button">쌍극자</button><button aria-pressed="false" data-em-scene="line" type="button">직선전류</button><button aria-pressed="false" data-em-scene="loop" type="button">전류고리</button><button aria-pressed="false" data-em-scene="wave" type="button">평면파</button></div><div class="em-field-grid" id="em-model-fields"></div></details>
 <details id="em-advanced"><summary>고급</summary>

@@ -8,14 +8,23 @@ import {
 import { createPointChargeEvaluator } from './em-playground-physics.js';
 import { sphereFlux } from './em-playground-calculus.js';
 import { gaussReadout, sensorReadout } from './em-readout.js';
-import { nudgePatch } from './em-source-edit.js';
+import { cycleSelectionTarget, nudgePatch, sourceTitle, strengthText } from './em-source-edit.js';
+import { createInteraction } from './em-interaction.js';
 
 const SENSOR_GRAB = 16;
 const KEY_STEP = 0.05;
 
-export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab, getPalette, onChange, signal }) {
+export function createPlaneController({
+  baseCanvas, canvas, editor, getMode, lab, getPalette, onChange, signal, interaction = createInteraction(), announce = () => {},
+}) {
   const pg = editor.state, renderer = createPlaneRenderer(baseCanvas, canvas, getPalette);
-  let drag = null, preciseTimer = null, precise = null;
+  let drag = null, preciseTimer = null, preciseKey = null, precise = null;
+
+  // One shared interaction state (plane drag, 3D drag, Gauss slider): the precise flux never runs mid-interaction.
+  const cancelPrecise = () => { clearTimeout(preciseTimer); preciseTimer = null; preciseKey = null; };
+  interaction.onBegin(cancelPrecise);
+  const startGesture = next => { drag = next; interaction.begin('plane'); };
+  const stopGesture = () => { drag = null; interaction.end('plane'); };
 
   const geometry = () => createPlaneView({
     width: canvas.clientWidth, height: canvas.clientHeight, span: lab.view.span, offset: lab.view.offset,
@@ -35,7 +44,7 @@ export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab
     return point => { const r = field.evaluate(point); return { status: r.status, E: r.vector }; };
   }
 
-  function gaussInfo(mode, field, dragging) {
+  function gaussInfo(mode, field) {
     if (mode.kind !== 'sandbox' || !lab.chips.gauss || !lab.gauss) return null;
     const { center, radius } = lab.gauss, sources = mode.sources();
     const enclosure = gaussEnclosure(sources, center, radius);
@@ -44,10 +53,18 @@ export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab
       coarse = coarseSphereFlux(gaussEvaluate(field), center, radius);
       const key = JSON.stringify([mode.fieldKey(), center, radius]);
       if (precise?.key === key) exact = precise.result;
-      else if (!dragging) {
+      else if (!interaction.active && preciseKey !== key) {
+        // Debounced: a render that asks for the same surface again keeps the pending timer. The timer checks the generation
+        // of the interaction state when it fires, so a drag that began after scheduling discards it.
         clearTimeout(preciseTimer);
+        const generation = interaction.generation;
+        preciseKey = key;
         preciseTimer = setTimeout(() => {
-          const result = sphereFlux(createPointChargeEvaluator(sources), center, radius, sources);
+          preciseTimer = null;
+          preciseKey = null;
+          if (!interaction.isCurrent(generation)) return;
+          const result = sphereFlux(createPointChargeEvaluator(sources), center, radius, sources, { refine: true });
+          if (!interaction.isCurrent(generation)) return;
           precise = { key, result };
           onChange();
         }, 30);
@@ -60,9 +77,9 @@ export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab
 
   // What the readouts show: the sensor's field and the Gauss surface. Cheap enough to run on every frame.
   function measure() {
-    const mode = getMode(), field = mode.field(), plane = mode.plane(), [a, b] = planeAxes(plane);
+    const mode = getMode(), field = mode.field('final'), plane = mode.plane(), [a, b] = planeAxes(plane);
     const sensor = mode.sensor(), result = field.evaluate(sensor);
-    const gauss = gaussInfo(mode, field, Boolean(drag));
+    const gauss = gaussInfo(mode, field);
     return {
       mode, field, plane, sensor, result, gauss, readout: sensorReadout(field, result, plane),
       inPlane: result.status === 'valid' ? [result.vector[a], result.vector[b]] : null,
@@ -73,8 +90,9 @@ export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab
     const view = geometry();
     if (!(view.width > 1 && view.height > 1)) return null;
     const info = measure(), { mode } = info;
+    // The picture uses the coarse field only while a drag is in progress (quality 'draft'); a finished render is converged.
     renderer.render({
-      view, plane: info.plane, fixed: mode.fixed(), field: info.field, fieldKey: mode.fieldKey(), sources: mode.sources(),
+      view, plane: info.plane, fixed: mode.fixed(), field: mode.field(lab.quality), fieldKey: mode.fieldKey(lab.quality), sources: mode.sources(),
       model: mode.model(), quality: lab.quality, chips: lab.chips, selectedId: pg.selectedId,
       sensor: { point: info.sensor, vector: info.inPlane, text: info.readout.compact },
       gauss: info.gauss ? { ...lab.gauss, label: info.gauss.status === 'ok' ? info.gauss.lines[1] : '' } : null,
@@ -103,7 +121,7 @@ export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab
       if (!editor.beginDrag(hit.source.id, plane, hit.handle, hit.position)) { onChange(); return; }
       const grab = pointOnPlane(view, plane, hit.position[planeNormal(plane)], x, y);
       const normal = hit.position[planeNormal(plane)];
-      drag = { type: 'source', pointerId: event.pointerId, normal, offset: hit.position.map((v, i) => v - grab[i]) };
+      startGesture({ type: 'source', pointerId: event.pointerId, normal, offset: hit.position.map((v, i) => v - grab[i]) });
       lab.quality = 'draft';
       onChange();
       return;
@@ -113,12 +131,12 @@ export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab
       if (where) {
         const grab = pointOnPlane(view, plane, mode.fixed(), x, y);
         const type = where === 'edge' ? 'gauss-resize' : 'gauss-move';
-        drag = { type, pointerId: event.pointerId, offset: lab.gauss.center.map((v, i) => v - grab[i]) };
+        startGesture({ type, pointerId: event.pointerId, offset: lab.gauss.center.map((v, i) => v - grab[i]) });
         onChange();
         return;
       }
     }
-    drag = { type: 'sensor', pointerId: event.pointerId };
+    startGesture({ type: 'sensor', pointerId: event.pointerId });
     moveSensorTo(view, mode, x, y);
     onChange();
   }
@@ -147,7 +165,7 @@ export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab
   function endDrag(event, cancelled) {
     if (!drag || event.pointerId !== drag.pointerId) return;
     const finished = drag;
-    drag = null;
+    stopGesture();
     try { canvas.releasePointerCapture?.(event.pointerId); } catch { /* already released */ }
     if (finished.type === 'source') {
       if (cancelled) editor.cancelDrag();
@@ -185,15 +203,38 @@ export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab
     onChange();
   }, { passive: false, signal });
 
+  // ---- keyboard selection: [ and ] cycle the selected source (wrapping); Tab / Shift+Tab walk through them and let the
+  // focus leave the canvas after the last / before the first, so the canvas is never a keyboard trap. -----------------------
+
+  function cycleSelection(step, wrap) {
+    if (getMode().kind !== 'sandbox') return false;
+    const target = cycleSelectionTarget(pg.sources, pg.selectedId, step, wrap);
+    if (!target || !editor.select(target.source.id)) return false;
+    announce(`선택: ${sourceTitle(target.source)} (${target.index + 1}/${target.count}) · ${strengthText(target.source)}`);
+    onChange();
+    return true;
+  }
+
+  // Returns true when the key was a selection key that this handler dealt with.
+  function selectionKey(event) {
+    if (event.ctrlKey || event.altKey || event.metaKey) return false;
+    const step = event.key === ']' ? 1 : event.key === '[' ? -1 : event.key === 'Tab' ? (event.shiftKey ? -1 : 1) : 0;
+    if (!step) return false;
+    const handled = cycleSelection(step, event.key !== 'Tab');
+    if (handled) event.preventDefault();
+    return event.key !== 'Tab' || handled;
+  }
+
   canvas.addEventListener('keydown', event => {
     if (event.key === 'Escape' && drag) {
       event.preventDefault();
       if (drag.type === 'source') editor.cancelDrag();
-      drag = null;
+      stopGesture();
       lab.quality = 'final';
       onChange();
       return;
     }
+    if (selectionKey(event)) return;
     const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[event.key];
     const mode = getMode(), plane = mode.plane();
     if (event.key === 'Delete' && mode.kind === 'sandbox' && editor.removeSelected()) { event.preventDefault(); onChange(); return; }
@@ -214,18 +255,19 @@ export function createPlaneController({ baseCanvas, canvas, editor, getMode, lab
 
   const observer = new ResizeObserver(() => onChange());
   observer.observe(canvas);
-  signal.addEventListener('abort', () => { observer.disconnect(); clearTimeout(preciseTimer); }, { once: true });
+  signal.addEventListener('abort', () => { observer.disconnect(); cancelPrecise(); }, { once: true });
 
   return {
     draw,
     measure,
     stats: renderer.stats,
     isDragging: () => Boolean(drag),
+    selectNext: step => cycleSelection(step, true),
     invalidate: () => renderer.invalidate(),
     cancel() {
       if (!drag) return;
       if (drag.type === 'source') editor.cancelDrag();
-      drag = null;
+      stopGesture();
       lab.quality = 'final';
     },
     /** Put the Gauss circle around the selected source (or the first one, or the origin). */

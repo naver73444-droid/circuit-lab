@@ -28,11 +28,12 @@ const strengthOf = source => (source.type === 'point' ? source.q : source.lambda
  */
 export function gaussEnclosure(sources, center, radius) {
   const enclosedIds = [], outsideIds = [], crossingIds = [];
-  let enclosedCharge = 0, boundaryId = null;
+  let enclosedCharge = 0, boundaryId = null, boundaryGap = Infinity;
   for (const source of sources) {
     if (source.enabled === false || strengthOf(source) === 0) continue;
     if (source.type === 'point') {
       const d = dist(source.position, center);
+      boundaryGap = Math.min(boundaryGap, Math.abs(d - radius));
       if (Math.abs(d - radius) <= EDGE) boundaryId = source.id;
       else if (d < radius) { enclosedIds.push(source.id); enclosedCharge += source.q; } else outsideIds.push(source.id);
     } else if (source.type === 'finite-line') {
@@ -50,7 +51,8 @@ export function gaussEnclosure(sources, center, radius) {
       if (perpendicular <= radius + EDGE) crossingIds.push(source.id); else outsideIds.push(source.id);
     }
   }
-  const base = { enclosedIds, outsideIds, crossingIds, enclosedCharge };
+  // boundaryGap: distance (m) from the surface to the nearest point charge; a small gap makes the flux integrand spiky.
+  const base = { enclosedIds, outsideIds, crossingIds, enclosedCharge, boundaryGap, radius };
   if (boundaryId) return { ...base, status: 'excluded', reason: `점전하 ${boundaryId}가 가우스 면 위에 놓였습니다.` };
   if (crossingIds.length) return { ...base, status: 'unsupported', reason: '선전하가 가우스 면을 가로지릅니다.' };
   return { ...base, status: 'ok' };

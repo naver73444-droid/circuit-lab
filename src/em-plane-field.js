@@ -4,7 +4,7 @@
 //   display3: a point in display coordinates (metres, except the plane wave, which is shown in wavelengths: unit = lambda).
 //   vector:   E (V/m) for electric models, B (T) for current models, E for the wave.
 //   scalar:   the potential (V) where one exists, otherwise |vector| (the map shows the strength).
-import { C, norm3, sceneMeasurement, loopFieldAtN, loopWireDistance } from './em-physics.js';
+import { C, norm3, sceneMeasurement, loopCurrentField, loopFieldAtN, loopWireDistance } from './em-physics.js';
 import { createPointChargeEvaluator } from './em-playground-physics.js';
 import { planeAxes, planeNormal } from './em-plane-geometry.js';
 import { traceSourceLines, traceStreamline } from './em-fieldlines.js';
@@ -24,16 +24,27 @@ export function createSandboxField(sources) {
   };
 }
 
-// The loop's wire is drawn with 64 segments; the display excludes 2% of R around the wire like the numeric model.
-function visualMeasurement(model, point) {
+// The loop field is a sum over wire segments. A fixed 64-segment sum is off by tens of percent close to the wire (a point
+// 0.021 R from the wire reads -2.3 uT instead of the converged -8.9 uT), so the sensor and a finished (released) render
+// use the converged evaluator of em-physics (64 -> 1024 segments until two passes agree). Only the in-drag draft keeps the
+// 64-segment sum, which is cheap and is replaced as soon as the pointer is released. Farther than HALF_R from the wire
+// the 64-segment sum is already converged to ~1e-14 (the error falls like exp(-64 d / R)), so it is used directly there.
+const FAR_FROM_WIRE = 0.5;
+
+function visualMeasurement(model, point, draft) {
   if (model.kind !== 'loop') return sceneMeasurement(model, point, 0);
-  const exclusion = Math.max(0.001, 0.02 * model.radius);
-  if (model.current !== 0 && loopWireDistance(model, point) <= exclusion) return { status: 'excluded' };
-  return { status: 'valid', B: loopFieldAtN(model, point, 64) };
+  const exclusion = Math.max(0.001, 0.02 * model.radius), wire = loopWireDistance(model, point);
+  if (model.current !== 0 && wire <= exclusion) return { status: 'excluded' };
+  if (draft || model.current === 0 || wire >= FAR_FROM_WIRE * model.radius) return { status: 'valid', B: loopFieldAtN(model, point, 64) };
+  return loopCurrentField(model, point);
 }
 
-/** Field of one of the built-in scenes (charge, dipole, line, loop, wave) at wave time `timeCycles` periods. */
-export function createSceneField(model, timeCycles = 0) {
+/**
+ * Field of one of the built-in scenes (charge, dipole, line, loop, wave) at wave time `timeCycles` periods.
+ * quality 'draft' (only while a drag is in progress) evaluates the loop with the coarse 64-segment sum; anything else is converged.
+ */
+export function createSceneField(model, timeCycles = 0, quality = 'final') {
+  const draft = quality === 'draft';
   const isWave = model.kind === 'wave', unit = isWave ? C / model.frequency : 1;
   return {
     kind: model.kind, electric: model.kind === 'charge' || model.kind === 'dipole' || isWave, unit,
@@ -42,7 +53,7 @@ export function createSceneField(model, timeCycles = 0) {
       const point = display.map(value => value * unit);
       let result;
       try {
-        result = isWave ? sceneMeasurement(model, point, timeCycles / model.frequency) : visualMeasurement(model, point);
+        result = isWave ? sceneMeasurement(model, point, timeCycles / model.frequency) : visualMeasurement(model, point, draft);
       } catch { return FAILED; }
       if (result.status !== 'valid') return FAILED;
       const vector = result.E ?? result.B;

@@ -10,9 +10,22 @@ const CASES = [
   [], [[3, 2]], [[2, 1]], [[3, 1]], [[0, 1]], null, [[0, 2]], [[0, 3]],
   [[0, 3]], [[0, 2]], null, [[0, 1]], [[3, 1]], [[2, 1]], [[3, 2]], [],
 ];
-// Saddle cells (tr+bl high, or tl+br high) are split by the centre value so contours never cross.
+// Saddle cells (tr+bl high, or tl+br high) are split by the asymptotic decider: the value of the bilinear surface at its
+// saddle point says whether the two high corners are joined (saddle >= level) or kept apart. The plain average of the four
+// corners can pick the wrong pairing (corners [10, -4, -4, 1]: average 0.75 joins what the bilinear surface separates).
+// An exact tie makes the level set two straight lines crossing at the saddle (top-bottom and left-right).
 const SADDLE_5 = { high: [[0, 3], [2, 1]], low: [[0, 1], [3, 2]] };
 const SADDLE_10 = { high: [[0, 1], [3, 2]], low: [[0, 3], [2, 1]] };
+const SADDLE_CROSS = [[0, 2], [3, 1]];
+
+/** 'high', 'low' or 'cross': how the bilinear surface through (tl, tr, bl, br) pairs up the corners of a saddle cell. */
+export function saddleDecision(tl, tr, bl, br, level) {
+  const denominator = tl + br - tr - bl;
+  const saddle = denominator === 0 ? (tl + tr + bl + br) / 4 : (tl * br - tr * bl) / denominator;
+  const tolerance = 1e-12 * Math.max(1, Math.abs(level), Math.abs(tl), Math.abs(tr), Math.abs(bl), Math.abs(br));
+  if (Math.abs(saddle - level) <= tolerance) return 'cross';
+  return saddle > level ? 'high' : 'low';
+}
 
 function edgePoint(edge, level, col, row, tl, tr, br, bl) {
   const lerp = (a, b) => (b === a ? 0.5 : (level - a) / (b - a));
@@ -35,9 +48,8 @@ export function contourSegments(values, cols, rows, level) {
       const index = (tl >= level ? 8 : 0) | (tr >= level ? 4 : 0) | (br >= level ? 2 : 0) | (bl >= level ? 1 : 0);
       let segments = CASES[index];
       if (segments === null) {
-        const centreHigh = (tl + tr + bl + br) / 4 >= level;
-        const saddle = index === 5 ? SADDLE_5 : SADDLE_10;
-        segments = centreHigh ? saddle.high : saddle.low;
+        const decision = saddleDecision(tl, tr, bl, br, level), saddle = index === 5 ? SADDLE_5 : SADDLE_10;
+        segments = decision === 'cross' ? SADDLE_CROSS : saddle[decision];
       }
       for (const [a, b] of segments) {
         out.push(...edgePoint(a, level, col, row, tl, tr, br, bl), ...edgePoint(b, level, col, row, tl, tr, br, bl));

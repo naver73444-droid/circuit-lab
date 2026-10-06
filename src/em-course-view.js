@@ -83,10 +83,12 @@ export function createCourseView(canvas, onProbe, getPalette) {
     }
     // Wave and line experiments also hand over the instantaneous curve; the profile is then its amplitude envelope.
     const instant = current.instantProfile?.([xMin, xMax]);
+    delete canvas.dataset.instantUnresolved;
     const mapX = x => left + (x - xMin) / (xMax - xMin) * (right - left);
     series.forEach((data, index) => {
       const top = 28 + index * (h - 48) / series.length, bottom = top + (h - 48) / series.length - 26;
-      const live = instant?.[index], envelope = data.points.map(p => p.value);
+      const unresolved = instant?.[index]?.status === 'unresolved';
+      const live = unresolved ? null : instant?.[index], envelope = data.points.map(p => p.value);
       let yMin, yMax;
       if (live) {
         const peak = Math.max(...envelope.map(Math.abs), ...live.points.map(p => Math.abs(p.value))) * 1.1 || 1;
@@ -117,14 +119,19 @@ export function createCourseView(canvas, onProbe, getPalette) {
         ctx.setLineDash([]);
       }
       ctx.strokeStyle = index === 0 ? C.field : C.source; ctx.lineWidth = 2;
-      trace(live ? live.points : data.points);
+      if (unresolved) {
+        // A wavelength too short for the display would alias into a flat, misleading curve: say so instead of drawing it.
+        ctx.fillStyle = C.muted;
+        ctx.fillText(instant[index].reason, left + 10, (top + bottom) / 2 + 4);
+        canvas.dataset.instantUnresolved = 'true';
+      } else trace(live ? live.points : data.points);
       const px = mapX(current.point[2]);
       ctx.strokeStyle = C.probe; ctx.setLineDash([4, 3]);
       ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
       ctx.restore();
     });
     ctx.fillStyle = C.muted;
-    ctx.fillText(`z ${xMin.toPrecision(3)} … ${xMax.toPrecision(3)} m · 점선: 측정 위치${instant ? ' · 파선: 진폭 포락선' : ''}`, 10, h - 17);
+    ctx.fillText(`z ${xMin.toPrecision(3)} … ${xMax.toPrecision(3)} m · 점선: 측정 위치${instant && !instant.some(item => item.status === 'unresolved') ? ' · 파선: 진폭 포락선' : ''}`, 10, h - 17);
     Object.assign(canvas.dataset, { profileSeries: String(series.length), profileXMin: String(xMin), profileXMax: String(xMax) });
   }
 

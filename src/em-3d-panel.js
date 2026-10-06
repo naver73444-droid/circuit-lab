@@ -2,16 +2,19 @@
 // arrow keys. Charges can be dragged here too; they move inside the editing plane under the pointer.
 import { C } from './em-physics.js';
 import { EMView } from './em-view.js';
-import { intersectEditingPlane, projectedDistance } from './em-playground-interaction.js';
+import { beginPlaneGrab, grabTarget, projectedDistance } from './em-playground-interaction.js';
 import { computePlaneLines, sampleVectorGrid } from './em-plane-field.js';
 import { handlesOf, planeAxes, planeNormal } from './em-plane-geometry.js';
+import { createInteraction } from './em-interaction.js';
 
 const HOME = { yaw: -.7, pitch: .45, distance: 7 };
 const VIEWS = { x: { yaw: 0, pitch: 0 }, y: { yaw: Math.PI / 2, pitch: 0 }, z: { yaw: 0, pitch: Math.PI / 2 - .001 } };
 const WINDOW = { aMin: -3, aMax: 3, bMin: -3, bMax: 3 };
 
-export function create3DPanel({ canvas, status, editor, store, lab, getMode, getPalette, onChange, isActive, signal }) {
-  const pg = editor.state, s = store.state;
+export function create3DPanel({
+  canvas, status, editor, store, lab, getMode, getPalette, onChange, isActive, signal, interaction = createInteraction(),
+}) {
+  const pg = editor.state, s = store.state, pointers = new Set();
   let view = null, grab = null, lineCache = null;
 
   function ensureView() {
@@ -36,26 +39,28 @@ export function create3DPanel({ canvas, status, editor, store, lab, getMode, get
           }
         }
         if (!target || nearest > Math.max(.12, s.camera.distance * .025)) return false;
-        const normal = planeNormal(pg.plane), hit = intersectEditingPlane(ray, pg.plane, target.position[normal]);
-        if (!hit) return false;
+        const started = beginPlaneGrab(ray, pg.plane, target.position);
+        if (!started) return false;
         editor.select(target.source.id);
         if (!editor.beginDrag(target.source.id, pg.plane, target.handle, target.position)) { onChange(); return true; }
-        grab = { normal, offset: target.position.map((value, i) => value - hit[i]) };
+        // The editing plane is fixed at pointerdown (see beginPlaneGrab): it passes through the grabbed handle, not the
+        // source's centre, and every move / up of the gesture uses that same plane, so a finite-line end point does not jump.
+        grab = started;
         lab.quality = 'draft';
         onChange();
         return true;
       },
       move(_event, ray) {
         if (!pg.drag || !ray || !grab) return;
-        const hit = intersectEditingPlane(ray, pg.drag.plane, pg.drag.origin[grab.normal]);
-        if (!hit) return;
-        editor.previewDrag(hit.map((value, i) => value + grab.offset[i]));
+        const point = grabTarget(grab, ray);
+        if (!point) return;
+        editor.previewDrag(point);
         onChange();
       },
       up(_event, cancelled, ray) {
         if (!pg.drag) return;
-        const hit = !cancelled && ray && grab ? intersectEditingPlane(ray, pg.drag.plane, pg.drag.origin[grab.normal]) : null;
-        if (hit) editor.commitDrag(hit.map((value, i) => value + grab.offset[i])); else editor.cancelDrag();
+        const point = !cancelled && ray && grab ? grabTarget(grab, ray) : null;
+        if (point) editor.commitDrag(point); else editor.cancelDrag();
         grab = null;
         lab.quality = 'final';
         onChange();
@@ -67,7 +72,7 @@ export function create3DPanel({ canvas, status, editor, store, lab, getMode, get
   // Field lines and the in-plane arrows only depend on the field, the plane and the quality.
   function overlays(mode, field) {
     const plane = mode.plane(), fixed = mode.fixed();
-    const key = JSON.stringify([mode.fieldKey(), plane, fixed, lab.quality, lab.chips.lines]);
+    const key = JSON.stringify([mode.fieldKey(lab.quality), plane, fixed, lab.quality, lab.chips.lines]);
     if (lineCache?.key === key) return lineCache.value;
     const lines = lab.chips.lines
       ? computePlaneLines(field, { plane, fixed, area: WINDOW, sources: mode.sources(), model: mode.model(), quality: lab.quality })
@@ -85,9 +90,9 @@ export function create3DPanel({ canvas, status, editor, store, lab, getMode, get
   }
 
   function draw() {
-    const gl = ensureView(), mode = getMode(), field = mode.field();
+    const gl = ensureView(), mode = getMode(), field = mode.field(lab.quality);
     const { fieldLines, gridVectors } = overlays(mode, field);
-    const sandbox = mode.kind === 'sandbox', display = mode.sensor(), result = field.evaluate(display);
+    const sandbox = mode.kind === 'sandbox', display = mode.sensor(), result = mode.field('final').evaluate(display);
     const frame = {
       camera: s.camera, palette: getPalette(), plane: mode.plane(), fixed: mode.fixed(), fieldLines, gridVectors,
       point: sandbox ? pg.probe : s.point,
@@ -102,6 +107,19 @@ export function create3DPanel({ canvas, status, editor, store, lab, getMode, get
     }
     return gl.render(frame);
   }
+
+  // Every pointer on the 3D canvas (camera turn, zoom pinch or source drag) counts as an interaction.
+  canvas.addEventListener('pointerdown', event => {
+    if (!isActive()) return;
+    pointers.add(event.pointerId);
+    interaction.begin('3d');
+  }, { signal });
+  const release = event => {
+    if (!pointers.delete(event.pointerId) || pointers.size) return;
+    interaction.end('3d');
+    onChange();
+  };
+  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, release, { signal });
 
   canvas.addEventListener('keydown', event => {
     if (!isActive()) return;
@@ -126,6 +144,8 @@ export function create3DPanel({ canvas, status, editor, store, lab, getMode, get
       view?.cancelPointers();
       if (pg.drag) editor.cancelDrag();
       grab = null;
+      pointers.clear();
+      interaction.end('3d');
       lab.quality = 'final';
     },
     invalidate() { lineCache = null; },

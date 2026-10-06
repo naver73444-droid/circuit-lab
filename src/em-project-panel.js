@@ -6,18 +6,29 @@ export function createProjectPanel({ root, editor, store, calculus, onLoaded, si
   let generation = 0;
   const status = text => { $('#em-d-status').textContent = text; };
 
+  // Fields of a file that this workspace has no control for (the saved "before" comparison, the vector mode and the legend)
+  // are kept as loaded and written back unchanged, so opening a file and saving it again loses nothing.
+  let carried = { comparison: null, vectorMode: 'E', legend: { mode: 'auto' } };
+
   const snapshot = () => ({
     format: 'circuit-lab-em-playground', version: 1,
-    world: { sources: structuredClone(pg.sources), probe: [...pg.probe], plane: pg.plane, selectedId: pg.selectedId, comparison: null },
-    view: { camera: { ...store.state.camera }, vectorMode: 'E' },
+    world: {
+      sources: structuredClone(pg.sources), probe: [...pg.probe], plane: pg.plane, selectedId: pg.selectedId,
+      comparison: structuredClone(carried.comparison),
+    },
+    view: { camera: { ...store.state.camera }, vectorMode: carried.vectorMode },
     calculus: calculus.settings(),
-    legend: { mode: 'auto' },
+    legend: structuredClone(carried.legend),
   });
 
   function apply(project) {
     editor.replaceWorld(project.world);
     Object.assign(store.state.camera, project.view.camera);
     calculus.setSettings(project.calculus);
+    carried = {
+      comparison: structuredClone(project.world.comparison ?? null), vectorMode: project.view.vectorMode,
+      legend: structuredClone(project.legend),
+    };
     onLoaded();
   }
 

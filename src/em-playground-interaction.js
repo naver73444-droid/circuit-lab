@@ -55,3 +55,22 @@ export function projectedDistance(ray, point) {
   const nearest = ray.origin.map((value, index) => value + along * ray.direction[index]);
   return norm3(sub3(point, nearest));
 }
+
+const NORMAL_AXIS = { xy: 2, xz: 1, yz: 0 };
+
+/**
+ * A grab of a handle in the editing plane, fixed at pointerdown. The plane passes through the grabbed handle (its normal
+ * coordinate is `constant`), not through the source's centre, and the whole gesture keeps using it: a finite-line end point
+ * that sits off the centre's plane would otherwise jump by the difference at the first move. Null when the ray misses.
+ */
+export function beginPlaneGrab(ray, plane, handlePosition) {
+  const constant = handlePosition[NORMAL_AXIS[plane]], hit = intersectEditingPlane(ray, plane, constant);
+  if (!hit) return null;
+  return { plane, normal: NORMAL_AXIS[plane], constant, offset: handlePosition.map((value, i) => value - hit[i]) };
+}
+
+/** Where the grabbed handle goes for `ray`: the ray's hit on the grab's plane plus the pointerdown offset, or null. */
+export function grabTarget(grab, ray) {
+  const hit = grab ? intersectEditingPlane(ray, grab.plane, grab.constant) : null;
+  return hit ? hit.map((value, i) => value + grab.offset[i]) : null;
+}

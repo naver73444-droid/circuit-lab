@@ -1,6 +1,7 @@
 // Electromagnetics workspace. Primary view: a 2D top-down sandbox (drag charges and the test charge, everything
 // updates live). Secondary: the same state in 3D, and the problem-solving course (a separate lazy module).
 import { createEMState, DEFAULT_SCENES } from './em-state.js';
+import { createInteraction } from './em-interaction.js';
 import { createPointChargeEditor } from './em-playground-state.js';
 import { createSandboxMode, createSceneMode } from './em-plane-modes.js';
 import { createPlaneController } from './em-plane-controller.js';
@@ -33,7 +34,7 @@ const WAVE_CYCLES_PER_SECOND = 0.5;
 // Assigning identical text still invalidates layout; the readouts update on every drag frame.
 const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
 const HINTS = {
-  sandbox: '전하와 노란 시험전하를 끌어 보세요 · 휠로 확대',
+  sandbox: '전하와 노란 시험전하를 끌어 보세요 · 휠로 확대 · 키보드: [ ] 로 전하 선택, 화살표로 이동',
   scene: '노란 관측점을 끌어 보세요 · 휠로 확대',
   '3d': '빈 곳을 끌면 시점이 돌아갑니다 · 휠로 확대 · 전하는 선택한 평면 위에서 끌 수 있습니다',
 };
@@ -47,7 +48,10 @@ export function createEMController(root) {
     tab: 'plane', scene: 'playground', chips: { lines: true, contours: true, gauss: false },
     gauss: null, view: { span: 3, offset: [0, 0] }, quality: 'final', error: '',
   };
+  const interaction = createInteraction();
   const modes = { sandbox: createSandboxMode(editor), scene: createSceneMode(store) };
+  // Screen-reader announcements (keyboard selection of a source) go to a polite live region.
+  const announce = text => { const node = $('#em-live'); if (node) node.textContent = text; };
   const getMode = () => (lab.scene === 'playground' ? modes.sandbox : modes.scene);
   const diagnostics = { frames: 0, suspends: 0, lastDrawMs: 0, lastFrameMs: 0, chromeMs: 0, panelsMs: 0 };
   let frameId = null, destroyed = false, workspaceActive = false, courseActive = false;
@@ -60,10 +64,11 @@ export function createEMController(root) {
 
   const plane = createPlaneController({
     baseCanvas: $('#em-plane-base'), canvas: $('#em-plane'), editor, getMode, lab, getPalette, onChange: requestRender, signal: events.signal,
+    interaction, announce,
   });
   const threeD = create3DPanel({
     canvas: $('#em-canvas'), status: $('#em-renderer-status'), editor, store, lab, getMode, getPalette,
-    onChange: requestRender, isActive: () => s.active && lab.tab === '3d', signal: events.signal,
+    onChange: requestRender, isActive: () => s.active && lab.tab === '3d', signal: events.signal, interaction,
   });
   const inspector = createInspector({
     host: $('#em-inspector'), editor, request: requestRender, getPlane: () => pg.plane, signal: events.signal,
@@ -133,7 +138,7 @@ export function createEMController(root) {
       lines.replaceChildren(...info.gauss.lines.map(text => Object.assign(document.createElement('p'), { textContent: text })));
     }
     lines.dataset.agrees = String(info.gauss.agrees);
-    $('#em-gauss-state').textContent = info.gauss.agrees === null ? '' : info.gauss.agrees ? '가우스 법칙과 일치' : '근사 중';
+    $('#em-gauss-state').textContent = info.gauss.stateText ?? '';
     const slider = $('#em-gauss-radius');
     if (slider !== document.activeElement) slider.value = String(lab.gauss.radius);
     $('#em-gauss-radius-text').textContent = `${Number(lab.gauss.radius.toFixed(2))} m`;
@@ -157,7 +162,7 @@ export function createEMController(root) {
     if (info) showReadouts(info);
     if (lab.scene === 'playground') inspector.sync(); else scenesPanel.refresh();
     showTime();
-    calculus.update(plane.isDragging());
+    calculus.update(interaction.active);
     const done = performance.now();
     Object.assign(diagnostics, {
       lastDrawMs: drawDone - started, lastFrameMs: done - started, chromeMs: chromeDone - started, panelsMs: done - drawDone,
@@ -250,13 +255,21 @@ export function createEMController(root) {
     requestRender();
   }
 
+  // The radius slider is an interaction like a drag: the precise flux waits until it is released (change / focusout).
   root.addEventListener('input', event => {
     if (event.target.id === 'em-time') { stopPlayback(); store.setTime(event.target.value); requestRender(); return; }
     if (event.target.id === 'em-gauss-radius' && lab.gauss) {
+      interaction.begin('gauss-slider');
       lab.gauss = { ...lab.gauss, radius: Number(event.target.value) };
       requestRender();
     }
   }, listen);
+  const endSlider = event => {
+    if (event.target.id !== 'em-gauss-radius' || !interaction.end('gauss-slider')) return;
+    requestRender();
+  };
+  root.addEventListener('change', endSlider, listen);
+  root.addEventListener('focusout', endSlider, listen);
 
   root.addEventListener('change', event => {
     if (event.target.id !== 'em-pg-plane') return;
@@ -278,6 +291,7 @@ export function createEMController(root) {
     stopPlayback();
     plane.cancel();
     threeD.cancel();
+    interaction.endAll();
   }
   function resume() { if (!destroyed && s.active && !document.hidden) requestRender(); }
   document.addEventListener('visibilitychange', () => (document.hidden ? suspend() : resume()), listen);

@@ -139,3 +139,20 @@ export function freeSpot(sources, plane, fixed, sensor, clearance = 0.7) {
   fallback[normal] = fixed;
   return fallback;
 }
+
+/**
+ * Keyboard selection: the source that follows (step = 1) or precedes (step = -1) the selected one among the visible sources.
+ * With nothing selected, +1 picks the first and -1 the last. Past either end it wraps when `wrap`, otherwise returns null
+ * (the caller then lets the focus leave). Returns { source, index, count } or null.
+ */
+export function cycleSelectionTarget(sources, selectedId, step, wrap = true) {
+  const list = sources.filter(source => source.visible !== false);
+  if (!list.length || !step) return null;
+  const current = list.findIndex(source => source.id === selectedId);
+  let next = current < 0 ? (step > 0 ? 0 : list.length - 1) : current + step;
+  if (next < 0 || next >= list.length) {
+    if (!wrap) return null;
+    next = (next + list.length) % list.length;
+  }
+  return { source: list[next], index: next, count: list.length };
+}
