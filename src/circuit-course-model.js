@@ -109,14 +109,20 @@ export function impedanceNetwork({ frequencyHz, topology, branches, voltageRms, 
       openCircuit, poorlyConditioned, reason: openCircuit ? '이상 병렬 공진: Y≈0, 입력 전류 0. Z는 유한값이 없는 개방 등가이며 L/C 분기 전류는 존재합니다.' : poorlyConditioned ? '공진에 매우 가깝습니다. 입력 정밀도에 민감한 유한값을 그대로 계산했습니다.' : '' };
   } catch (e) { return invalid(e); }
 }
-export function balancedThreePhase({ connection, lineVoltageRms, z, phaseDeg = 0 }) {
+// Phase-angle offsets of (a, b, c) for the two phase sequences; Vab = Van − Vbn then leads Van by +30° (abc) or −30° (acb).
+export const SEQUENCE_OFFSETS = Object.freeze({ abc: [0, -120, 120], acb: [0, 120, -120] });
+export const vanAngleOf = (referenceDeg, reference = 'Van', sequence = 'abc') =>
+  (reference === 'Vab' ? referenceDeg - (sequence === 'abc' ? 30 : -30) : referenceDeg);
+export function balancedThreePhase({ connection, lineVoltageRms, z, phaseDeg = 0, sequence = 'abc', reference = 'Van' }) {
   try {
     if (!['Y', 'delta'].includes(connection)) throw new RangeError('Y 또는 Δ를 선택하세요.');
-    positive(lineVoltageRms, '선간 V RMS'); complex(z); real(phaseDeg, 'Van 위상 (°)');
+    if (!Object.hasOwn(SEQUENCE_OFFSETS, sequence)) throw new RangeError('상순서는 abc 또는 acb여야 합니다.');
+    if (!['Van', 'Vab'].includes(reference)) throw new RangeError('기준 위상은 Van 또는 Vab여야 합니다.');
+    positive(lineVoltageRms, '선간 V RMS'); complex(z); real(phaseDeg, '기준 위상 (°)');
     if (z.re < 0 || magnitude(z) === 0) throw new RangeError('수동 부하: R≥0, |Z|>0이 필요합니다.');
     // Reduce before adding offsets: huge phases otherwise absorb ±120° in floating-point arithmetic.
-    const normalizedPhaseDeg = phaseDeg % 360;
-    const phaseVoltages = [0, -120, 120].map(a => polar(lineVoltageRms / Math.sqrt(3), normalizedPhaseDeg + a));
+    const normalizedPhaseDeg = vanAngleOf(phaseDeg % 360, reference, sequence);
+    const phaseVoltages = SEQUENCE_OFFSETS[sequence].map(a => polar(lineVoltageRms / Math.sqrt(3), normalizedPhaseDeg + a));
     const lineVoltages = phaseVoltages.map((v, i) => sub(v, phaseVoltages[(i + 1) % 3]));
     const loadVoltages = connection === 'Y' ? phaseVoltages : lineVoltages;
     const loadCurrents = loadVoltages.map(v => divide(v, z));
@@ -126,7 +132,7 @@ export function balancedThreePhase({ connection, lineVoltageRms, z, phaseDeg = 0
     const p = complexPower(phaseVoltages[0], lineCurrents[0]);
     const power = { ...p, S: totalS, pWatts: totalS.re, qVars: totalS.im, apparentVA: magnitude(totalS) };
     if (!finite(power.apparentVA)) throw new RangeError('계산 결과가 수치 표현 범위를 벗어났습니다.');
-    return { status: 'valid', connection, z: { ...z }, phaseVoltages, lineVoltages, loadVoltages, loadCurrents, lineCurrents, powers, power,
+    return { status: 'valid', connection, sequence, reference, z: { ...z }, phaseVoltages, lineVoltages, loadVoltages, loadCurrents, lineCurrents, powers, power,
       lineCurrentRms: magnitude(lineCurrents[0]), loadVoltageRms: magnitude(loadVoltages[0]), loadCurrentRms: magnitude(loadCurrents[0]),
       // Deliberately use the actual matching line-neutral phasor; Vab alone has an extra +30°.
       sourceS: scale(multiply(phaseVoltages[0], conjugate(lineCurrents[0])), 3) };

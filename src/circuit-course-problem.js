@@ -97,7 +97,7 @@ export function solveCourseProblem(p) {
       const expected = p.topology === 'series' ? r.V : r.I, unit = p.topology === 'series' ? 'V' : 'A';
       r.checks = [sampledPowerCheck(r.V, r.I, frequencyHz, r.power.pWatts),
         { label: p.topology === 'series' ? 'KVL: Σ분기 V−전원 V' : 'KCL: Σ분기 I−전원 I', actual: magnitude(sub(balance, expected)), expected: 0, unit, tolerance: 1e-8 + 1e-10 * magnitude(expected), pass: magnitude(sub(balance, expected)) <= 1e-8 + 1e-10 * magnitude(expected) }];
-      r.phasors = [{ label: 'V RMS', unit: 'V', z: r.V }, { label: 'I RMS', unit: 'A', z: r.I }];
+      r.phasors = [{ label: 'V', unit: 'V', z: r.V }, { label: 'I', unit: 'A', z: r.I }];
       r.traces = [trace('v(t)', 'V', r.V), trace('i(t)', 'A', r.I), { label: 'p(t)=vi', unit: 'W', sample: t => waveSample(r.V, frequencyHz, t) * waveSample(r.I, frequencyHz, t) }];
     } else if (p.problemKind === 'three') {
       choices(p.connection, ['Y', 'delta'], '부하 연결'); choices(p.voltageKnown, ['line', 'phase'], '주어진 전압 종류');
