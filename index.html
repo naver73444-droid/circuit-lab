@@ -131,9 +131,10 @@
 <section aria-label="단일 주파수 페이저 학습" class="phasor-panel" id="phasor-panel"><div aria-label="페이저 학습 보기" class="study-tabs" role="tablist"><button aria-controls="phasor-circuit-view" aria-selected="true" id="phasor-circuit-tab" role="tab" tabindex="0" type="button">회로 페이저</button><button aria-controls="phasor-practice-view" aria-selected="false" id="phasor-practice-tab" role="tab" tabindex="-1" type="button">복소수 연습</button></div><div aria-labelledby="phasor-circuit-tab" id="phasor-circuit-view" role="tabpanel"><p class="study-notice" id="phasor-validity" role="status">AC 해석 후 표시됩니다.</p>
 <div class="phasor-header">
 <span id="phasor-summary"></span>
-<span class="reference-badge">peak · cos 기준</span>
+<div aria-label="AC 표시 기준" class="segmented ac-basis" role="group"><button aria-pressed="true" data-ac-basis="peak" type="button">V (peak)</button><button aria-pressed="false" data-ac-basis="rms" type="button">V (rms)</button></div>
+<span class="reference-badge">cos 기준</span>
 </div>
-<details class="phasor-basis"><summary>읽는 기준</summary><ul><li>x(t)=Re{Xe<sup>jωt</sup>}, 크기는 peak, 위상은 cos 기준 (sin 위상 − 90°)</li><li>peak → RMS는 √2로 나눕니다.</li><li>전압은 접지 기준, 전류는 회로의 기준 화살표 방향입니다.</li></ul></details>
+<details class="phasor-basis"><summary>읽는 기준</summary><ul><li>x(t)=Re{Xe<sup>jωt</sup>}, 위상은 cos 기준 (sin 위상 − 90°). 입력·저장·계산은 항상 peak입니다.</li><li>위의 표시 기준(peak | rms)은 이 패널의 페이저, 호버·커서 판독, CSV 내보내기에만 적용됩니다. rms = peak/√2 (시간 파형은 순간값이라 그대로)</li><li>평균전력은 기준과 관계없이 같은 값: P = ½·Re(V_pk·I_pk*) = Re(V_rms·I_rms*)</li><li>전압은 접지 기준, 전류는 회로의 기준 화살표 방향입니다.</li></ul></details>
 <div class="phasor-grid">
 <article class="phasor-card">
 <div class="card-heading"><strong>전압 복소평면</strong><span id="voltage-plane-unit">V</span></div>

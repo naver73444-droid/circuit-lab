@@ -29,6 +29,8 @@ export function createRunState() {
     phasorResult: null,
     stale: false,
     acView: "magnitude",
+    // Display basis of AC amplitudes ("peak" | "rms", see ac-basis.js). Not part of the project file: solving and stored values stay peak.
+    acBasis: "peak",
     autoTimer: null,
     lastRunMs: null,
     runState: { status: "not-run", analysis: null, generation: null, error: null },

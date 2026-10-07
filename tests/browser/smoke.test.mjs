@@ -3505,13 +3505,15 @@ describe("browser smoke", { timeout: 600000 }, () => {
     let snapshot = await state();
     assert.deepEqual(pickValues(snapshot.probes), ["I(T1.1)", "V(R2.1)"]);
     const i1 = snapshot.phasorResult.points[0].componentCurrents.T1;
-    near(Math.hypot(i1.re, i1.im), 11.09, 1e-3, "|I1|");
+    // the solver is peak: the source holds 120√2 V, so the stored phasors are the textbook rms numbers × √2 (the rms display shows the textbook numbers)
+    assert.equal(snapshot.acBasis, "rms", "the textbook example opens with the rms display");
+    near(Math.hypot(i1.re, i1.im), 11.09 * Math.SQRT2, 1e-3, "|I1| peak");
     near((Math.atan2(i1.im, i1.re) * 180) / Math.PI, 33.69, 3e-3, "∠I1");
     const vo = nodeValue(snapshot.phasorResult, 0, "R2", 0);
-    near(Math.hypot(vo.re, vo.im), 110.9, 1e-3, "|Vo|");
+    near(Math.hypot(vo.re, vo.im), 110.9 * Math.SQRT2, 1e-3, "|Vo| peak");
     // the secondary current (winding 2) is its own result series: I2 = −I1/n
     const i2 = snapshot.phasorResult.points[0].componentCurrents["T1#2"];
-    near(Math.hypot(i2.re, i2.im), 5.545, 1e-3, "|I2|");
+    near(Math.hypot(i2.re, i2.im), 5.545 * Math.SQRT2, 1e-3, "|I2| peak");
     // I probe pressed on the right half of the part adds winding 2; pressed on the left half again it is the existing winding 1 probe
     const halfPoint = (localX) => ev(`(() => {
       const rect = (pin) => { const r = document.querySelector('.component[data-id="T1"] .pin[data-pin="' + pin + '"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
@@ -3544,9 +3546,10 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.deepEqual(pickValues(snapshot.probes), ["I(K1.1)", "I(K1.2)", "I(R1, pin 1→2)"]);
     const currents = snapshot.phasorResult.points[0].componentCurrents;
     const polar = (z) => [Math.hypot(z.re, z.im), (Math.atan2(z.im, z.re) * 180) / Math.PI];
-    near(polar(currents.K1)[0], 13.01, 1e-3, "|I1|");
+    assert.equal(snapshot.acBasis, "rms", "the textbook example opens with the rms display");
+    near(polar(currents.K1)[0], 13.01 * Math.SQRT2, 1e-3, "|I1| peak");
     near(polar(currents.K1)[1], -49.39, 2e-3, "∠I1");
-    near(polar(currents.R1)[0], 2.91, 1e-3, "|I2|");
+    near(polar(currents.R1)[0], 2.91 * Math.SQRT2, 1e-3, "|I2| peak");
     near(polar(currents.R1)[1], 14.04, 5e-3, "∠I2");
     await runAnalysis("dc");
     snapshot = await state();
@@ -4449,6 +4452,32 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.ok(Math.abs(after.left + after.right - after.flux) <= 1e-12 * after.flux, "Φ_L + Φ_R = Φ");
     assert.ok(after.checks.every((row) => row.status === "pass" || row.status === "skipped") && after.checks.some((row) => row.status === "skipped"), "the asymmetric core skips only the symmetry row");
     assert.ok(await ev(`document.getElementById("em-course-canvas").clientWidth > 100`), "the curve canvas is on screen");
+  });
+
+  test("circuit editor: example 13.8 opens with the rms display (I1 = 11.09 A), switching to peak shows 15.69 A and back; the source hint follows", async () => {
+    await navigate("/?example=ideal-transformer");
+    await autoUpdateOff();
+    assert.equal((await state()).acBasis, "rms", "a textbook (rms) example opens in the rms display");
+    await runAnalysis("ac");
+    await click("#results-tab");
+    await until(`document.getElementById("phasor-validity").dataset.status === "ready"`, "phasor validity ready");
+    const pressed = () => ev(`document.querySelector('[data-ac-basis][aria-pressed="true"]').dataset.acBasis`);
+    const currents = () => ev(`document.getElementById("current-phasor-values").innerText`);
+    const unit = () => ev(`document.getElementById("current-plane-unit").textContent`);
+    assert.equal(await pressed(), "rms");
+    assert.match(await currents(), /11\.09\d*\s*A \(rms\)/, "I1 = 11.09 A (rms), the textbook number");
+    assert.match(await unit(), /\(rms\)/);
+    await click('[data-ac-basis="peak"]');
+    assert.equal((await state()).acBasis, "peak"); assert.equal(await pressed(), "peak");
+    assert.match(await currents(), /15\.6[89]\d*\s*A \(peak\)/, "I1 = 15.69 A (peak)");
+    assert.match(await unit(), /\(peak\)/);
+    await click('[data-ac-basis="rms"]');
+    assert.match(await currents(), /11\.09\d*\s*A \(rms\)/);
+    // the inspector line under the source amplitude converts the stored peak value (169.7 V) to the shown basis (120 V rms) and says the input is peak
+    await selectPart("V1");
+    await click("#inspector-tab");
+    assert.match(await ev(`document.getElementById("inspector-content").innerText`), /V \(rms\) = 120[\s\S]*입력 칸은 항상 peak/);
+    assert.match(await ev(`document.querySelector('#inspector-content [data-prop="acMagnitude"]').value`), /^169\.70562/, "the stored amplitude is the peak value");
   });
 
   // ---- 전기회로2: Y–Δ with complex impedances (9.7) and the autotransformer power split (13.6) -------------------------------------------

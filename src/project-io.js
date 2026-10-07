@@ -1,5 +1,6 @@
 import { cloneExample } from "./examples.js";
 import { buildResultsCSV } from "./csv-format.js";
+import { normalizeAcBasis } from "./ac-basis.js";
 import { deserializeProject, serializeProject } from "./project-format.js";
 import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geometry.js";
 import { currentProbeLabel } from "./current-direction.js";
@@ -101,6 +102,8 @@ export function createProjectIO(deps) {
       state.settings = { ...defaultSettings(), ...example.settings };
       state.title = example.name;
       state.subtitle = example.description;
+      // A textbook example written in rms (Ch.11–13) opens with the rms display so the numbers match the book; the others keep the current choice.
+      if (example.acBasis) state.acBasis = normalizeAcBasis(example.acBasis);
       state.probes = (defaults[id] ?? []).map((probe, index) => {
         const component = state.circuit.components.find((item) => item.id === probe.componentId);
         if (probe.kind === "voltage") return { ...probe, key: `V:${probe.componentId}:${probe.pin}`, label: `V(${component.props.ref}.${probe.pin + 1})`, color: PROBE_COLORS[index] };
@@ -277,7 +280,7 @@ export function createProjectIO(deps) {
   function exportCSV() {
     if (!state.result || state.stale || state.runState.status !== "success") return;
     const series = seriesForProbes();
-    const blob = new Blob([buildResultsCSV(state.result, series)], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([buildResultsCSV(state.result, series, state.acBasis)], { type: "text/csv;charset=utf-8" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = `circuit-${state.result.analysis}-results.csv`;

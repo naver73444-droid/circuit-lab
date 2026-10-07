@@ -15,6 +15,7 @@ import { createInspector } from "./inspector.js";
 import { createEditorInput, createInputState } from "./editor-input.js";
 import { createProjectIO } from "./project-io.js";
 import { createHoverReadout } from "./hover-readout.js";
+import { normalizeAcBasis } from "./ac-basis.js";
 import { hasShareHash } from "./share-url.js";
 import { createFlowLayer } from "./flow-layer.js";
 import { createMeasureView } from "./measure-view.js";
@@ -240,6 +241,15 @@ function setupEvents() {
   const help = document.getElementById("interaction-help");
   document.addEventListener("click", (event) => { if (help.open && !help.contains(event.target)) help.open = false; });
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && help.open) { help.open = false; help.querySelector("summary").focus(); } });
+  // AC display basis (peak | rms): one switch in the phasor panel header; read-outs, the phasor panel, the CSV and the source hint follow state.acBasis.
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-ac-basis]");
+    if (!button) return;
+    const next = normalizeAcBasis(button.dataset.acBasis);
+    if (next === state.acBasis) return;
+    state.acBasis = next;
+    renderAll();
+  });
   inspector.attach();
   input.attach();
   hover.attach();
@@ -304,7 +314,7 @@ function initialize() {
   renderAll();
   setStatus("해석 준비", "ready");
   window.__CIRCUIT_LAB__ = {
-    getState: () => structuredClone({ projectId: state.projectId, selected: state.selected, selection: [...selectedKeys(state)], tool: state.tool, pendingPin: state.pendingPin, historyDepth: state.history.length, circuit: state.circuit, settings: state.settings, probes: state.probes, stale: state.stale, result: state.result, phasorResult: state.phasorResult, port: state.port, learningId: state.learningId, generation: state.generation, lastRunMs: state.lastRunMs, runState: state.runState, pointerOwnerId: state.pointerOwnerId, drag: state.drag, canvasView: state.canvasView, intent: state.intent, autoUpdate: state.autoUpdate, scope: scopeView.inspect(), drafts: inputDrafts.entries() }),
+    getState: () => structuredClone({ projectId: state.projectId, selected: state.selected, selection: [...selectedKeys(state)], tool: state.tool, pendingPin: state.pendingPin, historyDepth: state.history.length, circuit: state.circuit, settings: state.settings, acBasis: state.acBasis, probes: state.probes, stale: state.stale, result: state.result, phasorResult: state.phasorResult, port: state.port, learningId: state.learningId, generation: state.generation, lastRunMs: state.lastRunMs, runState: state.runState, pointerOwnerId: state.pointerOwnerId, drag: state.drag, canvasView: state.canvasView, intent: state.intent, autoUpdate: state.autoUpdate, scope: scopeView.inspect(), drafts: inputDrafts.entries() }),
     loadExample: projectIO.loadExample,
     runAnalysis: analysis.runAnalysis,
     runPortAnalysis: analysis.runPortAnalysis,

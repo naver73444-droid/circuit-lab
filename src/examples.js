@@ -218,11 +218,12 @@ export const examples = [
   {
     id: "coupled-coils",
     name: "결합 코일 (예제 13.1)",
-    description: "교재 예제 13.1: 12∠0° 소스, C=−j4 Ω, 결합 코일 L1=j5 Ω·L2=j6 Ω·M=j3 Ω(점 같은 쪽), 부하 12 Ω. ω=1 rad/s에 해당하는 f=1/2π Hz로 AC 해석하면 I(K1.1)=13.01∠−49.39° A, 부하 R1 전류(교재 I2)=2.91∠14.04° A입니다. I(K1.2)는 점 핀으로 들어가는 방향이라 교재 I2와 부호가 반대입니다. 편집기 페이저는 peak/cos 기준인데 교재의 rms 값 12를 크기로 그대로 넣었으므로, 전압·전류 결과의 크기를 실효값(rms)으로 읽으면 교재와 같습니다. 평균전력은 ½·Re(V·I*)로 계산되어 교재(rms) 값의 절반으로 표시됩니다.",
+    description: "교재 예제 13.1: 12∠0° 소스, C=−j4 Ω, 결합 코일 L1=j5 Ω·L2=j6 Ω·M=j3 Ω(점 같은 쪽), 부하 12 Ω. ω=1 rad/s에 해당하는 f=1/2π Hz로 AC 해석하면 I(K1.1)=13.01∠−49.39° A, 부하 R1 전류(교재 I2)=2.91∠14.04° A입니다. I(K1.2)는 점 핀으로 들어가는 방향이라 교재 I2와 부호가 반대입니다. 편집기의 AC 값은 peak/cos 기준이라 교재의 rms 12 V를 peak 12√2 V(16.97 V)로 넣었고, 이 예제는 표시 기준을 RMS로 켜서 열립니다: 결과 크기가 교재의 rms 값과 같습니다. 표시 기준을 peak로 바꾸면 모든 크기가 √2배입니다(평균전력은 기준과 무관한 같은 값).",
+    acBasis: "rms",
     settings: { analysis: "ac", startFrequency: "0.01", endFrequency: "10", pointsPerDecade: "20", phasorFrequency: "0.1591549431" },
     circuit: circuit(
       [
-        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", acMagnitude: "12", acPhase: "0", ref: "V1" }, 90),
+        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", acMagnitude: "16.970562748477143", acPhase: "0", ref: "V1" }, 90),
         component("C1", "C", 240, 200, { value: "250m", ic: "0", ref: "C1" }),
         component("K1", "COUPLED_L", 400, 240, { L1: "5", L2: "6", coupling: "M", M: "3", dots: "same", ref: "K1" }),
         component("R1", "R", 540, 240, { value: "12", ref: "R1" }, 90),
@@ -242,11 +243,12 @@ export const examples = [
   {
     id: "ideal-transformer",
     name: "이상 변압기 (예제 13.8)",
-    description: "교재 예제 13.8: 120∠0° V 소스, 4 Ω과 −j6 Ω 직렬, 이상 변압기 1:2, 부하 20 Ω. ω=1 rad/s에 해당하는 f=1/2π Hz로 AC 해석하면 I(T1.1)=11.09∠33.69° A, Vo=V(R2.1)=110.9∠213.69° V입니다. 교재의 점 배치를 따라 2차의 점 핀(2a)을 접지하고 부하를 2b에 걸었습니다. 120 V는 교재에서 rms인데 편집기 페이저는 peak/cos 기준이라 120을 크기로 그대로 넣었습니다. 선형 회로라 전압·전류 결과의 크기를 실효값(rms)으로 읽으면 교재와 같습니다. 평균전력은 ½·Re(V·I*)로 계산되어 교재(rms) 값의 절반으로 표시됩니다(예: 부하 20 Ω는 교재 615.4 W, 편집기 표시 307.7 W).",
+    description: "교재 예제 13.8: 120∠0° V 소스, 4 Ω과 −j6 Ω 직렬, 이상 변압기 1:2, 부하 20 Ω. ω=1 rad/s에 해당하는 f=1/2π Hz로 AC 해석하면 I(T1.1)=11.09∠33.69° A, Vo=V(R2.1)=110.9∠−146.31° V(= 교재의 110.9∠213.69° V)입니다. 교재의 점 배치를 따라 2차의 점 핀(2a)을 접지하고 부하를 2b에 걸었습니다. 120 V는 교재에서 rms인데 편집기의 AC 값은 peak/cos 기준이라 peak 120√2 V(169.7 V)로 넣었고, 이 예제는 표시 기준을 RMS로 켜서 열립니다: 크기가 교재와 같고 부하 20 Ω의 평균전력도 교재의 615.4 W입니다(P = Re(V_rms·I_rms*) = ½·Re(V_pk·I_pk*)). 표시 기준을 peak로 바꾸면 크기가 √2배(I1 15.69 A)이고 전력 숫자는 그대로입니다.",
+    acBasis: "rms",
     settings: { analysis: "ac", startFrequency: "0.01", endFrequency: "10", pointsPerDecade: "20", phasorFrequency: "0.1591549431" },
     circuit: circuit(
       [
-        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", acMagnitude: "120", acPhase: "0", ref: "V1" }, 90),
+        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", acMagnitude: "169.7056274847714", acPhase: "0", ref: "V1" }, 90),
         component("R1", "R", 240, 200, { value: "4", ref: "R1" }),
         component("C1", "C", 360, 200, { value: "0.16666666666667", ic: "0", ref: "C1" }),
         component("T1", "XFMR_IDEAL", 520, 240, { n: "2", dots: "same", ref: "T1" }),

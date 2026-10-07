@@ -62,7 +62,7 @@ export function createHoverReadout({ state, elements, workspace, scopeView }) {
     if (!result) return null;
     if (isStale()) return { title: "결과가 오래됨", lines: ["회로가 바뀌었습니다. 다시 해석하면 값이 갱신됩니다."], footer: "" };
     const choice = sampleChoice(result);
-    const readout = hoverReadout({ circuit: state.circuit, result, target, index: choice.index });
+    const readout = hoverReadout({ circuit: state.circuit, result, target, index: choice.index, acBasis: state.acBasis });
     if (!readout.ok) return null;
     const body = readout.lines.slice(0, -1);
     const suffix = choice.source === "last" ? " · 마지막 표본" : choice.source === "pinned" ? " · 커서 고정" : choice.source === "cursor" ? " · 그래프 커서" : "";

@@ -6,6 +6,7 @@ import { controlReferenceModel, controlledSourceInputModel, passiveSliderModel }
 import { bindSweep, sweepMarkup } from "./sweep-panel.js";
 import { describeSelection, selectedItems, setSingleSelection } from "./selection-model.js";
 import { yDeltaCommandState } from "./y-delta-circuit.js";
+import { amplitudeText, normalizeAcBasis } from "./ac-basis.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
 const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기" };
@@ -317,7 +318,11 @@ export function createInspector(deps) {
       }
       html += `</fieldset><fieldset class="source-group${acActive ? " active-group" : ""}"><legend>AC 해석</legend>`;
       html += `<p class="source-help">크기가 0이면 AC 자극이 없습니다. RMS = 크기/√2.</p>`;
-      html += field(`AC 크기 (${unit}pk)`, "acMagnitude", p.acMagnitude ?? "0", "", null, null, acActive) + field("AC 위상 (°)", "acPhase", p.acPhase ?? "0", "cos 기준 (sin 위상 − 90°)", null, null, acActive);
+      // The input column is always the solver's peak value; the line under it converts to the shown AC basis so it can be compared with a textbook (rms) value.
+      let peakMagnitude = NaN;
+      try { peakMagnitude = parseValue(p.acMagnitude ?? 0); } catch { /* an invalid draft has no conversion */ }
+      const basisHint = Number.isFinite(peakMagnitude) ? `표시 기준 ${unit} (${normalizeAcBasis(state.acBasis)}) = ${amplitudeText(peakMagnitude, state.acBasis)} · 입력 칸은 항상 peak` : "";
+      html += field(`AC 크기 (${unit}pk)`, "acMagnitude", p.acMagnitude ?? "0", basisHint, null, null, acActive) + field("AC 위상 (°)", "acPhase", p.acPhase ?? "0", "cos 기준 (sin 위상 − 90°)", null, null, acActive);
       html += `</fieldset>`;
     }
     if (component.type === "D") html += field("포화전류 Is", "is", p.is ?? "1e-12") + field("방출계수 n", "n", p.n ?? "1");

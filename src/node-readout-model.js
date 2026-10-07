@@ -11,6 +11,7 @@
 import { buildTopology, pinCount, secondaryCurrentKey } from "./circuit-engine.js";
 import { currentDirectionDescriptor } from "./current-direction.js";
 import { acMagnitudeLevel, acPhaseDegrees } from "./plot-format.js";
+import { averagePowerLabel, normalizeAcBasis, scaleComplex } from "./ac-basis.js";
 import { engineering, nearestSampleIndex } from "./scope-model.js";
 
 const TYPE_NAMES = {
@@ -97,20 +98,24 @@ export function resolveSample(result, selection = {}) {
   return { index, x, mode, xText };
 }
 
-function phasorInfo(value, baseUnit) {
+/** Phasor read-out in the shown basis ("peak" keeps the solver's numbers and the original text; "rms" divides the amplitude by √2 and says so). */
+function phasorInfo(peakValue, baseUnit, basis = "peak") {
+  const rms = normalizeAcBasis(basis) === "rms";
+  const value = scaleComplex(peakValue, basis);
   const magnitude = Math.hypot(value.re, value.im);
   const phaseDeg = acPhaseDegrees(value);
   const level = magnitude > 0 ? acMagnitudeLevel(value, baseUnit) : { value: Number.NEGATIVE_INFINITY, unit: baseUnit === "V" ? "dBV" : "dBA" };
+  const tag = rms ? " (rms)" : "";
   const text = phaseDeg === null
     ? `0 ${baseUnit}`
-    : `${engineering(magnitude, baseUnit)} ∠ ${Number(phaseDeg.toPrecision(4))}°`;
-  return { re: value.re, im: value.im, magnitude, phaseDeg, level: level.value, levelUnit: level.unit, levelText: engineering(level.value, level.unit), text };
+    : `${engineering(magnitude, baseUnit)}${tag} ∠ ${Number(phaseDeg.toPrecision(4))}°`;
+  return { re: value.re, im: value.im, magnitude, phaseDeg, level: level.value, levelUnit: level.unit, levelText: engineering(level.value, level.unit) + tag, text, basis: normalizeAcBasis(basis) };
 }
 
-/** 실수 또는 복소 값을 {value, unit, text, phasor?} 로. AC면 value는 크기(peak). */
-function quantity(value, unit) {
+/** 실수 또는 복소 값을 {value, unit, text, phasor?} 로. AC면 value는 표시 기준(peak 또는 rms)의 크기. */
+function quantity(value, unit, basis = "peak") {
   if (isComplex(value)) {
-    const phasor = phasorInfo(value, unit);
+    const phasor = phasorInfo(value, unit, basis);
     return { value: phasor.magnitude, unit, text: phasor.text, phasor };
   }
   return { value, unit, text: engineering(value, unit) };
@@ -124,14 +129,14 @@ function nodeValue(point, nodeId) {
 }
 
 /** 핀/노드/배선/접속점 호버: 노드 전압. */
-export function nodeReadout({ circuit, result, target, index, x } = {}) {
+export function nodeReadout({ circuit, result, target, index, x, acBasis = "peak" } = {}) {
   const sample = resolveSample(result, { index, x });
   if (!sample) return fail("표시할 해석 결과가 없거나 시점이 범위를 벗어났습니다.");
   const nodeId = nodeIdForTarget(circuit, result, target);
   if (nodeId === null) return fail("이 위치는 전기적으로 연결된 노드가 아닙니다(미배선 또는 해석에 포함되지 않음).");
   const value = nodeValue(result.points[sample.index], nodeId);
   if (value === null) return fail("이 노드의 해석 값이 없습니다.");
-  const voltage = quantity(value, "V");
+  const voltage = quantity(value, "V", acBasis);
   const pins = pinsOnNode(circuit, result, nodeId);
   const title = nodeId === 0 ? "GND (기준 노드)" : `노드 N${nodeId}${pins.length ? ` · ${pins.join(", ")}` : ""}`;
   const lines = [`전압 ${voltage.text}`];
@@ -151,12 +156,12 @@ export function nodeReadout({ circuit, result, target, index, x } = {}) {
   };
 }
 
-function powerEntry(component, voltage, current, mode) {
+function powerEntry(component, voltage, current, mode, basis = "peak") {
   if (mode === "ac") {
     if (component.type !== "R" || !isComplex(voltage) || !isComplex(current)) return null;
-    // 평균 전력 = ½·Re(V·I*) (V, I 가 peak 페이저일 때)
+    // 평균 전력 = ½·Re(V_pk·I_pk*) = Re(V_rms·I_rms*): 숫자는 기준과 무관하고 식 라벨만 표시 기준을 따른다. (voltage, current는 solver의 peak 페이저)
     const value = 0.5 * (voltage.re * current.re + voltage.im * current.im);
-    return { value, unit: "W", text: engineering(value, "W"), label: "평균 소비 전력(peak 페이저 기준 ½·Re(V·I*))", kind: "dissipated" };
+    return { value, unit: "W", text: engineering(value, "W"), label: averagePowerLabel(basis), kind: "dissipated" };
   }
   if (!["R", "V", "I", "D", "C", "L"].includes(component.type)) return null;
   if (!Number.isFinite(voltage) || !Number.isFinite(current)) return null;
@@ -171,7 +176,7 @@ function powerEntry(component, voltage, current, mode) {
  * 결합 인덕터·이상 변압기 호버: 권선 1(핀 1·2)과 권선 2(핀 3·4)의 전류(점 핀으로 들어가는 방향이 양수)와 전압.
  * `current`/`voltage`는 1차, `current2`/`voltage2`는 2차. DC·시간응답에서는 두 권선의 순 전력 v1·i1 + v2·i2도 준다.
  */
-function magneticReadout({ base, component, point, pins, ref, title, sample }) {
+function magneticReadout({ base, component, point, pins, ref, title, sample, acBasis = "peak" }) {
   const raw1 = own(point?.componentCurrents, component.id);
   const raw2 = own(point?.componentCurrents, secondaryCurrentKey(component.id));
   const across = (first) => {
@@ -181,11 +186,11 @@ function magneticReadout({ base, component, point, pins, ref, title, sample }) {
   };
   const v1 = across(0);
   const v2 = across(2);
-  const winding = (raw, direction) => (raw === undefined ? null : { ...quantity(raw, "A"), direction });
+  const winding = (raw, direction) => (raw === undefined ? null : { ...quantity(raw, "A", acBasis), direction });
   const current = winding(raw1, "1a→1b");
   const current2 = winding(raw2, "2a→2b");
-  const voltage = v1 === null ? null : { ...quantity(v1, "V"), label: `V(${ref}.1) − V(${ref}.2)` };
-  const voltage2 = v2 === null ? null : { ...quantity(v2, "V"), label: `V(${ref}.3) − V(${ref}.4)` };
+  const voltage = v1 === null ? null : { ...quantity(v1, "V", acBasis), label: `V(${ref}.1) − V(${ref}.2)` };
+  const voltage2 = v2 === null ? null : { ...quantity(v2, "V", acBasis), label: `V(${ref}.3) − V(${ref}.4)` };
   let power = null;
   if (sample.mode !== "ac" && [v1, v2, raw1, raw2].every(Number.isFinite)) {
     const value = v1 * raw1 + v2 * raw2;
@@ -202,7 +207,7 @@ function magneticReadout({ base, component, point, pins, ref, title, sample }) {
 }
 
 /** 부품 호버: 전류, 양단 전압, (저항·2단자 소자) 전력, 핀별 전압. */
-export function componentReadout({ circuit, result, componentId, index, x } = {}) {
+export function componentReadout({ circuit, result, componentId, index, x, acBasis = "peak" } = {}) {
   const sample = resolveSample(result, { index, x });
   if (!sample) return fail("표시할 해석 결과가 없거나 시점이 범위를 벗어났습니다.");
   const component = circuit?.components?.find((item) => item.id === componentId);
@@ -215,18 +220,18 @@ export function componentReadout({ circuit, result, componentId, index, x } = {}
   for (let pin = 0; pin < pinCount(component.type); pin += 1) {
     const nodeId = nodeIdOf(own(topology?.nodeIdByPin, `${component.id}:${pin}`)) ?? undefined;
     const raw = nodeId === undefined ? null : nodeValue(point, nodeId);
-    pins.push({ pin, label: `${ref}.${pin + 1}`, nodeId: nodeId ?? null, voltage: raw === null ? null : quantity(raw, "V") });
+    pins.push({ pin, label: `${ref}.${pin + 1}`, nodeId: nodeId ?? null, voltage: raw === null ? null : quantity(raw, "V", acBasis) });
   }
   const base = { ok: true, kind: "component", componentId, ref, type: component.type, title, mode: sample.mode, sample, pins };
   if (component.type === "GND") {
-    return { ...base, current: null, voltage: quantity(sample.mode === "ac" ? { re: 0, im: 0 } : 0, "V"), power: null, lines: ["기준 전위 0 V", sample.xText], text: `${title} — 기준 전위 0 V` };
+    return { ...base, current: null, voltage: quantity(sample.mode === "ac" ? { re: 0, im: 0 } : 0, "V", acBasis), power: null, lines: ["기준 전위 0 V", sample.xText], text: `${title} — 기준 전위 0 V` };
   }
 
-  if (component.type === "COUPLED_L" || component.type === "XFMR_IDEAL") return magneticReadout({ base, component, point, pins, ref, title, sample });
+  if (component.type === "COUPLED_L" || component.type === "XFMR_IDEAL") return magneticReadout({ base, component, point, pins, ref, title, sample, acBasis });
 
   const descriptor = currentDirectionDescriptor(component);
   const rawCurrent = own(point?.componentCurrents, component.id);
-  const current = rawCurrent === undefined ? null : { ...quantity(rawCurrent, "A"), direction: descriptor?.label ?? "" };
+  const current = rawCurrent === undefined ? null : { ...quantity(rawCurrent, "A", acBasis), direction: descriptor?.label ?? "" };
 
   let rawVoltage = null;
   let voltageLabel = "";
@@ -240,8 +245,8 @@ export function componentReadout({ circuit, result, componentId, index, x } = {}
     rawVoltage = pins[2].nodeId === null ? null : nodeValue(point, pins[2].nodeId);
     voltageLabel = `V(${ref}.3) 출력`;
   }
-  const voltage = rawVoltage === null ? null : { ...quantity(rawVoltage, "V"), label: voltageLabel };
-  const power = rawVoltage !== null && rawCurrent !== undefined && pins.length === 2 ? powerEntry(component, rawVoltage, rawCurrent, sample.mode) : null;
+  const voltage = rawVoltage === null ? null : { ...quantity(rawVoltage, "V", acBasis), label: voltageLabel };
+  const power = rawVoltage !== null && rawCurrent !== undefined && pins.length === 2 ? powerEntry(component, rawVoltage, rawCurrent, sample.mode, acBasis) : null;
 
   const lines = [];
   if (current) lines.push(`전류 ${current.text}${current.direction ? ` (${current.direction})` : ""}`);
@@ -255,7 +260,7 @@ export function componentReadout({ circuit, result, componentId, index, x } = {}
  * 한 번에: target.kind 가 "component" 면 부품 판독, 그 외(pin/junction/wire/node)는 노드 판독.
  *   target: {kind:"component", componentId} | {kind:"pin", componentId, pin} | …
  */
-export function hoverReadout({ circuit, result, target, index, x } = {}) {
-  if (target?.kind === "component") return componentReadout({ circuit, result, componentId: target.componentId, index, x });
-  return nodeReadout({ circuit, result, target, index, x });
+export function hoverReadout({ circuit, result, target, index, x, acBasis = "peak" } = {}) {
+  if (target?.kind === "component") return componentReadout({ circuit, result, componentId: target.componentId, index, x, acBasis });
+  return nodeReadout({ circuit, result, target, index, x, acBasis });
 }

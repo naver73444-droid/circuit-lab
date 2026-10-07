@@ -7,6 +7,7 @@ import { currentArrowGeometry, currentDirectionDescriptor, currentProbeLabel, ma
 import { analyzeWireNets, pinCurrentsInto, wireCurrents } from "../../src/wire-current-model.js";
 import { componentReadout } from "../../src/node-readout-model.js";
 import { buildResultsCSV } from "../../src/csv-format.js";
+import { scaleComplex } from "../../src/ac-basis.js";
 import { parseCSV } from "../helpers/csv.mjs";
 import { classifyCircuitConnections } from "../../src/circuit-status.js";
 import { cloneComponentSet, componentIdPrefix } from "../../src/circuit-edit.js";
@@ -25,23 +26,33 @@ test("두 예제가 목록에 있고 설정된 페이저 주파수로 교재 값
   assert.ok(examples.some((item) => item.id === "ideal-transformer" && item.name === "이상 변압기 (예제 13.8)"));
 
   const coils = cloneExample("coupled-coils");
+  // The sources hold the textbook rms value times √2 (the solver is peak); the examples open with the rms display, which gives the textbook numbers.
+  assert.equal(coils.acBasis, "rms");
+  near(Number(coils.circuit.components.find((item) => item.id === "V1").props.acMagnitude), 12 * Math.SQRT2, 1e-12, "12 V rms as peak");
   const a = phasorAt(coils).points[0].componentCurrents;
-  near(mag(a.K1), 13.01, 1e-3, "|I1|");
+  near(mag(scaleComplex(a.K1, "rms")), 13.01, 1e-3, "|I1| rms");
+  near(mag(a.K1), 13.01 * Math.SQRT2, 1e-3, "|I1| peak");
   assert.ok(Math.abs(deg(a.K1) - -49.39) < 0.1);
-  near(mag(a.R1), 2.91, 1e-3, "|I2|");
+  near(mag(scaleComplex(a.R1, "rms")), 2.91, 1e-3, "|I2| rms");
   assert.ok(Math.abs(deg(a.R1) - 14.04) < 0.1);
-  assert.ok(/peak\/cos/.test(coils.description) && /교재/.test(coils.description));
+  assert.ok(/peak\/cos/.test(coils.description) && /교재/.test(coils.description) && /RMS/.test(coils.description));
 
   const transformer = cloneExample("ideal-transformer");
+  assert.equal(transformer.acBasis, "rms");
+  near(Number(transformer.circuit.components.find((item) => item.id === "V1").props.acMagnitude), 120 * Math.SQRT2, 1e-12, "120 V rms as peak");
   const result = phasorAt(transformer);
   const b = result.points[0].componentCurrents;
-  near(mag(b.T1), 11.09, 1e-3, "|I1|");
+  near(mag(scaleComplex(b.T1, "rms")), 11.09, 1e-3, "|I1| rms");
+  near(mag(b.T1), 11.09 * Math.SQRT2, 1e-3, "|I1| peak = 15.69 A");
   assert.ok(Math.abs(deg(b.T1) - 33.69) < 0.1);
   const vo = result.points[0].nodeVoltages[result.topology.nodeIdByPin["R2:0"]];
-  near(mag(vo), 110.9, 1e-3, "|Vo|");
+  near(mag(scaleComplex(vo, "rms")), 110.9, 1e-3, "|Vo| rms");
   const phase = ((deg(vo) % 360) + 360) % 360;
   assert.ok(Math.abs(phase - 213.69) < 0.1, `phase ${phase}`);
-  assert.ok(/rms/.test(transformer.description) && /peak\/cos/.test(transformer.description));
+  // load power: the textbook's 615.4 W comes out of the (peak) ½·Re(V·I*) of the load resistor, with no halving left over
+  const loadCurrent = result.points[0].componentCurrents.R2, loadVoltage = result.points[0].nodeVoltages[result.topology.nodeIdByPin["R2:0"]];
+  near(0.5 * (loadVoltage.re * loadCurrent.re + loadVoltage.im * loadCurrent.im), 615.4, 1e-3, "20 Ω load power");
+  assert.ok(/rms/.test(transformer.description) && /peak\/cos/.test(transformer.description) && /615\.4/.test(transformer.description));
 });
 
 test("예제 회로의 모든 핀이 GND 기준 경로로 분류되고 DC 해석도 오류가 없다", () => {
@@ -164,7 +175,11 @@ test("호버 판독: 1차·2차 전류와 전압이 모두 나온다", () => {
   assert.equal(readout.ok, true);
   assert.ok(readout.current && readout.current2 && readout.voltage && readout.voltage2);
   assert.ok(readout.lines.some((line) => line.startsWith("1차 전류")) && readout.lines.some((line) => line.startsWith("2차 전류")));
-  near(readout.current.value, 13.01, 1e-3, "I1 readout");
+  // no basis argument = peak (the solver's numbers: the source holds 12√2 V); the example opens with the rms display, which is what the screen passes
+  near(readout.current.value, 13.01 * Math.SQRT2, 1e-3, "I1 readout (peak)");
+  const rmsReadout = componentReadout({ circuit: example.circuit, result, componentId: "K1", acBasis: example.acBasis });
+  assert.equal(example.acBasis, "rms");
+  near(rmsReadout.current.value, 13.01, 1e-3, "I1 readout (rms, the textbook number)");
   assert.equal(readout.pins.length, 4);
   const dc = simulateDC({ ...cloneExample("ideal-transformer").circuit, junctions: [] });
   const t = componentReadout({ circuit: cloneExample("ideal-transformer").circuit, result: dc, componentId: "T1" });

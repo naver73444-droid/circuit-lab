@@ -4,6 +4,7 @@ import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { relativePhase } from "./phasor-practice.js";
 import { probeCurrentKey } from "./current-direction.js";
+import { acScale, normalizeAcBasis, scaleComplex, unitWithBasis } from "./ac-basis.js";
 
 /** Reads solved phasors. Does not run a solver, change probes, or write to state. */
 export function createPhasorView(elements, state, parseNumeric, hasPendingInputs = () => false) {
@@ -33,9 +34,11 @@ export function createPhasorView(elements, state, parseNumeric, hasPendingInputs
     return `<rect width="300" height="220" class="phasor-surface"/><circle class="phasor-grid-line" cx="150" cy="105" r="70" fill="none"/><line class="phasor-axis-line" x1="45" y1="105" x2="255" y2="105"/><line class="phasor-axis-line" x1="150" y1="15" x2="150" y2="195"/><text class="phasor-axis-label" x="258" y="101">Re</text><text class="phasor-axis-label" x="155" y="15">Im</text><text class="phasor-scale-label" x="246" y="118" text-anchor="end">+${compactNumber(axis.maximum)} ${axis.unit}</text><text class="phasor-scale-label" x="54" y="118">−${compactNumber(axis.maximum)} ${axis.unit}</text><text class="phasor-scale-label" x="155" y="28">+j${compactNumber(axis.maximum)} ${axis.unit}</text><text class="phasor-scale-label" x="155" y="190">−j${compactNumber(axis.maximum)} ${axis.unit}</text><text class="phasor-scale-label" x="150" y="214" text-anchor="middle">공통 원 반경 = ${compactNumber(axis.maximum)} ${axis.unit} peak</text>`;
   }
 
-  function renderComplexPlane(items, baseUnit, svgElement, valuesElement, unitElement) {
+  /** items hold the solver's peak phasors; the plane and the numbers show them in the chosen basis (the time plot below stays physical: instantaneous values). */
+  function renderComplexPlane(peakItems, baseUnit, svgElement, valuesElement, unitElement) {
+    const basis = normalizeAcBasis(state.acBasis), items = peakItems.map((item) => ({ ...item, value: scaleComplex(item.value, basis) }));
     const axis = phasorAxis(items.map((item) => item.value), baseUnit);
-    unitElement.textContent = axis.unit;
+    unitElement.textContent = unitWithBasis(axis.unit, basis);
     let markup = planeBaseMarkup(axis);
     if (!items.length) {
       svgElement.innerHTML = `${markup}<text class="phasor-axis-label" x="150" y="202" text-anchor="middle">선택된 ${baseUnit === "V" ? "전압" : "전류"} 프로브 없음</text>`;
@@ -60,7 +63,7 @@ export function createPhasorView(elements, state, parseNumeric, hasPendingInputs
       const polar = phasorPolar(item.value);
       const phase = polar.angleDegrees === null ? "미정 (크기 0)" : `${compactNumber(polar.angleDegrees)}°`;
       const sign = rectangular.im < 0 ? "−" : "+";
-      return `<div class="phasor-value" style="--trace-color:${traceColor(item.probe.color)}"><b>${escapeHtml(item.probe.label)}</b><span>${compactNumber(rectangular.re)} ${sign} j${compactNumber(Math.abs(rectangular.im))} ${axis.unit}</span><span>${compactNumber(polar.magnitude * axis.scale)} ${axis.unit} ∠ ${phase} · RMS ${compactNumber(peakToRms(polar.magnitude) * axis.scale)} ${axis.unit}</span></div>`;
+      return `<div class="phasor-value" style="--trace-color:${traceColor(item.probe.color)}"><b>${escapeHtml(item.probe.label)}</b><span>${compactNumber(rectangular.re)} ${sign} j${compactNumber(Math.abs(rectangular.im))} ${axis.unit}</span><span>${compactNumber(polar.magnitude * axis.scale)} ${axis.unit} (${basis}) ∠ ${phase} · ${basis === "rms" ? "peak" : "rms"} ${compactNumber((basis === "rms" ? polar.magnitude / acScale("rms") : peakToRms(polar.magnitude)) * axis.scale)} ${axis.unit}</span></div>`;
     }).join("");
   }
 
@@ -182,6 +185,7 @@ export function createPhasorView(elements, state, parseNumeric, hasPendingInputs
     const ac = state.settings.analysis === "ac", usable = ac && Boolean(state.phasorResult);
     const items = phasorItems();
     renderNotice();
+    for (const button of document.querySelectorAll("[data-ac-basis]")) button.setAttribute("aria-pressed", String(button.dataset.acBasis === normalizeAcBasis(state.acBasis)));
     // Small-signal caveat only matters for nonlinear / op-amp circuits.
     const note = elements["small-signal-note"];
     if (note) note.hidden = !state.circuit.components.some((component) => ["D", "OPAMP", "OPAMP_IDEAL"].includes(component.type));
