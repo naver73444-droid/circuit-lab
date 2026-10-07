@@ -4454,6 +4454,32 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.ok(await ev(`document.getElementById("em-course-canvas").clientWidth > 100`), "the curve canvas is on screen");
   });
 
+  test("signals on a phone (390x844): the series, ROC and sampling plots stay within the 55 % height budget like the other lessons", async () => {
+    for (const lesson of ["series", "roc", "sampling"]) {
+      await openSignals(lesson, { width: 390, height: 844, mobile: true });
+      const height = await ev(`${sgSvgExpr}.getBoundingClientRect().height`);
+      assert.ok(height > 150 && height <= 844 * 0.55 + 50, `${lesson}: the plot is ${height} px tall (budget ${Math.round(844 * 0.55)} px + the phase pane of the series)`);
+      assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true, `${lesson}: no horizontal scrolling`);
+    }
+  });
+
+  test("phone touch targets (390x844): circuit-course chapter/tab rows, Y–Δ mode and direction buttons, and the editor's peak/rms switch are at least 40 px tall", async () => {
+    await openCircuitCourse({ width: 390, height: 844, mobile: true });
+    const heights = (selector) => ev(`[...document.querySelectorAll(${JSON.stringify(selector)})].filter((e) => e.offsetParent !== null).map((e) => Math.round(e.getBoundingClientRect().height))`);
+    const small = (list) => list.filter((h) => h < 40);
+    let list = await heights(`${CC_HOST} .circuit-course-chapters button, ${CC_HOST} .circuit-course-tabs button`);
+    assert.ok(list.length >= 9 && small(list).length === 0, `chapter row + the open tab row (${list})`);
+    await ccGo("tool", "y-delta");
+    list = await heights(`${CC_HOST} [data-ydelta-mode], ${CC_HOST} [data-ydelta-direction]`);
+    assert.ok(list.length === 4 && small(list).length === 0, `Y–Δ mode and direction buttons (${list})`);
+    await navigate("/?example=ideal-transformer", { width: 390, height: 844, mobile: true });
+    await autoUpdateOff();
+    await runAnalysis("ac");
+    await click('.view-tabs [data-view="results"]'); // on a phone the panels are chosen with the bottom tab bar
+    list = await heights("[data-ac-basis]");
+    assert.ok(list.length === 2 && small(list).length === 0, `peak / rms switch (${list})`);
+  });
+
   test("circuit editor: example 13.8 opens with the rms display (I1 = 11.09 A), switching to peak shows 15.69 A and back; the source hint follows", async () => {
     await navigate("/?example=ideal-transformer");
     await autoUpdateOff();

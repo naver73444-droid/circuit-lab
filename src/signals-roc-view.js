@@ -1,5 +1,5 @@
 // Lesson 5 view: s-plane / z-plane with draggable poles and the shaded ROC, plus the matching time signal.
-import { createLegend, createPane, createSurface, svgEl } from './signals-plot.js';
+import { createLegend, createPane, createSurface, phoneBudget, svgEl } from './signals-plot.js';
 import { clamp, formatNumber, niceTicks, r1 } from './signals-util.js';
 import {
   PLANE_RANGE, PREVIEW, dragPole, isTwoSided, isZ, previewCurve, rocControls, rocModel,
@@ -41,10 +41,13 @@ export function createRocView({ doc, parent, emit }) {
 
   function layout(width) {
     if (width < 700) {
-      const size = Math.min(width - 56, 320);
-      surface.resize(width, 22 + size + 40 + 170 + 28);
+      // Phone: plane + preview stay within the height budget (55 % of the screen).
+      const room = Math.max(0, phoneBudget(doc) - (22 + 40 + 28));
+      const size = clamp(Math.round(room * 0.6), 130, Math.min(width - 56, 320));
+      const previewH = clamp(room - size, 90, 170);
+      surface.resize(width, 22 + size + 40 + previewH + 28);
       plane.setBox((width - size) / 2, 22, size, size);
-      preview.setBox(46, 22 + size + 40, width - 60, 170);
+      preview.setBox(46, 22 + size + 40, width - 60, previewH);
     } else {
       const size = clamp(width * 0.36, 260, 340);
       surface.resize(width, 22 + size + 28);

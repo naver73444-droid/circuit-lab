@@ -4,7 +4,8 @@ import { axisDisplayUnit, engineering, extremaIndices, fittedAxis, fittedXAxis, 
 import { axisSide, cursorIndexAfterKey, layoutCursorLabels } from "./cursor-label-model.js";
 import { describeCursorDelta, nextCursorB } from "./cursor-delta-model.js";
 
-const LABELS = { V: "전압", A: "전류", dBV: "전압 레벨", dBA: "전류 레벨", "°": "위상" };
+// AC levels are always dB of the PEAK amplitude, whatever the phasor panel's display basis (peak | rms) is: the axis title says so.
+export const LABELS = { V: "전압", A: "전류", dBV: "전압 레벨 (peak)", dBA: "전류 레벨 (peak)", "°": "위상" };
 
 /** SVG instrument view. Owns display state only; solver samples remain untouched. */
 export class ScopeView {

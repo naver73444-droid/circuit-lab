@@ -93,6 +93,12 @@ test("average power in the hover read-out: 615.4 W in both bases, the label name
   near(rms.power.value, rms.voltage.value * rms.current.value, 1e-3, "P = V_rms I_rms for a resistor");
 });
 
+test("scope axis titles: AC levels are dB of the peak amplitude and the title says so, whatever the phasor panel shows", async () => {
+  const { LABELS } = await import("../../src/scope-view.js");
+  assert.match(LABELS.dBV, /\(peak\)/); assert.match(LABELS.dBA, /\(peak\)/);
+  assert.doesNotMatch(LABELS.V + LABELS.A + LABELS["°"], /peak|rms/, "time-domain and phase titles carry no basis");
+});
+
 test("CSV: no basis argument keeps the old file; peak / rms mark the headers (_pk / _rms), write the magnitude level in that basis, and leave phase and frequency alone", () => {
   const result = phasorAt(coils), probes = [{ kind: "current", componentId: "K1", label: "I(K1.1)" }, { kind: "voltage", componentId: "R1", pin: 0, label: "V(R1.1)" }];
   const series = [{ probe: probes[0], raw: [result.points[0].componentCurrents.K1, { re: 0.5, im: -0.25 }] }, { probe: probes[1], raw: [{ re: 10, im: 5 }, { re: 0, im: 0 }] }];

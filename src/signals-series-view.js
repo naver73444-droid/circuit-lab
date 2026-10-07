@@ -1,7 +1,7 @@
 // Lesson 3 view: rotating phasor chain (left) whose tip height is the partial-sum waveform scrolling right,
 // and the line spectrum below (two-sided |c_k| with its phase, one-sided 2|c_k|, or the power |c_k|^2).
 // Time is shared: the cursor is t in seconds, with a general period T0.
-import { createLegend, createPane, createSurface, svgEl } from './signals-plot.js';
+import { createLegend, createPane, createSurface, phoneBudget, svgEl } from './signals-plot.js';
 import { clamp, formatNumber, jumpList, niceTicks, sampleCurve } from './signals-util.js';
 import { toAxis, isOmega } from './signals-axis.js';
 import {
@@ -59,16 +59,19 @@ export function createSeriesView({ doc, parent, emit }) {
   let lastState = null;
 
   function place() {
-    const key = `${width}|${showPhase}`;
+    const key = `${width}|${showPhase}|${phoneBudget(doc)}`;
     if (key === placedKey || !width) return;
     placedKey = key;
     stacked = width < 700;
-    const specH = 96;
+    let specH = 96;
     const phaseH = showPhase ? 70 : 0;
     const phaseGap = showPhase ? 46 : 0;
     if (stacked) {
-      const size = Math.min(width - 56, 280);
-      const waveH = 150;
+      // Phone: the whole plot stays within the height budget (55 % of the screen); the three panes share what is left after the fixed margins.
+      const room = Math.max(0, phoneBudget(doc) - (22 + 40 + 40 + phaseGap + phaseH + 28));
+      const size = clamp(Math.round(room * 0.42), 120, Math.min(width - 56, 280));
+      const waveH = clamp(Math.round(room * 0.34), 70, 150);
+      specH = clamp(Math.round(room * 0.24), 56, 96);
       const height = 22 + size + 40 + waveH + 40 + specH + phaseGap + phaseH + 28;
       surface.resize(width, height);
       phasorPane.setBox((width - size) / 2, 22, size, size);
