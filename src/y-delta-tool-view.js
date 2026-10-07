@@ -5,6 +5,12 @@
 import { appendCourseMath } from "./course-math-view.js";
 import { Y_DELTA_FORMULAS } from "./y-delta-model.js";
 import { DIRECTIONS, SLIDER_STEPS } from "./y-delta-tool-model.js";
+import { fmt, zText } from "./circuit-course-format.js";
+
+const LEAD = {
+  resistor: "세 저항을 바꾸면 반대쪽 회로가 바로 바뀝니다. Y와 Δ는 단자 A·B·C에서 보면 똑같이 동작합니다.",
+  complex: "세 임피던스를 복소수로 쓰면(예: 3+j4, 5∠53.13°, j10) 같은 식으로 Y↔Δ를 바꿉니다. 단자 쌍에서 본 임피던스가 두 형태에서 같은지 아래에서 확인합니다.",
+};
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -78,7 +84,7 @@ export function createYDeltaToolView(host) {
   const root = html("div", { class: "ydelta-tool" }, "", host);
   const head = html("div", { class: "ydelta-head" }, "", root);
   html("h3", {}, "Y–Δ 변환", head);
-  html("p", { class: "ydelta-lead" }, "세 저항을 바꾸면 반대쪽 회로가 바로 바뀝니다. Y와 Δ는 단자 A·B·C에서 보면 똑같이 동작합니다.", head);
+  const lead = html("p", { class: "ydelta-lead" }, LEAD.resistor, head);
 
   const controls = html("div", { class: "ydelta-controls" }, "", root);
   const bar = html("div", { class: "ydelta-bar" }, "", controls);
@@ -87,6 +93,12 @@ export function createYDeltaToolView(host) {
   for (const [key, info] of Object.entries(DIRECTIONS)) {
     directionButtons[key] = html("button", { type: "button", "data-ydelta-direction": key, "aria-pressed": "false" }, info.label, direction);
   }
+  // Values are resistances (log sliders, SI text) or complex impedances (text in the complex-calculator syntax, no sliders).
+  const modeBox = html("div", { class: "ydelta-direction ydelta-mode", role: "group", "aria-label": "값의 종류" }, "", bar);
+  const modeButtons = {
+    resistor: html("button", { type: "button", "data-ydelta-mode": "resistor", "aria-pressed": "true" }, "저항", modeBox),
+    complex: html("button", { type: "button", "data-ydelta-mode": "complex", "aria-pressed": "false" }, "복소 임피던스", modeBox),
+  };
 
   const fields = html("div", { class: "ydelta-inputs" }, "", controls);
   const rows = [0, 1, 2].map((index) => {
@@ -98,6 +110,7 @@ export function createYDeltaToolView(host) {
     const error = html("small", { class: "ydelta-error", role: "status", "data-ydelta-error": String(index) }, "", row);
     return { row, name, slider, text, error };
   });
+  const examples = html("div", { class: "ydelta-examples", "data-ydelta-examples": "", role: "group", "aria-label": "복소 임피던스 예제", hidden: "" }, "", controls);
 
   const figure = html("figure", { class: "ydelta-figure" }, "", root);
   const canvas = svg("svg", { viewBox: "0 0 800 380", role: "img", "aria-labelledby": "ydelta-title ydelta-desc", class: "ydelta-svg", preserveAspectRatio: "xMidYMid meet" }, figure);
@@ -118,6 +131,7 @@ export function createYDeltaToolView(host) {
   const arrowDown = svg("path", { d: "M200 290V324M188 310L200 324L212 310", hidden: "" }, arrow);
 
   const read = html("p", { class: "ydelta-read", "data-ydelta-read": "" }, "", root); // not a live region: it changes on every slider step, so a screen reader would chatter while dragging
+  const complexBox = html("div", { class: "ydelta-complex", "data-ydelta-complex": "", hidden: "" }, "", root); // result tables of the complex mode
   const math = html("div", { class: "ydelta-math", "data-ydelta-math": "" }, "", root);
 
   const details = html("details", { class: "ydelta-formulas", "data-ydelta-formulas": "" }, "", root);
@@ -128,9 +142,25 @@ export function createYDeltaToolView(host) {
   appendCourseMath(details, Y_DELTA_FORMULAS.toY.join(";"));
   html("p", { class: "ydelta-note" }, "세 저항이 같으면 R_Δ = 3R_Y 입니다. 계산은 로그 영역에서 해서 10 Ω과 10 MΩ처럼 크기가 달라도 정확합니다.", details);
 
+  const complexNote = html("p", { class: "ydelta-note", "data-ydelta-complexnote": "", hidden: "" }, "복소 임피던스에서도 식은 같습니다. 세 값이 같으면 Z_Δ = 3Z_Y 입니다. 분모(Σ 또는 S)가 0이면 등가 회로가 없어 이유를 알리고 마지막 결과를 유지합니다.", details);
+
   let mathKey = "";
   let stacked = false;
   let currentDirection = "toDelta";
+  let letter = "R";
+
+  /** Header row + body rows of text cells. */
+  function makeTable(parent, headers, bodyRows) {
+    const wrap = html("div", { class: "circuit-course-table-wrap" }, "", parent);
+    const table = html("table", {}, "", wrap);
+    const headRow = html("tr", {}, "", html("thead", {}, "", table));
+    for (const header of headers) html("th", { scope: "col" }, header, headRow);
+    const body = html("tbody", {}, "", table);
+    for (const cells of bodyRows) {
+      const tr = html("tr", {}, "", body);
+      for (const cell of cells) html("td", {}, cell, tr);
+    }
+  }
 
   /** Side by side (wide) or one above the other (phone): the figure keeps legible text at 390 px. */
   function place() {
@@ -147,7 +177,7 @@ export function createYDeltaToolView(host) {
 
   return {
     root,
-    elements: { directionButtons, rows, read, math, desc, canvas },
+    elements: { directionButtons, modeButtons, examples, complexBox, rows, read, math, desc, canvas },
     /** Direction and shape tags (input side is marked "입력", the other "결과"). */
     setDirection(key) {
       const info = DIRECTIONS[key];
@@ -161,14 +191,52 @@ export function createYDeltaToolView(host) {
       currentDirection = key;
       place();
       info.inputs.forEach((name, index) => {
-        rows[index].name.replaceChildren(doc.createTextNode("R"));
+        rows[index].name.replaceChildren(doc.createTextNode(letter));
         const sub = doc.createElement("sub");
         sub.textContent = name.slice(1);
         rows[index].name.append(sub);
         rows[index].row.dataset.ydeltaName = name;
         rows[index].slider.setAttribute("aria-label", `${name} 저항 (로그 눈금, 10 Ω에서 10 MΩ)`);
-        rows[index].text.setAttribute("aria-label", `${name} 저항 값 (예: 4.7k, 2.2meg, 330Ω)`);
+        rows[index].text.setAttribute("aria-label", letter === "Z" ? `Z${name.slice(1)} 임피던스 (예: 3+j4, 5∠53.13°, j10)` : `${name} 저항 값 (예: 4.7k, 2.2meg, 330Ω)`);
       });
+    },
+    /** "resistor" | "complex": the names (R / Z), sliders, examples and the complex result tables follow the mode. Call setDirection afterwards. */
+    setMode(next) {
+      const complex = next === "complex";
+      root.dataset.mode = next;
+      for (const [key, button] of Object.entries(modeButtons)) button.setAttribute("aria-pressed", String(key === next));
+      letter = complex ? "Z" : "R";
+      rows.forEach((item) => { item.slider.hidden = complex; if (complex) item.text.setAttribute("placeholder", "예: 3+j4, 5∠53.13°, j10"); else item.text.removeAttribute("placeholder"); });
+      canvas.querySelectorAll(".ydelta-name").forEach((element) => { element.firstChild.textContent = letter; });
+      examples.hidden = !complex; complexBox.hidden = !complex; complexNote.hidden = !complex;
+      lead.textContent = LEAD[next];
+      mathKey = "";
+    },
+    /** Example buttons of the complex mode: [{ label }]. */
+    setExamples(list) {
+      examples.replaceChildren();
+      list.forEach((item, index) => html("button", { type: "button", "data-ydelta-example": String(index) }, item.label, examples));
+    },
+    /** Complex mode: values on both diagrams, read line, formulas, the result table and the terminal-pair check (evaluateComplexTool). */
+    showComplexEvaluation(evaluation) {
+      for (const [name, text] of Object.entries(evaluation.texts)) {
+        const element = canvas.querySelector(`[data-ydelta-value="${name}"]`);
+        if (element) element.textContent = text.short;
+      }
+      read.textContent = evaluation.read;
+      delete read.dataset.state;
+      desc.textContent = evaluation.read;
+      mathKey = "";
+      math.replaceChildren();
+      appendCourseMath(math, evaluation.math.general);
+      html("p", { class: "ydelta-note", "data-ydelta-numeric": "" }, evaluation.math.numeric, math);
+      complexBox.replaceChildren();
+      html("h4", {}, "변환 결과", complexBox);
+      makeTable(complexBox, ["값", "직교형 a+jb", "극형 r∠θ"], Object.keys(evaluation.outputs).map((key) => [`Z_${key.slice(1)}`, evaluation.texts[key].rect, evaluation.texts[key].polar]));
+      html("h4", {}, "단자 쌍 등가 대조 (나머지 한 단자는 개방)", complexBox);
+      makeTable(complexBox, ["단자 쌍", "Y에서 본 Z", "Δ에서 본 Z", "차이 |ΔZ|", "결과"], evaluation.pairs.map((p) => [p.pair, zText(p.fromY) + " Ω", zText(p.fromDelta) + " Ω", fmt(p.difference), p.pass ? "PASS" : "FAIL"]));
+      const allPass = evaluation.pairs.every((p) => p.pass);
+      html("p", { class: allPass ? "ydelta-note" : "ydelta-error", "data-ydelta-pairs": allPass ? "pass" : "fail" }, allPass ? "세 단자 쌍에서 본 임피던스가 Y와 Δ에서 같습니다." : "단자 쌍 임피던스가 다릅니다. 입력을 확인하세요.", complexBox);
     },
     /** Values on both diagrams, the read line and the math lines of one evaluation. */
     showEvaluation(evaluation) {

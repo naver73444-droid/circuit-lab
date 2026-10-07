@@ -4397,4 +4397,107 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await click("#circuit-workspace-tab"); await settle();
     check("circuit (wrapped)", await phoneEnd("#workbench", { sticky: true }), { pad: false });
   });
+
+  // ---- 전기회로2: Y–Δ with complex impedances (9.7) and the autotransformer power split (13.6) -------------------------------------------
+  /** Visible form rows of a panel are one column: same left edge, strictly growing top. */
+  const oneColumn = (selector) => ev(`(() => { const rows = [...document.querySelectorAll(${JSON.stringify(selector)})].filter((e) => !e.closest("[hidden]") && e.getBoundingClientRect().height > 0).map((e) => e.getBoundingClientRect());
+    return rows.length > 1 && rows.every((r) => Math.abs(r.left - rows[0].left) < 1) && rows.every((r, i) => i === 0 || r.top > rows[i - 1].top); })()`);
+
+  test("Y–Δ tool, complex mode (phone): balanced 15+j10 Ω Δ gives Y = 5+j3.333 Ω, the terminal pairs match, a zero denominator keeps the last result with the reason, resistor mode is untouched", async () => {
+    await openCircuitCourse({ width: 390, height: 844, mobile: true });
+    await ccGo("tool", "y-delta");
+    const panel = ccPanel("y-delta"), state = async () => (await ccState()).yDelta;
+    assert.equal((await state()).mode, "resistor");
+    const resistorInputs = (await state()).inputs;
+    await click(`${panel} [data-ydelta-mode="complex"]`);
+    assert.equal((await state()).mode, "complex");
+    assert.equal(await ev(`[...document.querySelectorAll('${panel} [data-ydelta-slider]')].every((slider) => slider.offsetParent === null)`), true, "no sliders for complex values");
+    assert.equal(await oneColumn(`${panel} [data-ydelta-field]`), true, "one input column on the phone");
+    // The balanced example (Δ 15+j10 ×3 → Y).
+    await click(`${panel} [data-ydelta-example="0"]`);
+    let now = await state();
+    assert.equal(now.direction, "toY"); assert.equal(now.balanced, true);
+    for (const key of ["RA", "RB", "RC"]) { assert.ok(Math.abs(now.outputs[key].re - 5) < 1e-9 && Math.abs(now.outputs[key].im - 10 / 3) < 1e-9, key + " = 5 + j3.333"); }
+    assert.ok(now.pairs.length === 3 && now.pairs.every((p) => p.pass), "terminal pairs agree");
+    const box = await ev(`document.querySelector('${panel} [data-ydelta-complex]').textContent`);
+    assert.match(box, /PASS/); assert.match(box, /5 \+ j3\.33/); assert.match(box, /A–B/);
+    assert.match(await ev(`document.querySelector('${panel} [data-ydelta-read]').textContent`), /Z_Y = Z_Δ\/3/);
+    assert.equal(await ccOverflow(), true, "no horizontal overflow (complex mode)");
+    // Typing: an unbalanced Δ; a polar text is accepted.
+    await typeInto(`${panel} [data-ydelta-text="0"]`, "10");
+    now = await state();
+    assert.equal(now.balanced, false); assert.deepEqual(now.invalid, []);
+    await typeInto(`${panel} [data-ydelta-text="1"]`, "5∠53.13010235415598°");
+    assert.ok(Math.abs((await state()).inputs.RBC.re - 3) < 1e-6 && Math.abs((await state()).inputs.RBC.im - 4) < 1e-6, "polar input is 3 + j4");
+    // Σ = 10 + (−10) + 0 = 0: refused, the last result stays, the field says why.
+    await typeInto(`${panel} [data-ydelta-text="1"]`, "-10");
+    await typeInto(`${panel} [data-ydelta-text="2"]`, "20");
+    const before = await state();
+    await typeInto(`${panel} [data-ydelta-text="2"]`, "0");
+    now = await state();
+    assert.deepEqual(now.invalid, [2], "the zero-sum field is flagged");
+    assert.deepEqual(now.outputs, before.outputs, "the last valid result stays");
+    assert.match(await ev(`document.querySelector('${panel} [data-ydelta-error="2"]').textContent`), /Σ.*0.*마지막 유효 값/);
+    await typeInto(`${panel} [data-ydelta-text="2"]`, "20");
+    assert.deepEqual((await state()).invalid, []);
+    // Direction toggle keeps the network; a bad text is refused with a reason.
+    await click(`${panel} [data-ydelta-direction="toDelta"]`);
+    now = await state();
+    assert.equal(now.direction, "toDelta"); assert.ok(now.pairs.every((p) => p.pass));
+    await typeInto(`${panel} [data-ydelta-text="0"]`, "3+");
+    assert.deepEqual((await state()).invalid, [0]);
+    await ev(`document.querySelector('${panel} [data-ydelta-text="0"]').dispatchEvent(new Event("change", { bubbles: true }))`);
+    // Back to resistors: the sliders return and the resistor values are what they were.
+    await click(`${panel} [data-ydelta-mode="resistor"]`);
+    now = await state();
+    assert.equal(now.mode, "resistor"); assert.deepEqual(now.inputs, resistorInputs);
+    assert.equal(await ev(`[...document.querySelectorAll('${panel} [data-ydelta-slider]')].every((slider) => slider.offsetParent !== null)`), true);
+    assert.equal(await ccOverflow(), true, "no horizontal overflow (resistor mode)");
+  });
+
+  test("transformer tool, autotransformer (phone): pf input gives the conducted / coupled split (S, P, Q), the common-winding current and S_cond + S_ind = S; example 13.10 shows 48 VA, 960 VA, 0.2 A", async () => {
+    await openCircuitCourse({ width: 390, height: 844, mobile: true });
+    await ccGo("tool", "transformer");
+    const panel = ccPanel("transformer"), out = async () => (await ccState()).courseTools.transformer.outputs;
+    const keys = () => ev(`[...document.querySelectorAll('${panel} [data-cc-key]')].filter((e) => !e.closest("[hidden]")).map((e) => e.dataset.ccKey)`);
+    const text = () => ev(`document.querySelector('${panel} [data-cc-results]').textContent`);
+    assert.ok(!(await keys()).includes("autoPF"), "pf is not an input of the ideal-transformer view");
+    await select(`${panel} [data-cc-key="mode"]`, "auto");
+    const autoKeys = await keys();
+    assert.ok(autoKeys.includes("autoPF") && autoKeys.includes("autoPFKind"), "pf and its kind are inputs of the autotransformer");
+    assert.equal(await oneColumn(`${panel} .cc-tool-form [data-cc-field]`), true, "one input column on the phone");
+    // Default: step-down N1 = N2, 240 V, 10 A, pf 1: S = 1200 VA, half conducted, half coupled, 5 A in the common winding.
+    let now = await out();
+    assert.ok(Math.abs(now.Scond - 600) < 1e-9 && Math.abs(now.Sind - 600) < 1e-9 && Math.abs(now.Icommon - 5) < 1e-9);
+    assert.match(await text(), /전력 분배/); assert.match(await text(), /전도로 전달/); assert.match(await text(), /유도로 전달/);
+    await typeInto(`${panel} [data-cc-key="autoPF"]`, "0.8");
+    now = await out();
+    for (const [key, value] of [["Ptotal", 960], ["Pind", 480], ["Pcond", 480], ["Qtotal", 720], ["Qind", 360], ["Qcond", 360]]) assert.ok(Math.abs(now[key] - value) < 1e-9, `${key} = ${value} (got ${now[key]})`);
+    assert.ok(Math.abs(now.Scond + now.Sind - 1200) < 1e-9, "S_cond + S_ind = S");
+    assert.match(await text(), /pf=0\.8 지상/);
+    await select(`${panel} [data-cc-key="autoPFKind"]`, "leading");
+    now = await out();
+    assert.ok(Math.abs(now.Qtotal + 720) < 1e-9 && now.Qind < 0 && now.Qcond < 0, "a leading load has negative Q in every part");
+    assert.match(await text(), /pf=0\.8 진상/);
+    assert.match(await ev(`document.querySelector('${panel} svg').textContent`), /공통 권선 \|I1−I2\| = 5 A/, "the figure names the common-winding current");
+    // pf outside (0, 1] is refused next to the field and the last result stays.
+    // Start from a valid pf and remember the result; "7" is out of range from its first (only) character, so no intermediate text can change the result.
+    await typeInto(`${panel} [data-cc-key="autoPF"]`, "0.8");
+    const remembered = await out();
+    assert.ok(Math.abs(remembered.Pind - 480) < 1e-9, "pf 0.8 is in use before the bad value");
+    await typeInto(`${panel} [data-cc-key="autoPF"]`, "7");
+    assert.match(await ev(`document.querySelector('${panel} [data-cc-error="autoPF"]').textContent`), /마지막 유효 값/);
+    assert.deepEqual(await out(), remembered, "the last valid result stays");
+    await typeInto(`${panel} [data-cc-key="autoPF"]`, "1");
+    // Example 13.10: 48 VA coupled, 960 VA conducted, 0.2 A in the common winding, and the checks pass.
+    const index = await ev(`[...document.querySelectorAll("${panel} [data-cc-preset]")].findIndex((b) => b.textContent.includes("예제 13.10"))`);
+    assert.ok(index >= 0, "example 13.10 exists");
+    await ccUnfold(panel);
+    await click(`${panel} [data-cc-preset="${index}"]`);
+    assert.match(await ev(`document.querySelector("${panel} [data-circuit-course-verification] h3").textContent`), /모두 일치/);
+    now = await out();
+    assert.ok(Math.abs(now.Sind - 48) < 1e-9 && Math.abs(now.Scond - 960) < 1e-9 && Math.abs(now.Icommon - 0.2) < 1e-9, JSON.stringify(now));
+    assert.match(await text(), /48/); assert.match(await text(), /960/);
+    assert.equal(await ccOverflow(), true, "no horizontal overflow");
+  });
 });

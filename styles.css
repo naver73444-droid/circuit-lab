@@ -781,9 +781,15 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .circuit-course .ydelta-error { grid-area: 3 / 1 / 4 / 3; }
 .circuit-course .ydelta-controls { display: contents; }
 .circuit-course .ydelta-head { order: 0; } .circuit-course .ydelta-bar { order: 1; } .circuit-course .ydelta-figure { order: 2; } .circuit-course .ydelta-inputs { order: 3; }
-.circuit-course .ydelta-read { order: 4; } .circuit-course .ydelta-math { order: 5; } .circuit-course .ydelta-formulas { order: 6; }
+.circuit-course .ydelta-read { order: 4; } .circuit-course .ydelta-complex { order: 4; } .circuit-course .ydelta-math { order: 5; } .circuit-course .ydelta-formulas { order: 6; }
+.circuit-course .ydelta-bar { row-gap: 8px; }
+.circuit-course .ydelta-examples { display: flex; flex-wrap: wrap; gap: 8px; order: 3; }
+.circuit-course .ydelta-complex { display: grid; gap: 8px; min-width: 0; }
+.circuit-course .ydelta-complex h4 { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.circuit-course .ydelta-complex p { margin: 0; }
 @media (min-width: 1060px) {
-  .circuit-course .ydelta-tool { grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); grid-template-areas: "head head" "figure controls" "read controls" "math controls" "formulas formulas"; align-items: start; }
+  .circuit-course .ydelta-tool { grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); grid-template-areas: "head head" "figure controls" "read controls" "complex controls" "math controls" "formulas formulas"; align-items: start; }
+  .circuit-course .ydelta-complex { grid-area: complex; }
   .circuit-course .ydelta-controls { grid-area: controls; display: grid; gap: 12px; }
   .circuit-course .ydelta-head { grid-area: head; }
   .circuit-course .ydelta-figure { grid-area: figure; }
@@ -816,6 +822,7 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 @media (max-width: 760px) {
   .circuit-course .ydelta-direction { width: 100%; }
   .circuit-course .ydelta-direction button { flex: 1; min-height: 44px; }
+  .circuit-course .ydelta-examples button { flex: 1 1 100%; text-align: left; min-height: 44px; }
   .circuit-course .ydelta-svg { max-height: none; }
   .circuit-course .ydelta-field input { min-height: 44px; }
 }

@@ -173,8 +173,32 @@ export function autotransformer({ mode, turns1, turns2, v1Rms, loadCurrentRms })
     const apparentVA = v2 * i2;
     // Same copper as a two-winding transformer: only the series winding's V·I is transformed, the rest is conducted.
     const seriesVoltage = Math.abs(v1Rms - v2), twoWindingVA = mode === 'down' ? seriesVoltage * i1 : seriesVoltage * i2;
+    // Power split (ideal autotransformer, V1 I1 = V2 I2 = S): the series winding (the part that is not shared by input and output) carries the current of its own side
+    // ('down': I1 in N1, 'up': I2 in N2) under the voltage |V1 − V2|; that product is what magnetic coupling transfers (twoWindingVA = S_ind), the rest of S is conducted.
+    // Both are in phase with the load, so they share its power factor. S_ind/S = 1 − V_low/V_high (up: 1 − V1/V2, down: 1 − V2/V1).
+    const seriesCurrent = mode === 'down' ? i1 : i2, conductiveVA = apparentVA - twoWindingVA;
     return { status: 'valid', mode, v2, i1, i2, ratioV1V2: 1 / ratioV2, ratioI1I2: ratioV2, apparentVA, twoWindingVA,
-      gain: twoWindingVA === 0 ? null : apparentVA / twoWindingVA, commonWindingCurrent: Math.abs(i1 - i2), seriesVoltage };
+      gain: twoWindingVA === 0 ? null : apparentVA / twoWindingVA, commonWindingCurrent: Math.abs(i1 - i2), seriesVoltage,
+      inductiveVA: twoWindingVA, conductiveVA, inductiveFraction: apparentVA === 0 ? null : twoWindingVA / apparentVA, seriesCurrent };
+  } catch (e) { return { status: 'invalid', reason: e.message }; }
+}
+
+/**
+ * S, P, Q of the whole load and of its conducted and magnetically coupled parts. pf in (0, 1]; kind 'lagging' (Q > 0) or 'leading' (Q < 0).
+ * P = S·pf and Q = ±S·√(1−pf²) for each part (the three share the load's angle), so S_cond + S_ind = S, P and Q add the same way.
+ */
+export function autotransformerSplit(result, pf, kind = 'lagging') {
+  try {
+    if (!Number.isFinite(pf) || pf <= 0 || pf > 1) throw new RangeError('역률 pf는 0보다 크고 1 이하여야 합니다.');
+    if (kind !== 'lagging' && kind !== 'leading') throw new RangeError('역률 종류는 지상 또는 진상이어야 합니다.');
+    const sin = Math.sqrt(Math.max(0, 1 - pf * pf)) * (kind === 'leading' ? -1 : 1);
+    const part = S => ({ S, P: S * pf, Q: S * sin });
+    const total = part(result.apparentVA), ind = part(result.inductiveVA), cond = part(result.conductiveVA);
+    const gap = Math.abs(cond.S + ind.S - total.S) + Math.abs(cond.P + ind.P - total.P) + Math.abs(cond.Q + ind.Q - total.Q);
+    return { status: 'valid', total, ind, cond, pf, kind,
+      checks: [{ label: 'S_전도 + S_유도 = S, P·Q 도 각각 합과 같음', actual: gap, expected: 0, unit: 'VA', tol: 1e-9 * (total.S + 1e-9) },
+        { label: 'S_유도 = S·(1 − V작은쪽/V큰쪽) (직렬 권선 전압×전류와 같은 값)', actual: Math.abs(ind.S - result.apparentVA * (1 - Math.min(result.v2, result.v2 * result.ratioV1V2) / Math.max(result.v2, result.v2 * result.ratioV1V2))),
+          expected: 0, unit: 'VA', tol: 1e-9 * (total.S + 1e-9) }].map(c => ({ ...c, pass: c.actual <= c.tol })) };
   } catch (e) { return { status: 'invalid', reason: e.message }; }
 }
 

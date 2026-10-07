@@ -1,6 +1,6 @@
 // Live tool definitions for Ch.13: coupled coils with T/π equivalents, and the transformer tool (ideal, rating, autotransformer, 3-phase bank). Pure, no DOM.
 import { scale, magnitude } from './circuit-course-complex.js';
-import { coupledCoils, coupledEquivalents, coupledEnergy, idealTransformer, idealRating, autotransformer, threePhaseBank, BANK_CONNECTIONS } from './circuit-course-coupled.js';
+import { coupledCoils, coupledEquivalents, coupledEnergy, autotransformerSplit, idealTransformer, idealRating, autotransformer, threePhaseBank, BANK_CONNECTIONS } from './circuit-course-coupled.js';
 import { fmt, polarShort, short, zText, COUPLING_TOOL_GUIDE } from './circuit-course-format.js';
 import { num, amp, choice, angleField, putPolar, metric } from './circuit-course-tool-common.js';
 
@@ -163,6 +163,8 @@ export const TRANSFORMER_TOOL = {
     choice('autoMode', '단권변압기 결선', 'down', [['down', '강압: 전원 N1+N2, 부하 N2'], ['up', '승압: 전원 N1, 부하 N1+N2']], { showIf: mode('auto') }),
     num('autoN1', '권수 N1', '회', 100, 1e-9, 1e12, { showIf: mode('auto') }), num('autoN2', '권수 N2', '회', 100, 1e-9, 1e12, { showIf: mode('auto') }),
     amp('autoV1', '1차(전원) 전압', 'V', 240, 1e-6, 1e12, { showIf: mode('auto') }), amp('autoI2', '부하 전류 I2', 'A', 10, 0, 1e12, { showIf: mode('auto') }),
+    num('autoPF', '부하 역률 pf (0 < pf ≤ 1)', '', 1, 1e-9, 1, { showIf: mode('auto'), slider: { min: 0.05, max: 1, step: 0.01 } }),
+    choice('autoPFKind', '부하 역률 종류', 'lagging', [['lagging', '지상 (유도성 부하, Q>0)'], ['leading', '진상 (용량성 부하, Q<0)']], { showIf: mode('auto') }),
     choice('connection', '결선 (1차-2차)', 'Y-delta', BANKS, { showIf: mode('bank') }),
     num('n', '권수비 n=N2/N1 (상 기준)', '', 5, 1e-9, 1e9, { showIf: mode('bank') }),
     choice('known', '알고 있는 쪽', 'secondary', [['primary', '1차 선간전압'], ['secondary', '2차 선간전압']], { showIf: mode('bank') }),
@@ -181,9 +183,16 @@ export const TRANSFORMER_TOOL = {
       expect: [{ key: 'VoAng', label: '∠Vo (V2=+nV1)', value: 33.69, unit: '°' }, { key: 'VoMag', label: '|Vo|', value: 110.9, unit: 'V' }, { key: 'I2Ang', label: '∠I2 (+I1/n)', value: 33.69, unit: '°' }] },
     { label: '예제 13.10 단권 승압 240 V → 252 V · I2=4 A', basis: 'rms', values: { mode: 'auto', autoMode: 'up', autoN1: 100, autoN2: 5, autoV1: 240, autoI2: 4 },
       expect: [{ key: 'v2', label: 'V2', value: 252, unit: 'V' }, { key: 'i1', label: 'I1', value: 4.2, unit: 'A' }, { key: 'S', label: 'S=V2 I2', value: 1008, unit: 'VA' }, { key: 'twoWindingVA', label: '같은 권선을 2권선으로 쓸 때', value: 48,
-        unit: 'VA' }, { key: 'gain', label: '정격 배수', value: 21 }] },
+        unit: 'VA' }, { key: 'gain', label: '정격 배수', value: 21 },
+        { key: 'Sind', label: 'S_유도 (자기결합) = 12 V × 4 A', value: 48, unit: 'VA' }, { key: 'Scond', label: 'S_전도 = 1008 − 48', value: 960, unit: 'VA' }, { key: 'Icommon', label: '공통 권선 전류 |I1−I2|', value: 0.2, unit: 'A', note: '교재: 0.2 A 분기 (4.2 − 4)' },
+        { key: 'fracInd', label: 'S_유도/S = 1 − V1/V2', value: 1 - 240 / 252 }] },
     { label: '단권 강압 N1=N2 (V2=V1/2)', basis: 'rms', values: { mode: 'auto', autoMode: 'down', autoN1: 100, autoN2: 100, autoV1: 240, autoI2: 10 },
-      expect: [{ key: 'v2', label: 'V2=V1·N2/(N1+N2)', value: 120, unit: 'V' }, { key: 'i1', label: 'I1=I2·N2/(N1+N2)', value: 5, unit: 'A' }] },
+      expect: [{ key: 'v2', label: 'V2=V1·N2/(N1+N2)', value: 120, unit: 'V' }, { key: 'i1', label: 'I1=I2·N2/(N1+N2)', value: 5, unit: 'A' },
+        { key: 'Sind', label: 'S_유도 = (V1−V2)·I1', value: 600, unit: 'VA' }, { key: 'Scond', label: 'S_전도', value: 600, unit: 'VA' }, { key: 'Icommon', label: '공통 권선 전류 |I1−I2|', value: 5, unit: 'A' }, { key: 'fracInd', label: 'S_유도/S = 1 − V2/V1', value: 0.5 }] },
+    // Power split with a load power factor (not a numbered textbook example): the 13.10 step-up with a 0.8 lagging load, S = 1008 VA.
+    { label: '단권 승압 240→252 V · I2=4 A · 부하 pf 0.8 지상 (P·Q 분배)', basis: 'rms', values: { mode: 'auto', autoMode: 'up', autoN1: 100, autoN2: 5, autoV1: 240, autoI2: 4, autoPF: 0.8, autoPFKind: 'lagging' },
+      expect: [{ key: 'Ptotal', label: 'P = S·pf = 1008·0.8', value: 806.4, unit: 'W' }, { key: 'Pind', label: 'P_유도 = 48·0.8', value: 38.4, unit: 'W' }, { key: 'Pcond', label: 'P_전도 = 960·0.8', value: 768, unit: 'W' },
+        { key: 'Qtotal', label: 'Q = S·0.6 (지상, +)', value: 604.8, unit: 'var' }, { key: 'Qind', label: 'Q_유도 = 48·0.6', value: 28.8, unit: 'var' }, { key: 'Qcond', label: 'Q_전도 = 960·0.6', value: 576, unit: 'var' }] },
     { label: '예제 13.12 42 kVA · Y-Δ · 1:5 · 선간 240 V', basis: 'rms', values: { mode: 'bank', connection: 'Y-delta', n: 5, known: 'secondary', lineVoltage: 240, bankKva: 42 },
       expect: [{ key: 'is', label: 'ILs (2차 선전류)', value: 101, unit: 'A' }, { key: 'ip', label: 'ILp (1차 선전류)', value: 292, unit: 'A', rel: 2e-3, note: '교재는 (5·101)/√3 로 반올림 · 정확값 291.7' },
         { key: 'vp', label: 'VLp (1차 선간)', value: 83.14, unit: 'V' }, { key: 'perUnit', label: '변압기 1대', value: 14, unit: 'kVA' }] }
@@ -200,12 +209,24 @@ export const TRANSFORMER_TOOL = {
     if (v.mode === 'auto') {
       const r = autotransformer({ mode: v.autoMode, turns1: v.autoN1, turns2: v.autoN2, v1Rms: v.autoV1, loadCurrentRms: v.autoI2 });
       if (r.status !== 'valid') return r;
-      return { status: 'valid', values: { v2: r.v2 * k, i1: r.i1 * k, S: r.apparentVA, twoWindingVA: r.twoWindingVA, gain: r.gain ?? 0, ratio: r.ratioV1V2 },
-        read: 'V1/V2=' + short(r.ratioV1V2) + ' · V2=' + short(r.v2 * k) + ' V, I1=' + short(r.i1 * k) + ' A (' + unit(k) + ') · S=V2 I2=' + fmt(r.apparentVA) + ' VA, 변환되는 몫 ' + fmt(r.twoWindingVA) + ' VA → ' + short(r.gain ?? 0)
-          + ' 배',
+      const split = autotransformerSplit(r, v.autoPF, v.autoPFKind);
+      if (split.status !== 'valid') return split;
+      const { total, ind, cond } = split, share = part => (total.S === 0 ? '—' : fmt(100 * part.S / total.S) + ' %'), commonA = r.commonWindingCurrent * k, seriesA = r.seriesCurrent * k;
+      const values = { v2: r.v2 * k, i1: r.i1 * k, S: r.apparentVA, twoWindingVA: r.twoWindingVA, gain: r.gain ?? 0, ratio: r.ratioV1V2, Sind: ind.S, Scond: cond.S, fracInd: r.inductiveFraction ?? 0,
+        Icommon: commonA, Iseries: seriesA, Ptotal: total.P, Pind: ind.P, Pcond: cond.P, Qtotal: total.Q, Qind: ind.Q, Qcond: cond.Q };
+      const lowSide = r.mode === 'up' ? 'V1/V2' : 'V2/V1';
+      return { status: 'valid', values, checks: split.checks,
+        read: 'V1/V2=' + short(r.ratioV1V2) + ' · V2=' + short(r.v2 * k) + ' V, I1=' + short(r.i1 * k) + ' A (' + unit(k) + ') · S=V2 I2=' + fmt(r.apparentVA) + ' VA = 전도 ' + fmt(cond.S) + ' + 유도(자기결합) ' + fmt(ind.S) + ' VA (유도 몫 '
+          + (r.inductiveFraction === null ? '—' : fmt(100 * r.inductiveFraction) + ' %') + ') · 공통 권선 전류 ' + short(commonA) + ' A · 유도 몫이 곧 2권선으로 쓸 때의 용량 → 정격 ' + short(r.gain ?? 0) + ' 배',
         metrics: [metric('V1/V2', short(r.ratioV1V2)), metric('V2 (' + unit(k) + ')', short(r.v2 * k), 'V'), metric('I1 (' + unit(k) + ')', short(r.i1 * k), 'A'), metric('부하 S=V2 I2', fmt(r.apparentVA), 'VA'),
-          metric('2권선으로 쓸 때', fmt(r.twoWindingVA), 'VA'), metric('정격 배수', short(r.gain ?? 0), '배')],
-        notes: ['단권변압기는 1·2차가 전기적으로 연결되어 절연되지 않습니다.', '같은 권선을 2권선 변압기로 쓰면 직렬 권선 몫만 변환하지만, 단권은 나머지를 전도로 전달해 용량이 큽니다.'], figure: { kind: 'auto', mode: v.autoMode } };
+          metric('S_전도 (직접 연결)', fmt(cond.S), 'VA'), metric('S_유도 (자기결합, =2권선으로 쓸 때)', fmt(ind.S), 'VA'), metric('S_유도 / S', r.inductiveFraction === null ? '—' : fmt(100 * r.inductiveFraction), '%'),
+          metric('공통 권선 전류 |I1−I2| (' + unit(k) + ')', short(commonA), 'A'), metric('정격 배수 S/S_유도', short(r.gain ?? 0), '배')],
+        tables: [{ title: '전력 분배 (pf=' + short(v.autoPF) + ' ' + (v.autoPFKind === 'leading' ? '진상' : '지상') + ')', headers: ['구분', 'S (VA)', 'P (W)', 'Q (var)', 'S 비율'],
+          rows: [['전도로 전달 (직접 연결)', fmt(cond.S), fmt(cond.P), fmt(cond.Q), share(cond)], ['유도로 전달 (자기결합)', fmt(ind.S), fmt(ind.P), fmt(ind.Q), share(ind)], ['합 = 부하', fmt(total.S), fmt(total.P), fmt(total.Q), share(total)]] }],
+        notes: ['단권변압기는 1·2차가 전기적으로 연결되어 절연되지 않습니다.', '같은 권선을 2권선 변압기로 쓰면 직렬 권선 몫(|V1−V2| × 직렬 권선 전류 ' + fmt(r.seriesVoltage) + ' V × ' + short(seriesA) + ' A)만 변환하지만, 단권은 나머지를 전도로 전달해 용량이 큽니다.',
+          '이상 단권변압기(V1I1=V2I2=S)에서 유도 몫은 S_유도/S = 1 − V작은쪽/V큰쪽 입니다 (승압 1 − V1/V2, 강압 1 − V2/V1; 지금 ' + lowSide + '). S_전도, S_유도, 부하는 모두 같은 위상이라 같은 역률을 가지며 P, Q 도 같은 비율로 나뉩니다.',
+          '공통 권선(두 단자쌍이 함께 쓰는 권선)에는 I1과 I2의 차 |I1−I2| 가 흐릅니다.'],
+        figure: { kind: 'auto', mode: v.autoMode, note: '공통 권선 |I1−I2| = ' + short(commonA) + ' A · 직렬 권선 ' + short(seriesA) + ' A' } };
     }
     if (v.mode === 'bank') {
       const r = threePhaseBank({ connection: v.connection, n: v.n, known: v.known, lineVoltage: v.lineVoltage, totalVA: v.bankKva * 1000 });

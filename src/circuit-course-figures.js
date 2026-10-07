@@ -54,8 +54,10 @@ function auto(f) {
   body += down ? '<path d="M200 30H110 M200 186H110 M250 108H390 M250 186H390" ' + WIRE + '/>' + terminals(110, 30, 186) + terminals(390, 108, 186)
     : '<path d="M200 30H110 M200 108H110 M250 30H390 M250 186H390" ' + WIRE + '/>' + terminals(110, 30, 108) + terminals(390, 30, 186);
   body += down ? text(98, 112, '입력 V1 (N1+N2)', 15, 'end') + text(402, 152, '출력 V2 (N2)', 15) : text(98, 72, '입력 V1 (N1)', 15, 'end') + text(402, 112, '출력 V2 (N1+N2)', 15);
-  body += text(262, 75, 'N1', 15) + text(262, 150, 'N2', 15) + text(10, 220, '단권: 1·2차가 한 코일 · 전기적으로 연결(절연 안 됨)', 14);
-  return svg('단권변압기 ' + (down ? '강압' : '승압') + ' 결선: 입력 단자쌍과 출력 단자쌍', body);
+  // The common winding is the part both terminal pairs share (N2 for the step-down, N1 for the step-up); the other part is the series winding.
+  body += text(262, 75, down ? 'N1 (직렬 권선)' : 'N1 (공통 권선)', 15) + text(262, 150, down ? 'N2 (공통 권선)' : 'N2 (직렬 권선)', 15) + text(10, 220, '단권: 1·2차가 한 코일 · 전기적으로 연결(절연 안 됨)', 14);
+  if (f.note) body += text(10, 244, f.note, 14);
+  return svg('단권변압기 ' + (down ? '강압' : '승압') + ' 결선: 입력 단자쌍과 출력 단자쌍', body, f.note ? 254 : 230);
 }
 
 function bank(f) {
