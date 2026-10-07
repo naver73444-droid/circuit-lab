@@ -2,7 +2,7 @@
  * One live course tool: every input updates the result at once (no apply button). A value that cannot be used keeps the last valid values and
  * result on screen and says why next to the field. Pure rules: circuit-course-tool-common.js and the tool definition; DOM: circuit-course-tool-view.js.
  */
-import { FIELD_KEPT, dataFields, draftText, evaluateTool, initialValues, presetValues, reviewDrafts, toDisplay, validateField, verifyExpectations } from './circuit-course-tool-common.js';
+import { FIELD_KEPT, dataFields, draftText, evaluateTool, isShown, initialValues, presetValues, reviewDrafts, toDisplay, validateField, verifyExpectations } from './circuit-course-tool-common.js';
 import { createCourseToolView } from './circuit-course-tool-view.js';
 
 export function createCourseTool(host, def, env) {
@@ -36,6 +36,8 @@ export function createCourseTool(host, def, env) {
     delete evalErrors[key];
     if (f.kind !== 'number') candidate[key] = picked;
     if (f.kind === 'select' && def.onSelect) Object.assign(candidate, def.onSelect(candidate, key) ?? {});
+    // A select may hide fields (a view switch): a bad draft in a field that is no longer shown must not block the new screen.
+    if (f.kind !== 'number') for (const bad of Object.keys(found)) if (!isShown(fields.get(bad), candidate)) delete found[bad];
     if (Object.keys(found).length) {
       try { validateField(f, candidate[key]); if (!found[key]) values = { ...values, [key]: candidate[key] }; } catch (e) { found[key] = e.message + FIELD_KEPT; }
       errors = { ...evalErrors, ...found };
@@ -58,7 +60,16 @@ export function createCourseTool(host, def, env) {
     if (f.kind === 'select' && !Object.keys(errors).length) makeDrafts();
     render();
   }
+  /** A segment button (a select drawn as buttons): same path as picking that option in a select; the current option does nothing. */
+  function choose(key, value) {
+    if (!fields.has(key) || values[key] === value) return;
+    update(key, value);
+    if (!Object.keys(errors).length) makeDrafts();
+    render();
+  }
   function onClick(event) {
+    const segment = event.target.closest?.('[data-cc-segment]');
+    if (segment && host.contains(segment)) { choose(segment.dataset.ccSegment, segment.dataset.ccChoice); return; }
     const button = event.target.closest?.('[data-cc-preset]');
     if (!button || !host.contains(button)) return;
     applyPreset(Number(button.dataset.ccPreset));

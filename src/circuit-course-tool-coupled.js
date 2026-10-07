@@ -1,6 +1,6 @@
 // Live tool definitions for Ch.13: coupled coils with T/π equivalents, and the transformer tool (ideal, rating, autotransformer, 3-phase bank). Pure, no DOM.
 import { scale, magnitude } from './circuit-course-complex.js';
-import { coupledCoils, idealTransformer, idealRating, autotransformer, threePhaseBank, BANK_CONNECTIONS } from './circuit-course-coupled.js';
+import { coupledCoils, coupledEquivalents, coupledEnergy, idealTransformer, idealRating, autotransformer, threePhaseBank, BANK_CONNECTIONS } from './circuit-course-coupled.js';
 import { fmt, polarShort, short, zText, COUPLING_TOOL_GUIDE } from './circuit-course-format.js';
 import { num, amp, choice, angleField, putPolar, metric } from './circuit-course-tool-common.js';
 
@@ -14,37 +14,51 @@ const piHenry = L => (L === Infinity ? '개방 (∞ H, 가지 없음)' : henry(L
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 const byK = v => v.couplingMode === 'k';
+// The "보기" segment decides what shows: 회로 풀이 (source, Z1, ZL → I1, I2, ZR, Zin), T/π 등가 (coils only), 에너지 (typed i1, i2, or the solved circuit at time t).
+const inView = name => v => v.view === name;
+const solvesCircuit = v => v.view === 'circuit' || (v.view === 'energy' && v.energySource === 'circuit');
+const directEnergy = v => v.view === 'energy' && v.energySource === 'direct';
 export const COUPLED_TOOL = {
   id: 'coupled', title: '12 · 자기결합 코일 · T/π 등가', tab: 'Ch.13',
-  lead: '두 코일의 L1, L2, M(또는 k)과 점 위치를 정하면 두 전류, 반사 임피던스, 저장 에너지 w(t), T·π 등가 인덕턴스가 바로 나옵니다. 점 같은 쪽/반대쪽이 M 항의 부호를 바꿉니다. ' + COUPLING_TOOL_GUIDE,
+  lead: '보기를 고르세요. 회로 풀이: 전원·Z1·ZL 로 I1, I2, 반사 임피던스, 입력 임피던스. T/π 등가: L1, L2, M 과 점 위치만으로 T·π 인덕턴스. 에너지: w = ½L1i1² + ½L2i2² ± M i1 i2. 점 같은 쪽/반대쪽이 M 항의 부호를 바꿉니다. ' + COUPLING_TOOL_GUIDE,
   fields: [
-    num('omega', '각주파수 ω', 'rad/s', 4, 1e-6, 1e9),
+    choice('view', '보기', 'circuit', [['circuit', '회로 풀이'], ['tpi', 'T/π 등가'], ['energy', '에너지']], { segment: true }),
+    choice('energySource', '에너지에 쓸 전류', 'direct', [['direct', 'i1, i2 를 직접 입력'], ['circuit', '회로 풀이의 관측 시각 t']], { showIf: inView('energy') }),
+    num('omega', '각주파수 ω', 'rad/s', 4, 1e-6, 1e9, { showIf: solvesCircuit }),
     num('l1', '코일 1 자기 인덕턴스 L1', 'H', 5, 1e-12, 1e9), num('l2', '코일 2 자기 인덕턴스 L2', 'H', 4, 1e-12, 1e9),
     choice('couplingMode', '결합 입력', 'M', [['M', '상호 인덕턴스 M'], ['k', '결합계수 k=M/√(L1L2)']]),
     num('m', '상호 인덕턴스 M', 'H', 2.5, 0, 1e9, { showIf: v => !byK(v) }),
     num('k', '결합계수 k', '', 0.56, 0, 1, { showIf: byK, slider: { min: 0, max: 1, step: 0.01 } }),
     choice('dots', '점 위치', 'opposite', [['same', '같은 쪽 (양쪽 코일 위)'], ['opposite', '반대쪽 (위/아래)']]),
-    choice('i2Ref', 'I2 기준 방향', 'loop', [['loop', '2차 메시 시계방향 (예제 13.1, 13.3)'], ['into', '2차 코일 위 단자로 들어가는 방향 (예제 13.5, 13.6)']]),
-    amp('voltage', '전원 V', 'V', 60 / Math.SQRT2, 0, 1e9), angleField('voltageDeg', '전원 위상', 30),
-    ...zField('z1', '1차 직렬 Z1', 10, 0), ...zField('zl', '2차 부하 ZL', 0, -4),
-    num('timeSec', '관측 시각 t', 's', 1, 0, 1e6, { slider: v => ({ min: 0, max: 4 * Math.PI / v.omega, step: 4 * Math.PI / v.omega / 400 }) })
+    choice('i2Ref', 'I2 기준 방향', 'loop', [['loop', '2차 메시 시계방향 (예제 13.1, 13.3)'], ['into', '2차 코일 위 단자로 들어가는 방향 (예제 13.5, 13.6)']], { showIf: v => v.view !== 'tpi' }),
+    num('i1', '코일 1 전류 i1 (순간값, 위 단자로 들어가는 방향)', 'A', 2, -1e9, 1e9, { showIf: directEnergy }), num('i2', '코일 2 전류 i2 (순간값, 위의 I2 기준 방향)', 'A', 3, -1e9, 1e9, { showIf: directEnergy }),
+    amp('voltage', '전원 V', 'V', 60 / Math.SQRT2, 0, 1e9, { showIf: solvesCircuit }), angleField('voltageDeg', '전원 위상', 30, { showIf: solvesCircuit }),
+    ...zField('z1', '1차 직렬 Z1', 10, 0, { showIf: solvesCircuit }), ...zField('zl', '2차 부하 ZL', 0, -4, { showIf: solvesCircuit }),
+    num('timeSec', '관측 시각 t', 's', 1, 0, 1e6, { showIf: v => v.view === 'energy' && v.energySource === 'circuit', slider: v => ({ min: 0, max: 4 * Math.PI / v.omega, step: 4 * Math.PI / v.omega / 400 }) })
   ],
   presets: [
-    { label: '예제 13.1 12∠0° V · −j4 · j5 ~j3~ j6 · 12 Ω', basis: 'rms', values: { omega: 1, l1: 5, l2: 6, couplingMode: 'M', m: 3, dots: 'same', i2Ref: 'loop', voltage: 12, voltageDeg: 0, z1R: 0, z1X: -4, zlR: 12, zlX: 0, timeSec: 0 },
+    { label: '예제 13.1 12∠0° V · −j4 · j5 ~j3~ j6 · 12 Ω', basis: 'rms', values: { view: 'circuit', omega: 1, l1: 5, l2: 6, couplingMode: 'M', m: 3, dots: 'same', i2Ref: 'loop', voltage: 12, voltageDeg: 0, z1R: 0, z1X: -4, zlR: 12, zlX: 0, timeSec: 0 },
       expect: [{ key: 'I1Mag', label: '|I1|', value: 13.01, unit: 'A' }, { key: 'I1Ang', label: '∠I1', value: -49.39, unit: '°' }, { key: 'I2Mag', label: '|I2|', value: 2.91, unit: 'A' }, { key: 'I2Ang', label: '∠I2', value: 14.04,
         unit: '°' }] },
-    { label: '예제 13.3 60cos(4t+30°) · L1=5 L2=4 M=2.5 H · C=1/16 F · w(1 s)', basis: 'peak', values: { omega: 4, l1: 5, l2: 4, couplingMode: 'M', m: 2.5, dots: 'opposite', i2Ref: 'loop', voltage: 60, voltageDeg: 30, z1R: 10, z1X: 0,
+    { label: '예제 13.3 60cos(4t+30°) · L1=5 L2=4 M=2.5 H · C=1/16 F · w(1 s)', basis: 'peak', values: { view: 'circuit', omega: 4, l1: 5, l2: 4, couplingMode: 'M', m: 2.5, dots: 'opposite', i2Ref: 'loop', voltage: 60, voltageDeg: 30, z1R: 10, z1X: 0,
       zlR: 0, zlX: -4, timeSec: 1 },
       expect: [{ key: 'k', label: 'k', value: 0.56, rel: 2e-3, note: '2.5/√20=0.559 를 교재가 0.56으로 반올림' }, { key: 'I1Mag', label: '|I1| (peak)', value: 3.905, unit: 'A' }, { key: 'I1Ang', label: '∠I1', value: -19.4, unit: '°' },
         { key: 'I2Mag', label: '|I2| (peak)', value: 3.254, unit: 'A' }, { key: 'I2Ang', label: '∠I2', value: 160.6, unit: '°' }, { key: 'w', label: 'w(1 s)', value: 20.73, unit: 'J' }] },
-    { label: '예제 13.5 L1=10 L2=4 M=2 H → T 등가 8·2·2 H', basis: 'rms', values: { omega: 1, l1: 10, l2: 4, couplingMode: 'M', m: 2, dots: 'same', i2Ref: 'into', voltage: 1, voltageDeg: 0, z1R: 1, z1X: 0, zlR: 1, zlX: 0, timeSec: 0 },
+    { label: '예제 13.5 L1=10 L2=4 M=2 H → T 등가 8·2·2 H', basis: 'rms', values: { view: 'tpi', omega: 1, l1: 10, l2: 4, couplingMode: 'M', m: 2, dots: 'same', i2Ref: 'into', voltage: 1, voltageDeg: 0, z1R: 1, z1X: 0, zlR: 1, zlX: 0, timeSec: 0 },
       expect: [{ key: 'La', label: 'La=L1−M', value: 8, unit: 'H' }, { key: 'Lb', label: 'Lb=L2−M', value: 2, unit: 'H' }, { key: 'Lc', label: 'Lc=M', value: 2, unit: 'H' },
         { key: 'LA', label: 'π: LA=(L1L2−M²)/(L2−M)', value: 18, unit: 'H', note: '36/2' }, { key: 'LB', label: 'π: LB=(L1L2−M²)/(L1−M)', value: 4.5, unit: 'H' }, { key: 'LC', label: 'π: LC=(L1L2−M²)/M', value: 18, unit: 'H' }] },
-    { label: '예제 13.6 6∠90° V · 4 Ω · j8, j5, M=j1(점 반대) · 10 Ω', basis: 'rms', values: { omega: 1, l1: 8, l2: 5, couplingMode: 'M', m: 1, dots: 'opposite', i2Ref: 'into', voltage: 6, voltageDeg: 90, z1R: 4, z1X: 0, zlR: 10, zlX: 0,
+    { label: '예제 13.6 6∠90° V · 4 Ω · j8, j5, M=j1(점 반대) · 10 Ω', basis: 'rms', values: { view: 'circuit', omega: 1, l1: 8, l2: 5, couplingMode: 'M', m: 1, dots: 'opposite', i2Ref: 'into', voltage: 6, voltageDeg: 90, z1R: 4, z1X: 0, zlR: 10, zlX: 0,
       timeSec: 0 },
       expect: [{ key: 'La', label: 'La=L1+M', value: 9, unit: 'H' }, { key: 'Lb', label: 'Lb=L2+M', value: 6, unit: 'H' }, { key: 'Lc', label: 'Lc=−M', value: -1, unit: 'H' },
         { key: 'I2Mag', label: '|I2|', value: 0.06, unit: 'A' }, { key: 'I2Ang', label: '∠I2', value: 90.57, unit: '°', note: '교재는 j0.06 → 90°로 반올림 (정확값 90.57°)' },
-        { key: 'I1Mag', label: '|I1|', value: 0.6708, unit: 'A', note: '교재는 0.6+j0.3 으로 반올림 (정확값 0.598+j0.306)' }, { key: 'VoMag', label: '|Vo|', value: 0.6, unit: 'V', rel: 2e-3 }] }
+        { key: 'I1Mag', label: '|I1|', value: 0.6708, unit: 'A', note: '교재는 0.6+j0.3 으로 반올림 (정확값 0.598+j0.306)' }, { key: 'VoMag', label: '|Vo|', value: 0.6, unit: 'V', rel: 2e-3 }] },
+    // Energy by hand: both currents into the dotted terminals (i2Ref 'into', dots same) add the M term. Not a numbered textbook example.
+    { label: '에너지 직접 대입 · L1=5, L2=4, M=2 H · i1=2, i2=3 A (점 같은 쪽)', basis: 'rms', values: { view: 'energy', energySource: 'direct', l1: 5, l2: 4, couplingMode: 'M', m: 2, dots: 'same', i2Ref: 'into', i1: 2, i2: 3 },
+      expect: [{ key: 'self1', label: '½L1 i1²', value: 10, unit: 'J' }, { key: 'self2', label: '½L2 i2²', value: 18, unit: 'J' }, { key: 'mutual', label: '+M i1 i2', value: 12, unit: 'J' }, { key: 'w', label: 'w', value: 40, unit: 'J' }] },
+    { label: '에너지 · 점 반대쪽이면 상호 항이 −12 J → w=16 J', basis: 'rms', values: { view: 'energy', energySource: 'direct', l1: 5, l2: 4, couplingMode: 'M', m: 2, dots: 'opposite', i2Ref: 'into', i1: 2, i2: 3 },
+      expect: [{ key: 'mutual', label: '−M i1 i2', value: -12, unit: 'J' }, { key: 'w', label: 'w', value: 16, unit: 'J' }] },
+    { label: '에너지 · k=1 (L1=4, L2=1, M=2), i2=−2 i1 이면 w=0', basis: 'rms', values: { view: 'energy', energySource: 'direct', l1: 4, l2: 1, couplingMode: 'M', m: 2, dots: 'same', i2Ref: 'into', i1: 1, i2: -2 },
+      expect: [{ key: 'k', label: 'k', value: 1 }, { key: 'w', label: 'w (완전제곱 ½(√L1 i1+√L2 i2)²=0)', value: 0, unit: 'J', abs: 1e-9 }] }
   ],
   // Switching between M and k keeps the same coupling: the newly shown field is filled from the one that was in use (k = M/√(L1L2), M = k√(L1L2)).
   onSelect(v, key) {
@@ -52,30 +66,84 @@ export const COUPLED_TOOL = {
     const root = Math.sqrt(v.l1 * v.l2);
     return v.couplingMode === 'k' ? { k: v.m / root } : { m: v.k * root };
   },
+  // Three views of the same coils; the values are shared and the view only decides which inputs, results and graphs show.
   evaluate(v, { k }) {
-    const r = coupledCoils({ frequencyHz: v.omega / (2 * Math.PI), l1: v.l1, l2: v.l2, couplingMode: v.couplingMode, m: v.m, k: v.k, dots: v.dots, z1: z(v.z1R, v.z1X), zl: z(v.zlR, v.zlX),
-      voltageRms: v.voltage, voltageDeg: v.voltageDeg });
-    if (r.status !== 'valid') return r;
-    const I2 = v.i2Ref === 'into' ? r.I2into : r.I2, w = v.omega;
-    const wNow = r.energy(v.timeSec), values = { k: r.k, M: r.M, w: wNow, La: r.T.La, Lb: r.T.Lb, Lc: r.T.Lc, ZRR: r.reflected.re, ZRX: r.reflected.im };
-    putPolar(values, 'I1', r.I1, k); putPolar(values, 'I2', I2, k); putPolar(values, 'Vo', r.Vo, k);
-    if (r.pi) Object.assign(values, { LA: r.pi.LA, LB: r.pi.LB, LC: r.pi.LC });
-    const tRows = [['La = L1 ' + (r.dotSign > 0 ? '−' : '+') + ' M', henry(r.T.La)], ['Lb = L2 ' + (r.dotSign > 0 ? '−' : '+') + ' M', henry(r.T.Lb)], ['Lc = ' + (r.dotSign > 0 ? '+M' : '−M'), henry(r.T.Lc)]];
-    const piRows = r.pi ? [['LA = (L1L2−M²)/(L2∓M)', piHenry(r.pi.LA)], ['LB = (L1L2−M²)/(L1∓M)', piHenry(r.pi.LB)], ['LC = (L1L2−M²)/(±M)', piHenry(r.pi.LC)]] : [['π 등가', r.piReason]];
-    return { status: 'valid', values, checks: r.checks, frequencyHz: r.frequencyHz,
-      read: 'k=' + short(r.k) + ' · I1=' + polarShort(scale(r.I1, k)) + ' A, I2=' + polarShort(scale(I2, k)) + ' A (' + unit(k) + ') · 반사 임피던스 ZR=' + zText(r.reflected) + ' Ω → Zin=' + zText(r.zin) + ' Ω · w(' + fmt(v.timeSec) + ' s)='
-        + fmt(wNow) + ' J',
-      metrics: [metric('결합계수 k', short(r.k)), metric('M', henry(r.M)), metric('I1 (' + unit(k) + ')', polarShort(scale(r.I1, k)), 'A'), metric('I2 (' + unit(k) + ')', polarShort(scale(I2, k)), 'A'),
-        metric('반사 ZR=(ωM)²/Z22', zText(r.reflected), 'Ω'), metric('Zin=Z1+jωL1+ZR', zText(r.zin), 'Ω'), metric('w(t) 저장 에너지', fmt(wNow), 'J'), metric('jωL1, jωL2, jωM', fmt(w * v.l1) + ', ' + fmt(w * v.l2) + ', ' + fmt(w * r.M), 'Ω')],
-      tables: [{ title: 'T 등가 (La, Lb, Lc)', headers: ['식', '값'], rows: tRows }, { title: 'π 등가', headers: ['식', '값'], rows: piRows },
-        { title: '직렬 연결', headers: ['연결', 'L'], rows: [['가극성(aiding) L1+L2+2M', henry(r.seriesAiding)], ['감극성(opposing) L1+L2−2M', henry(r.seriesOpposing)]] }],
-      traces: [{ label: 'i1(t)', unit: 'A', phasor: r.I1 }, { label: 'i2(t)', unit: 'A', phasor: I2 }, { label: 'w(t)', unit: 'J', sample: r.energy }],
-      phasors: [{ label: 'V', unit: 'V', z: r.V }, { label: 'Vo (ZL 양단)', unit: 'V', z: r.Vo }, { label: 'I1', unit: 'A', z: r.I1 }, { label: 'I2', unit: 'A', z: I2 }],
-      notes: ['반사 임피던스 (ωM)²/Z22 는 점 위치와 무관합니다 (M²). 점 위치는 I2의 부호와 에너지의 ±M i1 i2 항만 바꿉니다.', 'w = ½L1 i1² + ½L2 i2² ' + (r.energySign > 0 ? '+' : '−') + ' M i1 i2 (두 메시 전류 기준).',
-        ...(r.pi?.open.LA || r.pi?.open.LB ? ['π 등가에서 분모가 0인 가지(LA 또는 LB)는 인덕턴스가 무한대이므로 개방(가지 없음)입니다. 나머지 두 가지만 남습니다.'] : [])],
-      figure: { kind: 'coupled', dots: v.dots, i2Ref: v.i2Ref } };
+    if (v.view === 'tpi') return tpiView(v);
+    if (directEnergy(v)) return energyView(v);
+    return circuitView(v, k);
   }
 };
+
+const coilArgs = v => ({ l1: v.l1, l2: v.l2, couplingMode: v.couplingMode, m: v.m, k: v.k, dots: v.dots });
+const sgnOf = s => (s > 0 ? '+' : '−');
+const energyRows = (self1, self2, mutual, w, sign) => [['L1 의 자기 에너지', '½ L1 i1²', fmt(self1)], ['L2 의 자기 에너지', '½ L2 i2²', fmt(self2)], ['상호 항', sign + ' M i1 i2', fmt(mutual)], ['저장 에너지 w', '세 항의 합', fmt(w)]];
+const energyNotes = (sign, zeroRatio) => ['w = ½L1 i1² + ½L2 i2² ' + sign + ' M i1 i2. 두 전류가 점 찍힌 단자로 같이 들어가면(자속이 더해지면) +M i1 i2, 한쪽만 들어가면 −M i1 i2 입니다. 지금 점 위치와 I2 기준 방향에서는 ' + sign + ' 입니다.',
+  'k ≤ 1 (M² ≤ L1L2) 이어야 w ≥ 0 입니다: w 는 행렬 [[L1, ±M], [±M, L2]] 의 이차형식이고, 행렬식 L1L2−M² 가 음수이면 어떤 (i1, i2)에서 w<0 이 되어 에너지 보존이 깨집니다. 그래서 M 은 √(L1L2) 를 넘을 수 없습니다.',
+  ...(zeroRatio === null ? [] : ['k=1 이면 w = ½(√L1 i1 ± √L2 i2)² 로 완전제곱이 되어, i2/i1 = ' + short(zeroRatio) + ' 일 때 w=0 입니다 (두 코일이 한 자속을 완전히 나눠 가짐).'])];
+const figureOf = (v, i2Ref) => ({ kind: 'coupled', dots: v.dots, i2Ref });
+
+/** "T/π 등가": L1, L2, M (or k) and the dots only. */
+function tpiView(v) {
+  const r = coupledEquivalents(coilArgs(v));
+  if (r.status !== 'valid') return r;
+  const minus = r.dotSign > 0 ? '−' : '+', values = { k: r.k, M: r.M, La: r.T.La, Lb: r.T.Lb, Lc: r.T.Lc, seriesAiding: r.seriesAiding, seriesOpposing: r.seriesOpposing };
+  if (r.pi) Object.assign(values, { LA: r.pi.LA, LB: r.pi.LB, LC: r.pi.LC });
+  const tRows = [['La = L1 ' + minus + ' M', henry(r.T.La)], ['Lb = L2 ' + minus + ' M', henry(r.T.Lb)], ['Lc = ' + (r.dotSign > 0 ? '+M' : '−M'), henry(r.T.Lc)]];
+  const piRows = r.pi ? [['LA = (L1L2−M²)/(L2∓M)', piHenry(r.pi.LA)], ['LB = (L1L2−M²)/(L1∓M)', piHenry(r.pi.LB)], ['LC = (L1L2−M²)/(±M)', piHenry(r.pi.LC)]] : [['π 등가', r.piReason]];
+  return { status: 'valid', values, checks: r.checks,
+    read: 'k=' + short(r.k) + ' · M=' + henry(r.M) + ' · T: La=' + henry(r.T.La) + ', Lb=' + henry(r.T.Lb) + ', Lc=' + henry(r.T.Lc) + (r.pi ? ' · π: LA=' + piHenry(r.pi.LA) + ', LB=' + piHenry(r.pi.LB) + ', LC=' + piHenry(r.pi.LC) : ' · ' + r.piReason),
+    metrics: [metric('결합계수 k', short(r.k)), metric('M', henry(r.M)), metric('La', henry(r.T.La)), metric('Lb', henry(r.T.Lb)), metric('Lc', henry(r.T.Lc))],
+    tables: [{ title: 'T 등가 (La, Lb, Lc)', headers: ['식', '값'], rows: tRows }, { title: 'π 등가', headers: ['식', '값'], rows: piRows },
+      { title: '직렬 연결', headers: ['연결', 'L'], rows: [['가극성(aiding) L1+L2+2M', henry(r.seriesAiding)], ['감극성(opposing) L1+L2−2M', henry(r.seriesOpposing)]] }],
+    notes: ['두 코일의 전류가 모두 점 찍힌(위) 단자로 들어가는 기준입니다. 점이 반대쪽이면 M 의 부호가 바뀌어 Lc=−M 이고 La, Lb 는 L+M 입니다.',
+      ...(r.pi?.open.LA || r.pi?.open.LB ? ['π 등가에서 분모가 0인 가지(LA 또는 LB)는 인덕턴스가 무한대이므로 개방(가지 없음)입니다. 나머지 두 가지만 남습니다.'] : [])],
+    figure: figureOf(v, 'into') };
+}
+
+/** "에너지" with typed i1, i2: w = ½L1 i1² + ½L2 i2² ± M i1 i2. */
+function energyView(v) {
+  const r = coupledEnergy({ ...coilArgs(v), i2Ref: v.i2Ref, i1: v.i1, i2: v.i2 });
+  if (r.status !== 'valid') return r;
+  const sign = sgnOf(r.sigma);
+  return { status: 'valid', values: { k: r.k, M: r.M, w: r.w, self1: r.self1, self2: r.self2, mutual: r.mutual }, checks: r.checks,
+    read: 'k=' + short(r.k) + ' · w = ' + fmt(r.self1) + ' + ' + fmt(r.self2) + ' ' + sign + ' ' + fmt(Math.abs(r.mutual)) + ' = ' + fmt(r.w) + ' J (i1=' + fmt(v.i1) + ' A, i2=' + fmt(v.i2) + ' A)',
+    metrics: [metric('결합계수 k', short(r.k)), metric('M', henry(r.M)), metric('½ L1 i1²', fmt(r.self1), 'J'), metric('½ L2 i2²', fmt(r.self2), 'J'), metric(sign + ' M i1 i2', fmt(r.mutual), 'J'), metric('저장 에너지 w', fmt(r.w), 'J')],
+    tables: [{ title: '에너지의 세 항', headers: ['항', '식', '값 (J)'], rows: energyRows(r.self1, r.self2, r.mutual, r.w, sign) }],
+    notes: energyNotes(sign, r.zeroRatio), figure: figureOf(v, v.i2Ref) };
+}
+
+/** "회로 풀이" (and "에너지" from the solved circuit at time t): two meshes, the reflected impedance, Zin, I1, I2. */
+function circuitView(v, k) {
+  const r = coupledCoils({ frequencyHz: v.omega / (2 * Math.PI), ...coilArgs(v), z1: z(v.z1R, v.z1X), zl: z(v.zlR, v.zlX), voltageRms: v.voltage, voltageDeg: v.voltageDeg });
+  if (r.status !== 'valid') return r;
+  const I2 = v.i2Ref === 'into' ? r.I2into : r.I2, wNow = r.energy(v.timeSec), wm = v.omega * r.M;
+  const sigma = v.i2Ref === 'into' ? r.dotSign : r.energySign, sign = sgnOf(sigma); // sign of the M i1 i2 term for the I2 reference shown
+  const values = { k: r.k, M: r.M, w: wNow, La: r.T.La, Lb: r.T.Lb, Lc: r.T.Lc, ZRR: r.reflected.re, ZRX: r.reflected.im, Z22R: r.z22.re, Z22X: r.z22.im, ZinR: r.zin.re, ZinX: r.zin.im };
+  putPolar(values, 'I1', r.I1, k); putPolar(values, 'I2', I2, k); putPolar(values, 'Vo', r.Vo, k);
+  if (r.pi) Object.assign(values, { LA: r.pi.LA, LB: r.pi.LB, LC: r.pi.LC });
+  const common = { status: 'valid', values, checks: r.checks, frequencyHz: r.frequencyHz, figure: figureOf(v, v.i2Ref) };
+  if (v.view === 'energy') {
+    const i1 = r.current(r.I1, v.timeSec), i2 = r.current(I2, v.timeSec), self1 = 0.5 * v.l1 * i1 * i1, self2 = 0.5 * v.l2 * i2 * i2, mutual = wNow - self1 - self2;
+    return { ...common,
+      read: 'k=' + short(r.k) + ' · t=' + fmt(v.timeSec) + ' s: i1=' + fmt(i1) + ' A, i2=' + fmt(i2) + ' A → w = ' + fmt(self1) + ' + ' + fmt(self2) + ' ' + sign + ' ' + fmt(Math.abs(mutual)) + ' = ' + fmt(wNow) + ' J',
+      metrics: [metric('결합계수 k', short(r.k)), metric('i1(t)', fmt(i1), 'A'), metric('i2(t)', fmt(i2), 'A'), metric('w(t) 저장 에너지', fmt(wNow), 'J')],
+      tables: [{ title: 'w(t) 의 세 항 (t=' + fmt(v.timeSec) + ' s)', headers: ['항', '식', '값 (J)'], rows: energyRows(self1, self2, mutual, wNow, sign) }],
+      traces: [{ label: 'i1(t)', unit: 'A', phasor: r.I1 }, { label: 'i2(t)', unit: 'A', phasor: I2 }, { label: 'w(t)', unit: 'J', sample: r.energy }],
+      notes: ['i1(t), i2(t) 는 회로 풀이의 전류를 시간 함수로 쓴 값입니다 (peak 기준 진폭이 아니라 순간값이라 표시 기준과 무관).', ...energyNotes(sign, r.k >= 1 - 1e-12 ? -sigma * Math.sqrt(v.l1 / v.l2) : null)] };
+  }
+  const ohm = z => zText(z) + ' Ω';
+  return { ...common,
+    read: 'k=' + short(r.k) + ' · I1=' + polarShort(scale(r.I1, k)) + ' A, I2=' + polarShort(scale(I2, k)) + ' A (' + unit(k) + ') · Z22=ZL+jωL2=' + zText(r.z22) + ' Ω → 반사 ZR=(ωM)²/Z22=' + zText(r.reflected) + ' Ω → Zin=Z1+jωL1+ZR=' + zText(r.zin) + ' Ω',
+    metrics: [metric('결합계수 k', short(r.k)), metric('I1 (' + unit(k) + ')', polarShort(scale(r.I1, k)), 'A'), metric('I2 (' + unit(k) + ')', polarShort(scale(I2, k)), 'A'), metric('반사 ZR=(ωM)²/Z22', zText(r.reflected), 'Ω'),
+      metric('Zin=Z1+jωL1+ZR', zText(r.zin), 'Ω')],
+    tables: [{ title: '반사 임피던스 → 입력 임피던스', headers: ['단계', '식', '값'], rows: [['2차 루프 Z22', 'ZL + jωL2', ohm(r.z22)], ['(ωM)²', 'ω² M²', fmt(wm * wm) + ' Ω²'], ['반사 임피던스 ZR', '(ωM)² / Z22', ohm(r.reflected)],
+      ['1차 루프 Z11', 'Z1 + jωL1', ohm(r.z11)], ['입력 임피던스 Zin', 'Z11 + ZR', ohm(r.zin)], ['1차 전류 I1 (' + unit(k) + ')', 'V / Zin', polarShort(scale(r.I1, k)) + ' A'],
+      ['2차 전류 I2 (' + unit(k) + ')', sgnOf(r.dotSign) + 'jωM I1 / Z22', polarShort(scale(r.I2, k)) + ' A (시계방향 메시)']] }],
+    traces: [{ label: 'i1(t)', unit: 'A', phasor: r.I1 }, { label: 'i2(t)', unit: 'A', phasor: I2 }],
+    phasors: [{ label: 'V', unit: 'V', z: r.V }, { label: 'Vo (ZL 양단)', unit: 'V', z: r.Vo }, { label: 'I1', unit: 'A', z: r.I1 }, { label: 'I2', unit: 'A', z: I2 }],
+    notes: ['2차 루프가 1차에서 보이는 반사 임피던스는 ZR = ω²M²/Z22 이고 Z22 = ZL + jωL2 입니다 (교재 13.3). 1차에서 본 입력 임피던스는 Zin = Z1 + jωL1 + ZR 이고 I1 = V/Zin 입니다.',
+      '반사 임피던스는 M² 만 들어 있어 점 위치와 무관합니다. 점 위치는 I2 의 부호(식의 ' + (r.dotSign > 0 ? '−' : '+') + 'jωM 항)와 에너지의 ±M i1 i2 항만 바꿉니다.'] };
+}
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 const mode = name => v => v.mode === name;

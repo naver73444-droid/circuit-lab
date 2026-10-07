@@ -82,11 +82,50 @@ export function coupledCoils(p) {
     const Vx = multiply(jw(w, eq.T.Lc), add(I1, I2into));
     const tDiff = Math.max(magnitude(sub(sub(V1c, Vx), multiply(jw(w, eq.T.La), I1))), magnitude(sub(sub(V2c, Vx), multiply(jw(w, eq.T.Lb), I2into))));
     const scaleV = magnitude(V) + 1e-9;
+    // The two mesh equations written out again with the final currents (the reflected-impedance route and the direct route must agree).
+    const jwm = cz(0, s * wm), kvl1 = magnitude(sub(V, sub(multiply(z11, I1), multiply(jwm, I2)))), kvl2 = magnitude(add(neg(multiply(jwm, I1)), multiply(z22, I2)));
     return { status: 'valid', omega: w, M, k, dotSign: s, energySign, z11, z22, reflected, zin, I1, I2, I2into, V, Vo, Ssource, pLoad, pZ1,
       V1coil: V1c, V2coil: V2c, T: eq.T, pi: eq.pi, piReason: eq.piReason, seriesAiding: p.l1 + p.l2 + 2 * M, seriesOpposing: p.l1 + p.l2 - 2 * M,
       energy, current, frequencyHz: f,
       checks: [{ label: 'P 보존: P전원 − |I1|²R1 − |I2|²R2', actual: Math.abs(Ssource.re - pLoad - pZ1), expected: 0, unit: 'W', tol: 1e-9 * (Math.abs(Ssource.re) + 1e-9) },
-        { label: 'T 등가 대조: V1−Vx−jωLa·I1, V2−Vx−jωLb·I2', actual: tDiff, expected: 0, unit: 'V', tol: 1e-9 * scaleV }].map(c => ({ ...c, pass: c.actual <= c.tol })) };
+        { label: 'T 등가 대조: V1−Vx−jωLa·I1, V2−Vx−jωLb·I2', actual: tDiff, expected: 0, unit: 'V', tol: 1e-9 * scaleV },
+        { label: '메시 방정식 대조: V − (Z11 I1 − s·jωM I2), −s·jωM I1 + Z22 I2', actual: Math.max(kvl1, kvl2), expected: 0, unit: 'V', tol: 1e-9 * scaleV }].map(c => ({ ...c, pass: c.actual <= c.tol })) };
+  } catch (e) { return { status: 'invalid', reason: e.message }; }
+}
+
+// T/π equivalents and the two series connections from L1, L2, M (or k) and the dots alone: no source or load is needed, so this is all the "T/π" view computes.
+// Checks: the T network gives back L1, L2 (the other port open); the π network, with one port shorted, gives back L1−M²/L2 or L2−M²/L1 (an open branch counts as 1/∞ = 0).
+export function coupledEquivalents(p) {
+  try {
+    const s = dotSign(p.dots), { M, k } = mutualInductance(p), eq = tPiEquivalents({ l1: p.l1, l2: p.l2, M, sigma: s });
+    const near = (actual, expected) => ({ actual: Math.abs(actual - expected), expected: 0, unit: 'H', tol: 1e-9 * (Math.abs(expected) + 1e-12) });
+    const parallel = (a, b) => 1 / (1 / a + 1 / b);
+    const checks = [{ label: 'T 등가 대조: La+Lc = L1, Lb+Lc = L2 (다른 쪽 개방)', actual: Math.max(Math.abs(eq.T.La + eq.T.Lc - p.l1), Math.abs(eq.T.Lb + eq.T.Lc - p.l2)), expected: 0, unit: 'H', tol: 1e-9 * (p.l1 + p.l2) }];
+    if (eq.pi) {
+      checks.push({ label: 'π 등가 대조: 2차 단락 LA∥LC = L1−M²/L2', ...near(parallel(eq.pi.LA, eq.pi.LC), p.l1 - M * M / p.l2) },
+        { label: 'π 등가 대조: 1차 단락 LB∥LC = L2−M²/L1', ...near(parallel(eq.pi.LB, eq.pi.LC), p.l2 - M * M / p.l1) });
+    }
+    return { status: 'valid', M, k, dotSign: s, T: eq.T, pi: eq.pi, piReason: eq.piReason, seriesAiding: p.l1 + p.l2 + 2 * M, seriesOpposing: p.l1 + p.l2 - 2 * M,
+      checks: checks.map(c => ({ ...c, pass: c.actual <= c.tol })) };
+  } catch (e) { return { status: 'invalid', reason: e.message }; }
+}
+
+// Stored magnetic energy w = ½L1 i1² + ½L2 i2² + σ M i1 i2 for given instantaneous currents. σ = +1 when both currents enter the dotted terminals
+// (their fluxes add), so for the two clockwise mesh currents σ = −(dot sign) and for "into the top terminals" σ = +(dot sign): the same rule as coupledCoils.
+// Since M ≤ √(L1L2) (k ≤ 1) the quadratic form is never negative; at k = 1 it is exactly ½(√L1 i1 + σ√L2 i2)², zero for i2/i1 = −σ√(L1/L2).
+export function coupledEnergy(p) {
+  try {
+    const s = dotSign(p.dots), { M, k } = mutualInductance(p);
+    if (p.i2Ref !== 'loop' && p.i2Ref !== 'into') throw new RangeError('I2 기준 방향은 loop 또는 into 여야 합니다.');
+    if (!Number.isFinite(p.i1) || !Number.isFinite(p.i2)) throw new RangeError('i1, i2는 유한한 수여야 합니다.');
+    const sigma = p.i2Ref === 'into' ? s : -s;
+    const self1 = 0.5 * p.l1 * p.i1 * p.i1, self2 = 0.5 * p.l2 * p.i2 * p.i2, mutual = sigma * M * p.i1 * p.i2, w = self1 + self2 + mutual;
+    const sum = self1 + self2 + Math.abs(mutual), a = Math.sqrt(p.l1) * p.i1, b = sigma * Math.sqrt(p.l2) * p.i2;
+    const square = 0.5 * (a + b) ** 2 + sigma * (M - Math.sqrt(p.l1 * p.l2)) * p.i1 * p.i2; // the same w, written as a perfect square plus the (k−1) remainder
+    return { status: 'valid', M, k, dotSign: s, sigma, self1, self2, mutual, w, zeroRatio: k >= 1 - 1e-12 ? -sigma * Math.sqrt(p.l1 / p.l2) : null,
+      checks: [{ label: 'w ≥ 0 (k ≤ 1 이면 어떤 i1, i2 에서도 성립)', actual: Math.max(0, -w), expected: 0, unit: 'J', tol: 1e-12 * (sum + 1e-12) },
+        { label: '완전제곱 꼴 대조: w = ½(√L1 i1 + σ√L2 i2)² − (1−k)·√(L1L2)·σ i1 i2', actual: Math.abs(w - square), expected: 0, unit: 'J', tol: 1e-9 * (sum + 1e-12) }]
+        .map(c => ({ ...c, pass: c.actual <= c.tol })) };
   } catch (e) { return { status: 'invalid', reason: e.message }; }
 }
 

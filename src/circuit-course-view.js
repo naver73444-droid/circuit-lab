@@ -67,6 +67,8 @@ const style = [
 '.circuit-course .cc-tool-presets{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.circuit-course .cc-tool-presets button{text-align:left}',
 '.circuit-course .cc-tool-grid{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:16px;align-items:start}@media(max-width:900px){.circuit-course .cc-tool-grid{grid-template-columns:minmax(0,1fr)}}',
 '.circuit-course .cc-tool-form{display:grid;gap:8px}',
+  // A select drawn as a row of short buttons (the coupled-coil "보기"): equal columns, one line even at 390 px.
+  '.circuit-course .cc-segment{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}.circuit-course .cc-segment button{padding:6px 4px;white-space:nowrap;font-weight:bold}',
 '.circuit-course .cc-tool-form h4{margin:10px 0 0;font-size:15px;color:var(--muted)}.circuit-course .cc-field-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center}',
 '.circuit-course .cc-field-row>input[type=range]{grid-column:1/-1}.circuit-course .cc-tool-error{color:var(--warning);min-height:0;grid-column:1/-1}.circuit-course .cc-tool-error:empty{display:none}',
 '.circuit-course .cc-tool-read{padding:10px 12px;border-left:4px solid var(--accent);background:var(--raised);margin:0 0 12px;overflow-wrap:anywhere}',

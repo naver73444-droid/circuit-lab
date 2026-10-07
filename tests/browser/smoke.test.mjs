@@ -3898,6 +3898,66 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.deepEqual([(await ccState()).chapter, (await ccState()).experimentId], ["ch11", "power"], "an unknown item falls back to the chapter's first item");
   });
 
+  test("circuit course coupled coils on a phone (390x844): the 보기 segment is one line and each view shows only its own inputs and results; lecture examples switch the view and pass their checks", async () => {
+    await openCircuitCourse({ width: 390, height: 844, mobile: true });
+    await ccGo("tool", "coupled");
+    const panel = ccPanel("coupled"), viewOf = async () => (await ccState()).courseTools.coupled.values.view;
+    const keys = () => ev(`[...document.querySelectorAll('${panel} [data-cc-key]')].filter((e) => !e.closest("[hidden]")).map((e) => e.dataset.ccKey)`);
+    const results = () => ev(`document.querySelector('${panel} [data-cc-results]').textContent`);
+    const pick = async (choice) => { await click(`${panel} [data-cc-segment="view"][data-cc-choice="${choice}"]`); assert.equal(await viewOf(), choice); };
+    // 회로 풀이 is the first screen: source, Z1, ZL and the coils; the reflected-impedance steps are in the results.
+    assert.equal(await viewOf(), "circuit");
+    const circuit = await keys();
+    for (const key of ["omega", "l1", "l2", "m", "dots", "i2Ref", "voltage", "z1R", "zlX"]) assert.ok(circuit.includes(key), `회로 풀이 shows ${key}`);
+    for (const key of ["i1", "i2", "timeSec", "energySource"]) assert.ok(!circuit.includes(key), `회로 풀이 hides ${key}`);
+    assert.match(await results(), /반사 임피던스/);
+    assert.match(await results(), /Zin/);
+    // The three buttons share one line and stay inside the page.
+    const bar = await ev(`(() => { const g = document.querySelector('${panel} .cc-segment'), b = [...g.children].map((x) => x.getBoundingClientRect()); return { count: b.length, height: g.getBoundingClientRect().height, lines: new Set(b.map((r) => Math.round(r.top))).size, smallest: Math.min(...b.map((r) => r.height)), fits: b.every((r) => r.right <= innerWidth) }; })()`);
+    assert.deepEqual([bar.count, bar.lines, bar.fits], [3, 1, true], JSON.stringify(bar));
+    assert.ok(bar.height <= 56 && bar.smallest >= 40, JSON.stringify(bar));
+    assert.equal(await ccOverflow(), true, "no horizontal overflow in 회로 풀이");
+    // T/π 등가: the coils and the dots only.
+    await pick("tpi");
+    assert.deepEqual(await keys(), ["l1", "l2", "couplingMode", "m", "dots"], "T/π 등가 inputs");
+    assert.match(await results(), /T 등가/);
+    assert.match(await results(), /π 등가/);
+    assert.doesNotMatch(await results(), /반사 임피던스/);
+    assert.equal(await ev(`document.querySelector('${panel} [data-cc-segment="view"][aria-pressed="true"]').dataset.ccChoice`), "tpi");
+    assert.equal(await ccOverflow(), true, "no horizontal overflow in T/π 등가");
+    // 에너지: the coils, the dots and the two currents (or the circuit at a time t).
+    await pick("energy");
+    assert.deepEqual(await keys(), ["energySource", "l1", "l2", "couplingMode", "m", "dots", "i2Ref", "i1", "i2"], "에너지 inputs");
+    assert.match(await results(), /저장 에너지/);
+    assert.doesNotMatch(await results(), /T 등가|반사 임피던스/);
+    await select(`${panel} [data-cc-key="energySource"]`, "circuit");
+    const timed = await keys();
+    for (const key of ["omega", "voltage", "z1R", "zlX", "timeSec"]) assert.ok(timed.includes(key), `에너지 from the circuit shows ${key}`);
+    assert.ok(!timed.includes("i1") && !timed.includes("i2"));
+    await select(`${panel} [data-cc-key="energySource"]`, "direct");
+    // Lecture examples choose their view: 13.1 → 회로 풀이, the energy example → 에너지, 13.5 → T/π; each passes its checks.
+    const preset = async (text) => {
+      const index = await ev(`[...document.querySelectorAll("${panel} [data-cc-preset]")].findIndex((b) => b.textContent.includes(${JSON.stringify(text)}))`);
+      assert.ok(index >= 0, `an example containing "${text}"`);
+      await ccUnfold(panel);
+      await click(`${panel} [data-cc-preset="${index}"]`);
+      assert.match(await ev(`document.querySelector("${panel} [data-circuit-course-verification] h3").textContent`), /모두 일치/, text);
+      assert.match(await ev(`document.querySelector("${panel} [data-cc-status]").textContent`), /예제 적용:/, text);
+    };
+    await preset("예제 13.1");
+    assert.equal(await viewOf(), "circuit");
+    assert.ok((await keys()).includes("voltage") && !(await keys()).includes("i1"));
+    assert.match(await results(), /반사 임피던스/);
+    await preset("에너지 직접 대입");
+    assert.equal(await viewOf(), "energy");
+    assert.ok((await keys()).includes("i1"));
+    assert.match(await results(), /40/);
+    await preset("예제 13.5");
+    assert.equal(await viewOf(), "tpi");
+    assert.match(await results(), /18/);
+    assert.equal(await ccOverflow(), true, "no horizontal overflow after the examples");
+  });
+
   // ---- 전자기학 Hayt Ch.8 course topics and the magnetic ("자기") mode of the plane sandbox ------------------------------------------------------
   const EM_CH8_TOPICS = [["자기력·토크", "force-"], ["자성체·경계", "matter-"], ["자기회로", "mcircuit-"], ["에너지·인덕턴스", "induct-"]];
 

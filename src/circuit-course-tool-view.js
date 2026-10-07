@@ -30,6 +30,9 @@ export function createCourseToolView(host, def) {
   const presets = def.presets.map((p, i) => '<button type="button" data-cc-preset="' + i + '" aria-pressed="false">' + esc(p.label) + '</button>').join('');
   const fieldHtml = f => {
     if (f.kind === 'heading') return '<h4 data-cc-field="' + f.key + '">' + esc(f.label) + '</h4>';
+    // A select marked segment: true is drawn as a row of short buttons (the tool controller handles the click like a select change).
+    if (f.kind === 'select' && f.segment) return '<div data-cc-field="' + f.key + '" class="cc-segment" role="group" aria-label="' + esc(f.label) + '">' + f.choices.map(([k, t]) => '<button type="button" data-cc-segment="' + f.key
+      + '" data-cc-choice="' + esc(k) + '" aria-pressed="false">' + esc(t) + '</button>').join('') + '</div>';
     const control = f.kind === 'select'
       ? '<select data-cc-key="' + f.key + '">' + f.choices.map(([k, t]) => '<option value="' + esc(k) + '">' + esc(t) + '</option>').join('') + '</select>'
       : '<input type="text" data-cc-key="' + f.key + '" autocomplete="off" spellcheck="false"' + (f.kind === 'number' ? ' inputmode="decimal"' : '') + '>' + (f.kind === 'number' && f.slider ? '<input type="range" data-cc-slider="'
@@ -50,6 +53,7 @@ export function createCourseToolView(host, def) {
         if (!row) continue;
         row.hidden = !isShown(f, values);
         if (f.kind === 'heading') continue;
+        if (f.kind === 'select' && f.segment) { row.querySelectorAll('[data-cc-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ccChoice === values[f.key]))); continue; }
         const unit = unitOf(f, values), basisTag = f.amplitude ? ' ' + basis : '';
         row.querySelector('[data-cc-label]').textContent = labelOf(f, values) + (unit || basisTag ? ' (' + (unit + basisTag).trim() + ')' : '');
         const input = row.querySelector('[data-cc-key]');

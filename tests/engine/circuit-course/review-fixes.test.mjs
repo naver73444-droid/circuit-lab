@@ -168,7 +168,7 @@ test('π 등가: 분모가 0인 가지는 개방(∞)으로 명시한다 (L1=4, 
   assert.equal(eq.pi.LA, Infinity); near(eq.pi.LB, 1, 1e-12); near(eq.pi.LC, 3, 1e-12);
   assert.deepEqual(eq.pi.open, { LA: true, LB: false });
   const def = getTool('coupled');
-  const r = ok(evaluateTool(def, { ...initialValues(def), omega: 4, l1: 4, l2: 1, couplingMode: 'M', m: 1, dots: 'same', z1R: 0, z1X: 0, zlR: 2, zlX: 0 }, 'rms'));
+  const r = ok(evaluateTool(def, { ...initialValues(def), view: 'tpi', omega: 4, l1: 4, l2: 1, couplingMode: 'M', m: 1, dots: 'same', z1R: 0, z1X: 0, zlR: 2, zlX: 0 }, 'rms'));
   const rows = r.tables.find(t => t.title === 'π 등가').rows;
   assert.match(rows[0][1], /개방/); assert.ok(!rows.some(row => /미정/.test(row[1])), '미정 H 가 나오지 않는다');
   assert.equal(rows[1][1], '1 H'); assert.equal(rows[2][1], '3 H');
