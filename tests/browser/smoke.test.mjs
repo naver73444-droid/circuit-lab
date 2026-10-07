@@ -2363,12 +2363,20 @@ describe("browser smoke", { timeout: 600000 }, () => {
   const SG_KEYED = new Set(["time", "lti", "convolution", "series", "roc", "freq"]); // views with key handling are focusable, the others are not
   const sgSvgExpr = `document.querySelector(".sg-stage > div:not([hidden]) svg")`;
   const sgState = () => ev(`${L}.getSignalsCourseState()`);
+  const SG_REFERENCE = ["roc", "sampling"]; // the "참고 ▾" tab holds these two; a select inside the lesson picks one
+  /** Switch lesson the way a person does: a tab, or for the reference lessons the "참고 ▾" tab and then its select. */
+  async function goSignalsLesson(lesson) {
+    if (!SG_REFERENCE.includes(lesson)) { await click(`[data-signals-lesson="${lesson}"]`); return; }
+    if (!SG_REFERENCE.includes((await sgState()).lessonId)) await click("[data-signals-reference-tab]");
+    await until(`document.querySelector("[data-signals-reference]") && !document.querySelector("[data-signals-reference]").closest("[hidden]")`, "the reference select");
+    if ((await sgState()).lessonId !== lesson) await select("[data-signals-reference]", lesson);
+  }
   async function openSignals(lesson, view) {
     await navigate("/", view);
     await click("#signals-workspace-tab");
     await until(`${L}.getSignalsCourseState()?.active === true`, "the signals workspace");
     await until(`document.querySelectorAll("[data-signals-lesson]").length > 0`, "lesson buttons");
-    if (lesson !== "time") await click(`[data-signals-lesson="${lesson}"]`);
+    if (lesson !== "time") await goSignalsLesson(lesson);
     await until(`${L}.getSignalsCourseState().lessonId === ${JSON.stringify(lesson)}`, `the ${lesson} lesson`);
     await until(`Boolean(${sgSvgExpr}) && ${sgSvgExpr}.querySelectorAll("path,line,circle").length > 10`, "the plot to be drawn");
     await settle();
@@ -4109,25 +4117,38 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.match(await live(), /y=5x\(t\) · 이론 판정: 선형, 시불변/, "y=5x is linear whichever α");
   });
 
-  test("signals on a phone (390x844): all nine lesson tabs are visible in a 3×3 grid, the two choice selects of the frequency-response lesson share a line, nothing scrolls sideways", async () => {
+  test("signals on a phone (390x844): the eight tabs (seven lessons + 참고 ▾) are visible in a 4×2 grid, the two choice selects of the frequency-response lesson share a line, nothing scrolls sideways", async () => {
     await openSignals("freq", { width: 390, height: 844, mobile: true });
-    const tabs = await ev(`[...document.querySelectorAll("[data-signals-lesson]")].map((button) => { const r = button.getBoundingClientRect(); return { id: button.dataset.signalsLesson, left: r.left, right: r.right, top: Math.round(r.top), width: r.width, height: r.height }; })`);
-    assert.deepEqual(tabs.map((tab) => tab.id), ["time", "ops", "lti", "convolution", "series", "fourier", "freq", "roc", "sampling"], "nine lessons in course order");
+    const tabs = await ev(`[...document.querySelectorAll(".sg-tabs button")].map((button) => { const r = button.getBoundingClientRect(); return { id: button.dataset.signalsLesson ?? "reference", left: r.left, right: r.right, top: Math.round(r.top), width: r.width, height: r.height }; })`);
+    assert.deepEqual(tabs.map((tab) => tab.id), ["time", "ops", "lti", "convolution", "series", "fourier", "freq", "reference"], "seven lessons in course order, then the reference tab");
     for (const tab of tabs) assert.ok(tab.width > 40 && tab.height > 20 && tab.left >= 0 && tab.right <= 390, `${tab.id}: the tab is fully on screen (${tab.left}..${tab.right})`);
     const rows = [...new Set(tabs.map((tab) => tab.top))];
-    assert.equal(rows.length, 3, `three rows of tabs (${rows})`);
-    for (const top of rows) assert.equal(tabs.filter((tab) => tab.top === top).length, 3, "three tabs per row");
+    assert.equal(rows.length, 2, `two rows of tabs (${rows})`);
+    for (const top of rows) assert.equal(tabs.filter((tab) => tab.top === top).length, 4, "four tabs per row");
+    assert.equal(await ev(`document.querySelector("[data-signals-reference]").closest("[hidden]") !== null`), true, "the reference select only shows inside a reference lesson");
     assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1 && document.getElementById("signals-workspace").scrollWidth <= innerWidth + 1`), true, "no horizontal scrolling");
     const choices = await ev(`[...document.querySelectorAll("select[data-signals-param]")].map((select) => { const r = select.getBoundingClientRect(); return { key: select.dataset.signalsParam, left: r.left, right: r.right, top: Math.round(r.top) }; })`);
     assert.deepEqual(choices.map((item) => item.key), ["axis", "scale"]);
     assert.ok(Math.abs(choices[0].top - choices[1].top) <= 2, `axis and scale are on one line (${choices[0].top} / ${choices[1].top})`);
     assert.ok(choices[0].right <= choices[1].left && choices[1].right <= 390, "side by side and inside the screen");
-    for (const lesson of ["ops", "sampling"]) {
-      await click(`[data-signals-lesson="${lesson}"]`);
+    for (const lesson of ["ops", "sampling", "roc", "ops"]) {
+      await goSignalsLesson(lesson);
       await until(`${L}.getSignalsCourseState().lessonId === ${JSON.stringify(lesson)}`, lesson);
       await settle();
       assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1`), true, `${lesson}: no horizontal scrolling`);
+      // The "참고 ▾" tab is the current one exactly while a reference lesson is open, and its select shows the lesson (and is touch sized).
+      const reference = SG_REFERENCE.includes(lesson);
+      assert.equal(await ev(`document.querySelector("[data-signals-reference-tab]").getAttribute("aria-current")`), reference ? "step" : null, `${lesson}: reference tab marking`);
+      assert.equal(await ev(`document.querySelector("[data-signals-reference]").closest("[hidden]") === null`), reference, `${lesson}: reference select visibility`);
+      if (reference) {
+        assert.equal(await ev(`document.querySelector("[data-signals-reference]").value`), lesson);
+        assert.ok(await ev(`document.querySelector("[data-signals-reference]").getBoundingClientRect().height >= 40`), "the select is touch sized");
+        assert.equal(await ev(`[...document.querySelectorAll("[data-signals-reference] option")].map((o) => o.value).join()`), "roc,sampling");
+      }
     }
+    // The reference tab reopens the reference lesson used last (sampling → ops → 참고 ▾ → roc was the last one here).
+    await click("[data-signals-reference-tab]");
+    await until(`${L}.getSignalsCourseState().lessonId === "roc"`, "the reference tab reopens the last reference lesson");
   });
 
   test("signals: the frequency-response dot is dragged on the |H| plot, and the ω axis relabels the input slider", async () => {

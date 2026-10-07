@@ -4,7 +4,7 @@
 // scrubber input takes it over for good, and parameter sliders do NOT stop it (the animation keeps running while you
 // turn a knob). prefers-reduced-motion switches AUTO-play off (and stops a running one); a press on the play button
 // still plays.
-import { SIGNALS_LESSONS } from './signals-course-model.js';
+import { SIGNALS_LESSONS, SIGNALS_REFERENCE, SIGNALS_TABS } from './signals-course-model.js';
 import { ensureCourseStyle } from './course-style.js';
 import { SIGNALS_STYLE } from './signals-style.js';
 import { appendCourseMath } from './course-math-view.js';
@@ -64,6 +64,7 @@ export function createSignalsCourseController(host) {
   const states = new Map();
   const views = new Map();
   let lessonId = SIGNALS_LESSONS[0].id;
+  let lastReference = SIGNALS_REFERENCE.lessons[0]; // the tab "참고 ▾" opens the reference lesson used last
   let active = false;
   let destroyed = false;
   let mounted = false;
@@ -122,9 +123,16 @@ export function createSignalsCourseController(host) {
     host.replaceChildren();
     ui.root = el('div', { class: 'sg' }, host);
     ui.tabs = el('nav', { class: 'sg-tabs', 'aria-label': '학습 단계' }, ui.root);
-    for (const lesson of SIGNALS_LESSONS) {
-      el('button', { type: 'button', 'data-signals-lesson': lesson.id, title: lesson.title }, ui.tabs, lesson.tab);
+    for (const tab of SIGNALS_TABS) {
+      if (tab.group) ui.referenceTab = el('button', { type: 'button', 'data-signals-reference-tab': '', title: tab.title }, ui.tabs, tab.tab);
+      else el('button', { type: 'button', 'data-signals-lesson': tab.id, title: tab.title }, ui.tabs, tab.tab);
     }
+    // The later lessons share the last tab; this row (only while one of them is open) picks which.
+    ui.referenceRow = el('div', { class: 'sg-ref', hidden: '' }, ui.root);
+    const referenceLabel = el('label', {}, ui.referenceRow);
+    el('span', {}, referenceLabel, '참고 레슨');
+    ui.referenceSelect = el('select', { 'data-signals-reference': '' }, referenceLabel);
+    for (const id of SIGNALS_REFERENCE.lessons) el('option', { value: id }, ui.referenceSelect, SIGNALS_LESSONS.find((l) => l.id === id).short);
     ui.head = el('div', { class: 'sg-head' }, ui.root);
     ui.title = el('h2', {}, ui.head);
     ui.controls = el('section', { class: 'sg-controls', 'aria-label': '조건 슬라이더' }, ui.root);
@@ -267,6 +275,10 @@ export function createSignalsCourseController(host) {
       if (button.dataset.signalsLesson === id) button.setAttribute('aria-current', 'step');
       else button.removeAttribute('aria-current');
     }
+    const later = Boolean(SIGNALS_LESSONS.find((l) => l.id === id).later);
+    if (later) { lastReference = id; ui.referenceSelect.value = id; }
+    ui.referenceRow.hidden = !later;
+    if (later) ui.referenceTab.setAttribute('aria-current', 'step'); else ui.referenceTab.removeAttribute('aria-current');
     ui.title.textContent = SIGNALS_LESSONS.find((l) => l.id === id).title;
     ui.read.textContent = readText(state);
     ui.advanced.hidden = id !== 'convolution';
@@ -449,6 +461,7 @@ export function createSignalsCourseController(host) {
   function onChange(event) {
     if (!active || destroyed) return;
     if (event.target.dataset?.signalsFamily !== undefined) setFamily(event.target.value);
+    else if (event.target.dataset?.signalsReference !== undefined && SIGNALS_REFERENCE.lessons.includes(event.target.value)) { showLesson(event.target.value); paint(); }
   }
 
   function onClick(event) {
@@ -458,6 +471,8 @@ export function createSignalsCourseController(host) {
     if (button.dataset.signalsLesson) {
       showLesson(button.dataset.signalsLesson);
       paint();
+    } else if (button.hasAttribute('data-signals-reference-tab')) {
+      if (!SIGNALS_LESSONS.find((l) => l.id === lessonId).later) { showLesson(lastReference); paint(); }
     } else if (button.hasAttribute('data-signals-play')) {
       if (playTimer) stopPlayback(true);
       else { current().playing = true; startPlayback(); }

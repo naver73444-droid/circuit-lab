@@ -18,11 +18,11 @@ const near = (actual, expected, rel, label = '') => assert.ok(Math.abs(actual - 
 const MU0_LECTURE = 4 * Math.PI * 1e-7; // the lecture's μ₀; CODATA differs by 1.5e-10 relative
 
 // ---- registry --------------------------------------------------------------------------------------------------------------
-test('20 lecture experiments are registered with unique ids, four groups and lecture tags', () => {
-  assert.equal(lecture.length, 20);
-  assert.equal(EXPERIMENTS.length, 43);
+test('21 lecture experiments are registered with unique ids, four groups and lecture tags', () => {
+  assert.equal(lecture.length, 21);
+  assert.equal(EXPERIMENTS.length, 44);
   assert.equal(new Set(EXPERIMENTS.map(d => d.id)).size, EXPERIMENTS.length);
-  const counts = { '자기력·토크': 7, '자성체·경계': 4, '자기회로': 3, '에너지·인덕턴스': 6 };
+  const counts = { '자기력·토크': 8, '자성체·경계': 4, '자기회로': 3, '에너지·인덕턴스': 6 };
   for (const [topic, prefix] of Object.entries(GROUPS)) {
     const members = lecture.filter(d => d.id.startsWith(prefix));
     assert.equal(members.length, counts[topic], topic);

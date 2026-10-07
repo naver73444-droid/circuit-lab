@@ -7,8 +7,8 @@ import { advanceTime, clampTime, instantProfiles, SWEEP_SECONDS, TIME_EXPERIMENT
 const defaults = definition => Object.fromEntries(definition.parameters.map(p => [p.key, p.initial]));
 const parameterOf = (id, key) => getExperiment(id).parameters.find(p => p.key === key);
 
-test('every parameter of all 43 experiments gets a usable control, and its example value is representable', () => {
-  assert.equal(EXPERIMENTS.length, 43); // 23 original + 20 Hayt Ch.8 lecture experiments
+test('every parameter of all 44 experiments gets a usable control, and its example value is representable', () => {
+  assert.equal(EXPERIMENTS.length, 44); // 23 original + 21 Hayt Ch.8 lecture experiments
   for (const definition of EXPERIMENTS) {
     for (const parameter of definition.parameters) {
       const spec = paramSpec(parameter);

@@ -7,6 +7,7 @@ export const SIGNALS_STYLE = `
 .sg-tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px;margin:0 0 12px}
 .sg-tabs button{min-height:40px;padding:4px 6px;font-size:13px;line-height:1.25;border-radius:10px;overflow-wrap:anywhere}
 .sg-tabs button[aria-current=step]{background:var(--selection);border-color:var(--accent);font-weight:650}
+.sg-ref{margin:0 0 10px}.sg-ref label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}.sg-ref select{min-height:40px;flex:1 1 auto;max-width:100%;font-size:14px}
 .sg-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:0 0 8px}
 .sg-head h2{margin:0;font-size:18px;font-weight:650}
 .sg-head span{color:var(--muted);font-size:12px}
@@ -86,7 +87,7 @@ export const SIGNALS_STYLE = `
 .sg-legend .c4{--c:var(--warning)}
 .sg-legend .c5{--c:var(--danger)}
 @media(max-width:700px){
-.sg-tabs{grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:8px}
+.sg-tabs{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:8px}.sg-ref select{font-size:16px}
 .sg-tabs button{min-height:36px;padding:2px 2px;font-size:12px}
 .sg-head{display:none}
 .sg-controls{display:block;padding:6px 10px 8px}

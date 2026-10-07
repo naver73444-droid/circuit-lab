@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCourseMath } from '../../src/course-math-view.js';
-import { SIGNALS_LESSONS } from '../../src/signals-course-model.js';
+import { SIGNALS_LESSONS, SIGNALS_REFERENCE, SIGNALS_TABS } from '../../src/signals-course-model.js';
 import { timeLesson } from '../../src/signals-time-model.js';
 import { isCustomFamily } from '../../src/signals-convolution-model.js';
 import { seriesLesson } from '../../src/signals-series-model.js';
@@ -263,4 +263,20 @@ test('symbols: duty cycle is d (not D), the convolution integration step is Δλ
   assert.equal(CUSTOM_FIELDS.custom.find((f) => f.key === 'dt').label, '적분 간격 Δλ [s]');
   const theta = LESSONS.ops.controls('dt-pi', {}).find((c) => c.key === 'theta');
   assert.deepEqual([theta.label, theta.unit], ['θ 위상', 'π rad']);
+});
+
+test('tab row: seven course lessons plus one "참고 ▾" tab that stands for the later lessons (ids, registry and order of the lessons are unchanged)', () => {
+  assert.deepEqual(SIGNALS_TABS.map((t) => t.id), ['time', 'ops', 'lti', 'convolution', 'series', 'fourier', 'freq', 'reference']);
+  assert.equal(SIGNALS_TABS.length, 8, 'eight tabs: 4×2 on a phone');
+  assert.deepEqual(SIGNALS_TABS.filter((t) => t.group).map((t) => t.id), ['reference']);
+  assert.equal(SIGNALS_TABS.at(-1).tab, '참고 ▾');
+  assert.deepEqual(SIGNALS_REFERENCE.lessons, ['roc', 'sampling']);
+  // no later lesson has a tab of its own; every one is reachable through the reference select and has a short select label
+  for (const lesson of SIGNALS_LESSONS.filter((l) => l.later)) {
+    assert.ok(!SIGNALS_TABS.some((t) => t.id === lesson.id), `${lesson.id} has no tab of its own`);
+    assert.ok(SIGNALS_REFERENCE.lessons.includes(lesson.id) && typeof lesson.short === 'string' && lesson.short.length > 0 && !/참고/.test(lesson.short), `${lesson.id}: select label`);
+  }
+  assert.deepEqual(SIGNALS_LESSONS.filter((l) => !l.later).map((l) => l.id), SIGNALS_TABS.filter((t) => !t.group).map((t) => t.id), 'the other tabs are the course lessons in order');
+  assert.equal(new Set(SIGNALS_TABS.map((t) => t.tab)).size, SIGNALS_TABS.length, 'tab texts are distinct');
+  assert.ok(SIGNALS_TABS.every((t) => [...t.tab].length <= 8), 'short enough for a quarter of a phone row');
 });
