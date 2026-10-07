@@ -10,11 +10,12 @@ import { EXPERIMENTS as transmission } from './em-course-transmission.js';
 import { EXPERIMENTS as forces } from './em-course-forces.js';
 import { EXPERIMENTS as materials } from './em-course-materials.js';
 import { EXPERIMENTS as magneticCircuit } from './em-course-magnetic-circuit.js';
+import { EXPERIMENTS as magneticParallel } from './em-course-magnetic-parallel.js';
 import { EXPERIMENTS as inductance } from './em-course-inductance.js';
 import { EXPERIMENTS as virtualWork } from './em-course-virtual-work.js';
 
 export const EXPERIMENTS = Object.freeze([...electrostatics, ...coaxial, ...magnetostatics, ...boundaries, ...integrals, ...induction, ...waves, ...transmission,
-  ...forces, ...materials, ...magneticCircuit, ...inductance, ...virtualWork]);
+  ...forces, ...materials, ...magneticCircuit, ...magneticParallel, ...inductance, ...virtualWork]);
 const byId = new Map();
 for (const experiment of EXPERIMENTS) {
   if (!experiment?.id || !experiment.title || typeof experiment.evaluate !== 'function') {
@@ -31,8 +32,8 @@ export const COURSE_ROADMAP = Object.freeze([
   { title: '파동 · 전송선', status: 'implemented', description: '3실험: 균질 무손실 매질파, 평면경계 수직입사 반사, 무손실 전송선·복소부하·정재파' },
   { title: '자기력 · 토크 (Hayt 8.1–8.4, 6주차)', status: 'implemented', description: '7실험: 로런츠 원운동, 직선전류 옆 직사각 루프, 평행 도선·면전류판, 솔레노이드 자기압, 루프 토크 τ=m×B, 쌍극자 원거리 장' },
   { title: '자성체 · 경계 (Hayt 8.5–8.7, 6주차)', status: 'implemented', description: '4실험: 자화·구속전류(막대자석), 자화율·투자율, 자기 경계조건·굴절, 철/초전도체 위 선전류의 영상' },
-  { title: '자기회로 (Hayt 8.8, 6주차)', status: 'implemented', description: '2실험: 공극 코어의 NI·B(비선형 B–H 표, 반복 풀이), 히스테리시스 루프와 손실(개념 모형). 병렬 다리 회로는 미지원' },
+  { title: '자기회로 (Hayt 8.8, 6주차)', status: 'implemented', description: '3실험: 공극 코어의 NI·B(비선형 B–H 표, 반복 풀이), 히스테리시스 루프와 손실(개념 모형), 3다리 코어의 병렬 자기회로 자속 분배(선형 μ_r, 공극 g₂ 스윕). 병렬 회로의 비선형 B–H는 미지원' },
   { title: '에너지 · 인덕턴스 (Hayt 8.9–8.10, 6주차)', status: 'implemented', description: '6실험: 솔레노이드·동축·토로이드 L, 상호 인덕턴스와 직렬 연결, 가상변위법(공극 흡인력, 두 솔레노이드 힘)' },
   { title: '전자기1 복습 (6주차)', status: 'implemented', description: '새 실험 없이 기존 실험으로 복습: 가우스(gauss-*), 전위·평행판·정전용량, 유전체 경계, 정자계 암페어(ampere-wire, coax-current*), 직선전류·루프 B' },
-  { title: '미지원 · 후속 확장', status: 'planned', description: '임의 형상 경계값/PDE·유한면 일반 위치·사입사·손실/분산·고차모드·안테나·공간 유도장·병렬 자기회로·curl/Stokes·벡터퍼텐셜 지도. 전체 학부의 모든 주제 완료를 뜻하지 않음' },
+  { title: '미지원 · 후속 확장', status: 'planned', description: '임의 형상 경계값/PDE·유한면 일반 위치·사입사·손실/분산·고차모드·안테나·공간 유도장·비선형 병렬 자기회로·curl/Stokes·벡터퍼텐셜 지도. 전체 학부의 모든 주제 완료를 뜻하지 않음' },
 ]);

@@ -4398,6 +4398,38 @@ describe("browser smoke", { timeout: 600000 }, () => {
     check("circuit (wrapped)", await phoneEnd("#workbench", { sticky: true }), { pad: false });
   });
 
+  test("EM course: the parallel magnetic circuit opens, widening the right gap g₂ lowers Φ_R and raises Φ_L, the checks pass and the curve is drawn", async () => {
+    await openEM();
+    await click("#em-course-open");
+    await until(`${L}.getEMState().course?.active === true && document.getElementById("em-course-canvas").clientWidth > 100`, "the EM course");
+    await select("#em-course-topic", "자기회로");
+    await select("#em-course-select", "mcircuit-parallel");
+    await until(`${L}.getEMState().course.selectedId === "mcircuit-parallel" && ${L}.getEMState().course.records["mcircuit-parallel"]?.result?.status === "valid"`, "the parallel magnetic circuit");
+    await until(`(() => { const record = ${L}.getEMState().course.records["mcircuit-parallel"]; return Array.isArray(record.checks) && record.checks.length > 0 && record.checked; })()`, "the checks to run");
+    const flux = async () => {
+      const { record } = await courseRecord();
+      const of = (key) => record.result.scalars.find((item) => item.key === key).value;
+      return { flux: of("flux"), left: of("fluxL"), right: of("fluxR"), gap: record.params.gapR, checks: record.checks };
+    };
+    const before = await flux();
+    assert.ok(Math.abs(before.left - before.right) <= 1e-12 * before.flux, "the symmetric default splits the flux evenly");
+    assert.ok(Math.abs(before.flux - 6.2832e-5) < 1e-8, `Φ of the default core ≈ 6.283e-5 Wb (${before.flux})`);
+    assert.ok(before.checks.length >= 8 && before.checks.every((row) => row.status === "pass"), "the checks pass");
+    assert.match(await courseText("#em-course-answer"), /Φ/);
+    // g₂ is typed in mm: one digit, so no half-typed value can be in use on the way.
+    await typeInto('[data-em-course-parameter="gapR"]', "5");
+    await until(`${L}.getEMState().course.records["mcircuit-parallel"].params.gapR === 0.005`, "g₂ = 5 mm");
+    await until(`${L}.getEMState().course.records["mcircuit-parallel"].checks.some((row) => row.status === "skipped")`, "the checks of the asymmetric core (symmetry row skipped)");
+    await settle();
+    const after = await flux();
+    assert.ok(after.right < before.right, `Φ_R falls when the right gap widens (${before.right} → ${after.right})`);
+    assert.ok(after.left > before.left, "and the flux crowds into the left leg");
+    assert.ok(after.flux < before.flux, "the total flux falls");
+    assert.ok(Math.abs(after.left + after.right - after.flux) <= 1e-12 * after.flux, "Φ_L + Φ_R = Φ");
+    assert.ok(after.checks.every((row) => row.status === "pass" || row.status === "skipped") && after.checks.some((row) => row.status === "skipped"), "the asymmetric core skips only the symmetry row");
+    assert.ok(await ev(`document.getElementById("em-course-canvas").clientWidth > 100`), "the curve canvas is on screen");
+  });
+
   // ---- 전기회로2: Y–Δ with complex impedances (9.7) and the autotransformer power split (13.6) -------------------------------------------
   /** Visible form rows of a panel are one column: same left edge, strictly growing top. */
   const oneColumn = (selector) => ev(`(() => { const rows = [...document.querySelectorAll(${JSON.stringify(selector)})].filter((e) => !e.closest("[hidden]") && e.getBoundingClientRect().height > 0).map((e) => e.getBoundingClientRect());
