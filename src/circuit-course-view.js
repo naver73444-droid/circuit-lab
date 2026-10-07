@@ -6,9 +6,20 @@ import { escapeHtml as esc } from './safe-dom.js';
 import { formatNumber, fmt, zText, polarText, capacitanceText } from './circuit-course-format.js';
 import { basisFactor } from './circuit-course-complex.js';
 import { TOOLS } from './circuit-course-tools.js';
+import { CHAPTERS } from './circuit-course-nav.js';
 export { formatNumber };
-// Learning tools that are not numeric experiments (own screen, own controller) share the tab row.
+// Learning tools that are not numeric experiments (own screen, own controller); circuit-course-nav.js files them (and the experiments) under a textbook chapter.
 export const TOOL_TABS = [{ id: 'y-delta', title: '7 · Y–Δ 변환' }, ...TOOLS.map(t => ({ id: t.id, title: t.title }))];
+// More lecture examples than this start folded (the summary line stays visible either way).
+export const FOLD_OPEN_MAX = 3;
+const shortLabel = (text, max = 34) => (text.length > max ? text.slice(0, max - 1) + '…' : text);
+/** "예제 n개 · 마지막 적용: …" — the one-line summary of a folded example list. */
+export const examplesSummary = (count, last) => '예제 ' + count + '개' + (last ? ' · 마지막 적용: ' + shortLabel(last) : '');
+/** Folded list of lecture-example buttons. open: the user's own choice, or null for the default (open only when it is short). */
+export function examplesFold(count, last, buttonsHtml, open, foldId, buttonsClass = 'circuit-course-actions') {
+  return '<details class="circuit-course-examples" data-circuit-course-examples-fold="' + esc(foldId) + '"' + ((open ?? count <= FOLD_OPEN_MAX) ? ' open' : '') + '><summary>' + esc(examplesSummary(count, last))
+    + '</summary><div class="' + buttonsClass + '" role="group" aria-label="강의 예제">' + buttonsHtml + '</div></details>';
+}
 // Series colors are theme tokens (defined with the stylesheet below), never literals in markup.
 const colors = [0, 1, 2, 3, 4, 5].map(n => 'var(--cc-s' + n + ')');
 const style = [
@@ -21,7 +32,12 @@ const style = [
 '.circuit-course button:focus-visible,.circuit-course input:focus-visible,.circuit-course select:focus-visible{outline:3px solid var(--accent);outline-offset:3px}',
 '.circuit-course h2,.circuit-course h3,.circuit-course p{margin:0 0 10px}.circuit-course h2{font-size:24px}.circuit-course h3{font-size:18px}',
 '.circuit-course .circuit-course-primary-answers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.circuit-course .circuit-course-primary-answers>h3,.circuit-course .circuit-course-primary-answers>p{grid-column:1/-1}.circuit-course .circuit-course-primary-answers .course-symbolic-answer{margin:0}@media(max-width:760px){.circuit-course .circuit-course-primary-answers{grid-template-columns:minmax(0,1fr)}.circuit-course[data-circuit-course-presentation=symbolic] .circuit-course-layout>main{order:-1}}',
-'.circuit-course .circuit-course-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}',
+// Two-level navigation: a chapter row, then the tab row of the current chapter (the other chapters' rows stay hidden in the DOM). On a phone each row is one line of equal columns.
+  '.circuit-course .circuit-course-nav{display:grid;gap:8px;margin:16px 0}.circuit-course .circuit-course-chapters,.circuit-course .circuit-course-tabs{display:flex;flex-wrap:wrap;gap:8px}',
+  '.circuit-course .circuit-course-chapters button{font-weight:bold}.circuit-course .circuit-course-tab-short{display:none}',
+  // Lecture examples are folded (open by default only for a few); the summary tells the count and the last one applied.
+  '.circuit-course .circuit-course-examples{border:1px solid var(--line);border-radius:8px;padding:0 10px;margin-top:12px}.circuit-course .circuit-course-examples>summary{min-height:44px;padding:9px 0;overflow-wrap:anywhere}',
+  '.circuit-course .circuit-course-examples .circuit-course-actions,.circuit-course .circuit-course-examples .cc-tool-presets{margin:0 0 10px}',
 '.circuit-course .circuit-course-layout{display:grid;grid-template-columns:minmax(250px,320px) minmax(0,1fr);gap:18px}',
 '.circuit-course .circuit-course-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px;min-width:0}',
 '.circuit-course .circuit-course-layout>aside,.circuit-course .circuit-course-layout>main{min-width:0}.circuit-course .circuit-course-schematic{max-height:240px}',
@@ -57,7 +73,7 @@ const style = [
 '.circuit-course .cc-pass{color:var(--success)}.circuit-course .cc-fail{color:var(--warning);font-weight:bold}.circuit-course .cc-curve path.cc-line{fill:none;stroke:var(--accent);stroke-width:2.5}',
 // Phone width (390 px): tool fields stack label over input, sliders get a 44 px touch band, and text fields are 16 px so iOS does not zoom in on focus.
 '@media(max-width:480px){.circuit-course .cc-field-row{grid-template-columns:minmax(0,1fr)}.circuit-course input[type=range]{min-height:44px}.circuit-course input[type=text],.circuit-course input:not([type]),.circuit-course select,.circuit-course textarea{font-size:16px;min-height:44px}}',
-'@media(max-width:760px){.circuit-course{padding:10px}.circuit-course .circuit-course-layout{grid-template-columns:1fr}.circuit-course h2{font-size:21px}.circuit-course .circuit-course-tabs button{flex:1 1 150px}.circuit-course .circuit-course-graphs{grid-template-columns:1fr}}'
+'@media(max-width:760px){.circuit-course{padding:10px}.circuit-course .circuit-course-layout{grid-template-columns:1fr}.circuit-course h2{font-size:21px}.circuit-course .circuit-course-chapters,.circuit-course .circuit-course-tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}.circuit-course .circuit-course-nav button{padding:6px 3px;font-size:14px;overflow-wrap:anywhere}.circuit-course .circuit-course-chapters button{white-space:nowrap}.circuit-course .circuit-course-chapter-long,.circuit-course .circuit-course-tab-long{display:none}.circuit-course .circuit-course-tab-short{display:inline}.circuit-course .circuit-course-graphs{grid-template-columns:1fr}}'
 ].join('\n');
 // Phasors arrive as internal RMS; they are drawn and printed in the display basis (peak = √2 · RMS). raw: true marks a quantity without that rule.
 export function phasorGraphs(phasors, basis = 'rms') {
@@ -168,11 +184,26 @@ export function verificationTable(rows, basis) {
     '결과', '비고'], cells) + '<p class="circuit-course-note">허용 오차는 항목마다 0.1 % 안팎이며, 교재가 중간값을 반올림한 경우는 비고에 적었습니다.</p></section>';
 }
 
+// Chapter row (a phone shows "Ch11" and the short tab labels, wide screens the full names) plus one tab row per chapter; showChapter() reveals the current one.
+function navHtml() {
+  const titleOf = item => (item.kind === 'tool' ? TOOL_TABS : EXPERIMENTS).find(t => t.id === item.id)?.title ?? item.label;
+  const chapters = CHAPTERS.map(c => '<button type="button" data-circuit-course-chapter="' + c.id + '" title="' + esc(c.short + (c.long ? ' ' + c.long : '')) + '">' + esc(c.short)
+    + (c.long ? '<span class="circuit-course-chapter-long"> ' + esc(c.long) + '</span>' : '') + '</button>').join('');
+  const rows = CHAPTERS.map(c => '<div class="circuit-course-tabs" role="group" data-circuit-course-items="' + c.id + '" aria-label="' + esc(c.short + ' 항목') + '" hidden>'
+    + c.items.map(i => '<button type="button" data-circuit-course-' + i.kind + '="' + esc(i.id) + '" title="' + esc(titleOf(i)) + '"><span class="circuit-course-tab-short">' + esc(i.label)
+      + '</span><span class="circuit-course-tab-long">' + esc(titleOf(i)) + '</span></button>').join('') + '</div>').join('');
+  return '<nav class="circuit-course-nav" aria-label="AC 학습 탐색"><div class="circuit-course-chapters" role="group" aria-label="교재 장">' + chapters + '</div>' + rows + '</nav>';
+}
+
 export function createCircuitCourseView(host) {
   host.classList.add('circuit-course');
-  host.innerHTML = '<style>' + style + '</style><header><h2>교류 · 3상 회로 실험실</h2><p>균형 정현파 정상상태에서 페이저, 복소 임피던스, 무효전력과 역률을 직접 바꿔 보세요.</p><div class="circuit-course-basis" role="group" aria-label="진폭 표시 기준"><span>진폭 표시 기준 (내부 계산은 RMS)</span><button type="button" data-circuit-course-basis="peak" aria-pressed="false">peak (최댓값)</button><button type="button" data-circuit-course-basis="rms" aria-pressed="true">RMS (실효값)</button></div></header><nav class="circuit-course-tabs" aria-label="AC 학습 실험">' + EXPERIMENTS.map(e => '<button type="button" data-circuit-course-experiment="' + esc(e.id) + '">' + esc(e.title) + '</button>').join('') + TOOL_TABS.map(t => '<button type="button" data-circuit-course-tool="' + esc(t.id) + '">' + esc(t.title) + '</button>').join('') + '</nav><div class="circuit-course-layout"><aside><section class="circuit-course-card"><h3 data-circuit-course-title></h3><p data-circuit-course-description></p><form class="circuit-course-form" data-circuit-course-form novalidate></form><div class="circuit-course-actions"><button type="button" data-circuit-course-apply class="circuit-course-apply">입력 적용 · 계산</button><button type="button" data-circuit-course-reset>이 실험 초기화</button></div><div class="circuit-course-actions" data-circuit-course-examples></div><p class="circuit-course-note" data-circuit-course-live-note>숫자를 바꾼 뒤 적용하세요. 잘못된 입력은 계산하지 않습니다.</p></section><section class="circuit-course-card" data-circuit-course-theory></section></aside><main><div class="circuit-course-status" role="status" aria-live="polite" data-circuit-course-status></div><div data-circuit-course-results></div></main></div>' + TOOL_TABS.map(t => '<section class="circuit-course-tool" data-circuit-course-tool-panel="' + esc(t.id) + '" hidden></section>').join('');
+  host.innerHTML = '<style>' + style + '</style><header><h2>교류 · 3상 회로 실험실</h2><p>균형 정현파 정상상태에서 페이저, 복소 임피던스, 무효전력과 역률을 직접 바꿔 보세요.</p><div class="circuit-course-basis" role="group" aria-label="진폭 표시 기준"><span>진폭 표시 기준 (내부 계산은 RMS)</span><button type="button" data-circuit-course-basis="peak" aria-pressed="false">peak (최댓값)</button><button type="button" data-circuit-course-basis="rms" aria-pressed="true">RMS (실효값)</button></div></header>' + navHtml() + '<div class="circuit-course-layout"><aside><section class="circuit-course-card"><h3 data-circuit-course-title></h3><p data-circuit-course-description></p><form class="circuit-course-form" data-circuit-course-form novalidate></form><div class="circuit-course-actions"><button type="button" data-circuit-course-apply class="circuit-course-apply">입력 적용 · 계산</button><button type="button" data-circuit-course-reset>이 실험 초기화</button></div><div data-circuit-course-examples></div><p class="circuit-course-note" data-circuit-course-live-note>숫자를 바꾼 뒤 적용하세요. 잘못된 입력은 계산하지 않습니다.</p></section><section class="circuit-course-card" data-circuit-course-theory></section></aside><main><div class="circuit-course-status" role="status" aria-live="polite" data-circuit-course-status></div><div data-circuit-course-results></div></main></div>' + TOOL_TABS.map(t => '<section class="circuit-course-tool" data-circuit-course-tool-panel="' + esc(t.id) + '" hidden></section>').join('');
   let settingsOpen = false;
-  const onToggle = event => { if (event.target.matches?.('[data-circuit-course-display-settings]')) settingsOpen = event.target.open; };
+  const foldOpen = new Map(); // experiment id → the user's open/closed choice for its example list (absent: the default rule)
+  const onToggle = event => {
+    if (event.target.matches?.('[data-circuit-course-display-settings]')) settingsOpen = event.target.open;
+    else if (event.target.matches?.('[data-circuit-course-examples-fold]')) foldOpen.set(event.target.dataset.circuitCourseExamplesFold, event.target.open);
+  };
   host.addEventListener('toggle', onToggle, true);
   const q = name => host.querySelector('[data-circuit-course-' + name + ']');
   const mathCards = parent => {for(const box of parent.querySelectorAll('.circuit-course-formula')){const source=box.textContent;box.replaceChildren();appendCourseMath(box,source);}};
@@ -192,7 +223,7 @@ export function createCircuitCourseView(host) {
     for(const a of data.answers||[]){const box=el('div','');box.className='course-symbolic-answer';el('strong',a.quantity+(a.unit?' ['+a.unit+']':''),box);appendCourseMath(box,a.formula);if(a.direction)el('p',a.direction,box);}
     el('p','조건·법칙·유도와 지원 범위는 아래 풀이를 펼쳐 확인하세요.').className='circuit-course-note';
   }
-  function showForm(experiment, params, drafts) {
+  function showForm(experiment, params, drafts, lastExample = null) {
     q('title').textContent = experiment.title; q('description').textContent = experiment.description;
     q('apply').hidden = experiment.id !== 'problem';
     q('live-note').textContent = experiment.id === 'problem' ? '숫자를 바꾼 뒤 적용하세요. 잘못된 입력은 계산하지 않습니다.' : '숫자를 바꾸면 바로 계산합니다. 잘못된 입력은 이유를 알리고 마지막 결과를 그대로 둡니다.';
@@ -218,7 +249,8 @@ export function createCircuitCourseView(host) {
     const anyShown = display.some(p => !(p.showIf && !p.showIf(params)));
     q('form').innerHTML = primary.map(fieldHtml).join('') + (anyShown ? '<details class="circuit-course-display" data-circuit-course-display-settings' + (settingsOpen ? ' open' : '') + '><summary>표시 설정 · 입력 기준 · 기호 이름</summary>'
       + display.map(fieldHtml).join('') + '</details>' : display.map(fieldHtml).join(''));
-    q('examples').innerHTML = experiment.examples.map((e, i) => '<button type="button" data-circuit-course-example="' + i + '">' + esc(e.label) + '</button>').join('');
+    q('examples').innerHTML = examplesFold(experiment.examples.length, lastExample, experiment.examples.map((e, i) => '<button type="button" data-circuit-course-example="' + i + '">' + esc(e.label) + '</button>').join(''),
+      foldOpen.get(experiment.id) ?? null, experiment.id);
     q('theory').innerHTML = '<h3>공식 · 읽는 기준</h3>' + (typeof experiment.formulas === 'function' ? experiment.formulas(params) : experiment.formulas).map(f => '<div class="circuit-course-formula">' + esc(f) + '</div>').join('') + '<details open><summary>가정 · 지원 범위</summary><ul>'
       + experiment.assumptions.map(a => '<li>' + esc(a) + '</li>').join('')
         + '</ul></details><details><summary>공개 교재 출처</summary><p class="circuit-course-note">MIT 교재 일부는 peak를 사용해 ½가 나타납니다. 이 실험은 RMS로 환산한 식을 씁니다. 보상식은 S와 커패시터 Y=jωC에서 유도했습니다.</p>' + REFERENCES.map(r => '<p><a href="' + esc(r.url)
@@ -233,6 +265,20 @@ export function createCircuitCourseView(host) {
     if (toolId) host.querySelectorAll('[data-circuit-course-experiment]').forEach(b => b.setAttribute('aria-current', 'false'));
   }
   function toolPanel(toolId) { return host.querySelector('[data-circuit-course-tool-panel="' + toolId + '"]'); }
+  /** Chapter row: the current chapter is marked and only its tab row is visible. */
+  function showChapter(chapterId) {
+    host.querySelectorAll('[data-circuit-course-chapter]').forEach(b => b.setAttribute('aria-current', String(b.dataset.circuitCourseChapter === chapterId)));
+    host.querySelectorAll('[data-circuit-course-items]').forEach(row => { row.hidden = row.dataset.circuitCourseItems !== chapterId; });
+  }
+  /** After a long example list was used: close it again so the inputs and the result come back up the screen (the summary keeps the label). */
+  function foldExamples(experimentId) {
+    foldOpen.set(experimentId, false);
+    const fold = q('examples')?.querySelector('details');
+    if (!fold) return;
+    const hadFocus = fold.contains(host.ownerDocument.activeElement);
+    fold.open = false;
+    if (hadFocus) fold.querySelector('summary').focus({ preventScroll: true });
+  }
   function status(message, kind = 'valid') { q('status').textContent = message; q('status').dataset.kind = kind; }
   /** One-line note in front of the status text; the next input rewrites the status line, which removes it. toolId: a course tool panel, omitted for the experiments. */
   function statusNote(note, toolId) {
@@ -302,6 +348,6 @@ export function createCircuitCourseView(host) {
     q('results').innerHTML = html;mathCards(q('results'));if(result.symbolicData?.status==='supported')renderSymbolic(q('symbolic-companion'),result.symbolicData); projection(result);
   }
   function showBasis(basis) { host.querySelectorAll('[data-circuit-course-basis]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.circuitCourseBasis === basis))); }
-  return { showForm, showResult, showTool, toolPanel, status, statusNote, dirty, projection, showBasis,
+  return { showForm, showResult, showTool, showChapter, foldExamples, toolPanel, status, statusNote, dirty, projection, showBasis,
     revealInput(key) { const input=host.querySelector('[data-circuit-course-key="'+key+'"]');const folded=input?.closest?.('[data-circuit-course-display-settings]');if(folded){folded.open=true;settingsOpen=true;}input?.scrollIntoView?.({block:'center'});input?.focus?.({preventScroll:true}); }, revealAnswer() { q('answers')?.scrollIntoView?.({block:'start'}); }, clear() { host.removeEventListener('toggle', onToggle, true);host.replaceChildren(); host.classList.remove('circuit-course'); } };
 }

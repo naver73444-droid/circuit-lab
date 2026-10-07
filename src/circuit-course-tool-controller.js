@@ -69,7 +69,7 @@ export function createCourseTool(host, def, env) {
     env.setBasis(preset.basis ?? 'rms');
     values = presetValues(def, preset); errors = {}; evalErrors = {}; makeDrafts();
     result = evaluateTool(def, values, basis); active = index;
-    render();
+    render(); view.foldPresets();
   }
   const onSubmit = event => event.preventDefault();
   // Browsers fire input for a select too; some automation only fires change. Handling both is harmless (same value twice).

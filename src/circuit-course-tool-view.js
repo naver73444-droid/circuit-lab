@@ -1,7 +1,7 @@
 // DOM for one live course tool. The form is built once and only its values/visibility are updated afterwards, so focus and a dragged slider
 // survive every input; the result area is redrawn each time. Colors come from the course stylesheet tokens.
 import { escapeHtml as esc } from './safe-dom.js';
-import { phasorGraphs, waves, triangle, table, verificationTable } from './circuit-course-view.js';
+import { phasorGraphs, waves, triangle, table, verificationTable, examplesFold, examplesSummary, FOLD_OPEN_MAX } from './circuit-course-view.js';
 import { fmt } from './circuit-course-format.js';
 import { toolFigure } from './circuit-course-figures.js';
 import { isShown, labelOf, unitOf, sliderOf, toDisplay, draftText } from './circuit-course-tool-common.js';
@@ -25,6 +25,7 @@ function lineChart(curve) {
 
 export function createCourseToolView(host, def) {
   const doc = host.ownerDocument;
+  let lastPreset = null;
   const inputOf = key => host.querySelector('[data-cc-key="' + key + '"]');
   const presets = def.presets.map((p, i) => '<button type="button" data-cc-preset="' + i + '" aria-pressed="false">' + esc(p.label) + '</button>').join('');
   const fieldHtml = f => {
@@ -35,7 +36,7 @@ export function createCourseToolView(host, def) {
         + f.key + '" step="any">' : '');
     return '<label data-cc-field="' + f.key + '" class="cc-field-row"><span data-cc-label></span>' + control + '<small class="cc-tool-error" role="status" data-cc-error="' + f.key + '"></small></label>';
   };
-  host.innerHTML = '<div class="circuit-course-card" data-cc-tool="' + def.id + '"><h3>' + esc(def.title) + '</h3><p>' + esc(def.lead) + '</p><div class="cc-tool-presets" role="group" aria-label="강의 예제">' + presets + '</div>'
+  host.innerHTML = '<div class="circuit-course-card" data-cc-tool="' + def.id + '"><h3>' + esc(def.title) + '</h3><p>' + esc(def.lead) + '</p>' + examplesFold(def.presets.length, null, presets, null, def.id, 'cc-tool-presets')
     + '<div class="cc-tool-grid"><form class="cc-tool-form" novalidate>' + def.fields.map(fieldHtml).join('')
       + '</form><div><div class="circuit-course-status" role="status" aria-live="polite" data-cc-status></div><div data-cc-results></div></div></div></div>';
   const results = host.querySelector('[data-cc-results]'), statusEl = host.querySelector('[data-cc-status]');
@@ -66,7 +67,21 @@ export function createCourseToolView(host, def) {
         if (input) { if (message) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid'); }
       }
     },
-    showPresetState(active) { host.querySelectorAll('[data-cc-preset]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.ccPreset) === active))); },
+    /** Marks the applied example and keeps its label in the fold's summary line (it stays after a later manual edit: "last applied"). */
+    showPresetState(active) {
+      host.querySelectorAll('[data-cc-preset]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.ccPreset) === active)));
+      if (active >= 0 && def.presets[active]) lastPreset = def.presets[active].label;
+      const summary = host.querySelector('[data-circuit-course-examples-fold] > summary');
+      if (summary) summary.textContent = examplesSummary(def.presets.length, lastPreset);
+    },
+    /** A long example list closes after one was used, so the inputs and the result come back up the screen. */
+    foldPresets() {
+      const fold = host.querySelector('[data-circuit-course-examples-fold]');
+      if (!fold || def.presets.length <= FOLD_OPEN_MAX) return;
+      const hadFocus = fold.contains(doc.activeElement);
+      fold.open = false;
+      if (hadFocus) fold.querySelector('summary').focus({ preventScroll: true });
+    },
     status(message, kind = 'valid') { statusEl.textContent = message; statusEl.dataset.kind = kind; },
     /** result: valid tool result; verification: rows for an active lecture preset or null; basis: 'peak' | 'rms'. */
     showResult(result, verification, basis) {

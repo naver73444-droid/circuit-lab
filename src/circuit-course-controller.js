@@ -1,7 +1,8 @@
 import { preserveCourseFocus } from './course-focus.js';
 import { EXPERIMENTS, getExperiment, initialParameters, evaluateExperiment, verifyExample, draftsOf, exampleDrafts, convertCoordinateDrafts, exampleChangeNote, changedParameterLabels } from './circuit-course-registry.js';
 import { parseProblemQuantity } from './circuit-course-problem.js';
-import { createCircuitCourseView } from './circuit-course-view.js';
+import { createCircuitCourseView, FOLD_OPEN_MAX } from './circuit-course-view.js';
+import { NAV_STORAGE_KEY, currentItem, initialNav, parseNav, selectChapter, selectItem, serializeNav } from './circuit-course-nav.js';
 import { createYDeltaTool } from './y-delta-tool-controller.js';
 import { TOOLS } from './circuit-course-tools.js';
 import { createCourseTool } from './circuit-course-tool-controller.js';
@@ -12,10 +13,16 @@ export { parseCourseNumber };
 const draftNumber = n => String(Number(n.toPrecision(10)));
 // Numeric experiments follow the course-wide amplitude toggle; the free problem keeps its own given-voltage basis.
 const followsBasis = experiment => experiment.id !== 'problem';
+// The last chapter and item (per chapter) are remembered across visits; storage may be blocked, then the choice lasts for this page only.
+const loadNav = () => { try { return parseNav(localStorage.getItem(NAV_STORAGE_KEY)); } catch { return initialNav(); } };
+const saveNav = nav => { try { localStorage.setItem(NAV_STORAGE_KEY, serializeNav(nav)); } catch { /* the choice is not kept */ } };
 export function createCircuitCourseController(host) {
   if (!host || typeof host.querySelector !== 'function') throw new TypeError('AC 실험 패널 host가 필요합니다.');
   const view = createCircuitCourseView(host);
-  let active = false, destroyed = false, id = EXPERIMENTS[0].id, tool = null, basis = 'rms';
+  let nav = loadNav();
+  const start = currentItem(nav);
+  // While a tool is open the experiment under it keeps its id (picking an experiment brings its form back).
+  let active = false, destroyed = false, id = start.kind === 'experiment' ? start.id : EXPERIMENTS[0].id, tool = start.kind === 'tool' ? start.id : null, basis = 'rms';
   const yDelta = createYDeltaTool(view.toolPanel('y-delta'));
   const courseTools = new Map(TOOLS.map(def => [def.id, createCourseTool(view.toolPanel(def.id), def, { getBasis: () => basis, setBasis: switchBasis })]));
   const states = new Map();
@@ -27,7 +34,7 @@ export function createCircuitCourseController(host) {
       for (const p of experiment.parameters) if (p.amplitude) params[p.key] *= basisFactor(basis);
     }
     return { params, drafts: draftsOf(experiment, params),
-      result: evaluateExperiment(experiment.id, params), dirty: false, validationFailed: false, origin: 'manual-conditions', activeExample: -1 };
+      result: evaluateExperiment(experiment.id, params), dirty: false, validationFailed: false, origin: 'manual-conditions', activeExample: -1, lastExample: null };
   }
   for (const experiment of EXPERIMENTS) states.set(experiment.id, newState(experiment));
   const current = () => states.get(id);
@@ -41,7 +48,8 @@ export function createCircuitCourseController(host) {
     const restoreFocus = preserveCourseFocus(host, ['data-circuit-course-key', 'data-circuit-course-experiment', 'data-circuit-course-mode', 'data-circuit-course-reset', 'data-circuit-course-example', 'data-circuit-course-basis']);
     const state = current();
     view.showBasis(basis);
-    view.showForm(getExperiment(id), displayParams(), state.drafts);
+    view.showChapter(nav.chapter);
+    view.showForm(getExperiment(id), displayParams(), state.drafts, state.lastExample);
     view.showTool(tool);
     if (state.dirty && !state.validationFailed) view.dirty(); else view.showResult(state.result, id, state.params, verification());
     restoreFocus();
@@ -117,12 +125,20 @@ export function createCircuitCourseController(host) {
       apply(true);
     } else { state.dirty = true; view.dirty(); if (target.tagName === 'SELECT') render(); }
   }
+  /** Chapter or item chosen: show that item's screen (a chapter opens on the item last used in it) and remember the choice. */
+  function go(next) {
+    nav = next; saveNav(nav);
+    const item = currentItem(nav);
+    if (item.kind === 'tool') tool = item.id; else { id = item.id; tool = null; }
+    render();
+  }
   function onClick(event) {
     const target = event.target.closest?.('button');
     if (!target || !host.contains(target)) return;
     if (target.dataset.circuitCourseBasis) { switchBasis(target.dataset.circuitCourseBasis); return; }
-    if (target.dataset.circuitCourseTool) { tool = target.dataset.circuitCourseTool; render(); return; }
-    if (target.dataset.circuitCourseExperiment) { id = target.dataset.circuitCourseExperiment; tool = null; render(); return; }
+    if (target.dataset.circuitCourseChapter) { if (target.dataset.circuitCourseChapter !== nav.chapter) go(selectChapter(nav, target.dataset.circuitCourseChapter)); return; }
+    if (target.dataset.circuitCourseTool) { go(selectItem(nav, 'tool', target.dataset.circuitCourseTool)); return; }
+    if (target.dataset.circuitCourseExperiment) { go(selectItem(nav, 'experiment', target.dataset.circuitCourseExperiment)); return; }
     if (id === 'problem' && ['numeric', 'symbolic'].includes(target.dataset.circuitCourseMode)) {
       const state = current(), mode = target.dataset.circuitCourseMode;
       state.drafts.solutionMode = mode; state.dirty = true; state.validationFailed = false; render();
@@ -148,10 +164,12 @@ export function createCircuitCourseController(host) {
       states.set(id, state);
       state.drafts = exampleDrafts(experiment, example, state.drafts);
       state.dirty = true; state.validationFailed = false; state.origin = id === 'problem' ? 'fictional-check' : 'example';
+      state.lastExample = example.label;
       render(); apply();
       state.activeExample = example.expect ? index : -1;
       if (state.activeExample >= 0 && !state.validationFailed) view.showResult(state.result, id, state.params, verification());
       if (!state.validationFailed) view.statusNote(exampleChangeNote({ basisBefore, basisAfter: state.drafts.basis ?? basis, labels: changedParameterLabels(experiment, beforeDrafts, state.drafts, displayParams()) }));
+      if (experiment.examples.length > FOLD_OPEN_MAX) view.foldExamples(id);
     }
   }
   // Course tools: the preset button is handled inside the tool (its own listener, deeper in the DOM). A capture listener here records the state just before,
@@ -183,9 +201,9 @@ export function createCircuitCourseController(host) {
     inspect() {
       if (destroyed) return { active: false, destroyed: true, experimentId: id };
       const state = current();
-      return { active, destroyed, experimentId: id, tool, basis, yDelta: yDelta.inspect(), courseTools: Object.fromEntries([...courseTools].map(([key, t]) => [key, t.inspect()])), dirty: state.dirty, params: { ...state.params },
+      return { active, destroyed, experimentId: id, tool, chapter: nav.chapter, basis, yDelta: yDelta.inspect(), courseTools: Object.fromEntries([...courseTools].map(([key, t]) => [key, t.inspect()])), dirty: state.dirty, params: { ...state.params },
         drafts: { ...state.drafts },
-        status: state.validationFailed ? 'invalid' : state.dirty ? 'draft' : state.result.status, activeExample: state.activeExample,
+        status: state.validationFailed ? 'invalid' : state.dirty ? 'draft' : state.result.status, activeExample: state.activeExample, lastExample: state.lastExample,
         // Serializable read-only summary, without graph callback functions.
         result: JSON.parse(JSON.stringify(state.result, (key, value) => typeof value === 'function' ? undefined : value)) };
     },
