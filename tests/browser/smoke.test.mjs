@@ -3543,7 +3543,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await autoUpdateOff();
     await runAnalysis("ac");
     let snapshot = await state();
-    assert.deepEqual(pickValues(snapshot.probes), ["I(K1.1)", "I(K1.2)", "I(R1, pin 1→2)"]);
+    assert.deepEqual(pickValues(snapshot.probes), ["I(K1.1)", "I(K1.2, 기준 2b→2a)", "I(R1, 기준 1→2)"]);
     const currents = snapshot.phasorResult.points[0].componentCurrents;
     const polar = (z) => [Math.hypot(z.re, z.im), (Math.atan2(z.im, z.re) * 180) / Math.PI];
     assert.equal(snapshot.acBasis, "rms", "the textbook example opens with the rms display");
