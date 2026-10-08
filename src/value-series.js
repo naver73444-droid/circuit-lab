@@ -7,6 +7,10 @@
  */
 
 export const E12 = Object.freeze([1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2]);
+/** E24: 값 조절 시트에서 더 촘촘하게 고를 때. */
+export const E24 = Object.freeze([1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0, 2.2, 2.4, 2.7, 3.0, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1]);
+/** 전원 값(V, A)용 "보기 좋은" 계열: 5 → 6 → 7 … 10 → 12 → 15 → 20. 저항 계열과 달리 정수 전압이 나온다. */
+export const NICE = Object.freeze([1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 9]);
 export const SERIES_MIN_EXPONENT = -15;
 export const SERIES_MAX_EXPONENT = 12;
 
@@ -50,8 +54,8 @@ export function formatSeriesValue(mantissa, exponent, { tail = "", megStyle = "m
   return `${digits}${prefixFor(group, megStyle)}${tail}`;
 }
 
-/** 값 하나를 계열 위/아래 한 칸으로. direction: +1(위) | -1(아래). 반환: {text, value} | null (범위 밖/해석 불가). */
-export function stepSeriesText(text, direction) {
+/** 값 하나를 계열 위/아래 한 칸으로. direction: +1(위) | -1(아래). series: E12(기본) | E24 | NICE. 반환: {text, value} | null (범위 밖/해석 불가). */
+export function stepSeriesText(text, direction, series = E12) {
   if (direction !== 1 && direction !== -1) return null;
   const parsed = parseSeriesText(text);
   if (!parsed || !(parsed.value > 0)) return null;
@@ -61,12 +65,12 @@ export function stepSeriesText(text, direction) {
   const eps = 1e-6;
   let next = null;
   if (direction === 1) {
-    const index = E12.findIndex((entry) => entry > mantissa * (1 + eps));
-    next = index >= 0 ? { mantissa: E12[index], exponent } : { mantissa: E12[0], exponent: exponent + 1 };
+    const index = series.findIndex((entry) => entry > mantissa * (1 + eps));
+    next = index >= 0 ? { mantissa: series[index], exponent } : { mantissa: series[0], exponent: exponent + 1 };
   } else {
     let index = -1;
-    for (let i = E12.length - 1; i >= 0; i -= 1) if (E12[i] < mantissa * (1 - eps)) { index = i; break; }
-    next = index >= 0 ? { mantissa: E12[index], exponent } : { mantissa: E12[E12.length - 1], exponent: exponent - 1 };
+    for (let i = series.length - 1; i >= 0; i -= 1) if (series[i] < mantissa * (1 - eps)) { index = i; break; }
+    next = index >= 0 ? { mantissa: series[index], exponent } : { mantissa: series[series.length - 1], exponent: exponent - 1 };
   }
   if (next.exponent < SERIES_MIN_EXPONENT || next.exponent > SERIES_MAX_EXPONENT) return null;
   const formatted = formatSeriesValue(next.mantissa, next.exponent, parsed);
