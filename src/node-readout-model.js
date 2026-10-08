@@ -6,10 +6,12 @@
  *
  * 부호 규칙(엔진과 동일): 2단자 부품의 전류는 pin 1→pin 2 방향(양수), 전압은 V(pin1) − V(pin2).
  * 수동 부호 규칙이므로 p = v·i > 0 이면 소비(흡수), < 0 이면 공급.
+ * 전류 표시: DC·시간응답(순간값)은 항상 양의 크기 + 실제로 흐르는 방향("5 mA (2→1)", 0 근처는 방향 없음),
+ * AC 페이저는 표시 기준 방향(부품별로 뒤집을 수 있음, current-direction.js) 기준이다.
  * AC는 페이저이며 크기는 peak(최댓값) 기준이다(앱의 AC 설정과 동일).
  */
 import { buildTopology, pinCount, secondaryCurrentKey } from "./circuit-engine.js";
-import { currentDirectionDescriptor } from "./current-direction.js";
+import { actualCurrentDirection, currentReferenceSign, pointCurrentScale, referenceDirection, signedCurrent } from "./current-direction.js";
 import { acMagnitudeLevel, acPhaseDegrees } from "./plot-format.js";
 import { averagePowerLabel, normalizeAcBasis, scaleComplex } from "./ac-basis.js";
 import { engineering, nearestSampleIndex } from "./scope-model.js";
@@ -156,6 +158,24 @@ export function nodeReadout({ circuit, result, target, index, x, acBasis = "peak
   };
 }
 
+/**
+ * 부품(권선) 전류 판독. `raw`는 엔진 기준(solver 부호) 값.
+ * AC: 표시 기준 방향(뒤집기 반영)의 페이저, direction = "기준 1→2".
+ * DC·시간응답: value/text는 크기, direction은 실제 방향("2→1", 0 근처는 ""), signed는 엔진 부호 그대로.
+ */
+function currentEntry(component, raw, { winding = 1, acBasis = "peak", scale = 0 } = {}) {
+  if (raw === undefined) return null;
+  const reference = referenceDirection(component, undefined, winding)?.label ?? "";
+  if (isComplex(raw)) {
+    const shown = signedCurrent(raw, currentReferenceSign(component, winding));
+    return { ...quantity(shown, "A", acBasis), signed: shown, reference, actual: null, direction: reference ? `기준 ${reference}` : "" };
+  }
+  const actual = actualCurrentDirection(component, raw, { winding, scale });
+  if (!actual) return { ...quantity(raw, "A", acBasis), signed: raw, reference, actual: null, direction: "" };
+  const label = actual.zero ? null : actual.label;
+  return { value: actual.magnitude, unit: "A", text: engineering(actual.magnitude, "A"), signed: raw, reference, actual: label, direction: label ?? "" };
+}
+
 function powerEntry(component, voltage, current, mode, basis = "peak") {
   if (mode === "ac") {
     if (component.type !== "R" || !isComplex(voltage) || !isComplex(current)) return null;
@@ -173,7 +193,7 @@ function powerEntry(component, voltage, current, mode, basis = "peak") {
 }
 
 /**
- * 결합 인덕터·이상 변압기 호버: 권선 1(핀 1·2)과 권선 2(핀 3·4)의 전류(점 핀으로 들어가는 방향이 양수)와 전압.
+ * 결합 인덕터·이상 변압기 호버: 권선 1(핀 1·2)과 권선 2(핀 3·4)의 전류(엔진 기준 1a→1b·2a→2b, 표시는 currentEntry 규칙)와 전압.
  * `current`/`voltage`는 1차, `current2`/`voltage2`는 2차. DC·시간응답에서는 두 권선의 순 전력 v1·i1 + v2·i2도 준다.
  */
 function magneticReadout({ base, component, point, pins, ref, title, sample, acBasis = "peak" }) {
@@ -186,9 +206,9 @@ function magneticReadout({ base, component, point, pins, ref, title, sample, acB
   };
   const v1 = across(0);
   const v2 = across(2);
-  const winding = (raw, direction) => (raw === undefined ? null : { ...quantity(raw, "A", acBasis), direction });
-  const current = winding(raw1, "1a→1b");
-  const current2 = winding(raw2, "2a→2b");
+  const scale = sample.mode === "ac" ? 0 : pointCurrentScale(point?.componentCurrents);
+  const current = currentEntry(component, raw1, { winding: 1, acBasis, scale });
+  const current2 = currentEntry(component, raw2, { winding: 2, acBasis, scale });
   const voltage = v1 === null ? null : { ...quantity(v1, "V", acBasis), label: `V(${ref}.1) − V(${ref}.2)` };
   const voltage2 = v2 === null ? null : { ...quantity(v2, "V", acBasis), label: `V(${ref}.3) − V(${ref}.4)` };
   let power = null;
@@ -197,9 +217,9 @@ function magneticReadout({ base, component, point, pins, ref, title, sample, acB
     power = { value, unit: "W", text: engineering(value, "W"), label: component.type === "XFMR_IDEAL" ? "순 전력(이상 변압기는 항상 0)" : "저장 에너지 변화율 dW/dt", kind: "none", signed: value };
   }
   const lines = [];
-  if (current) lines.push(`1차 전류 ${current.text} (${current.direction})`);
+  if (current) lines.push(`1차 전류 ${current.text}${current.direction ? ` (${current.direction})` : ""}`);
   if (voltage) lines.push(`1차 전압 ${voltage.text}`);
-  if (current2) lines.push(`2차 전류 ${current2.text} (${current2.direction})`);
+  if (current2) lines.push(`2차 전류 ${current2.text}${current2.direction ? ` (${current2.direction})` : ""}`);
   if (voltage2) lines.push(`2차 전압 ${voltage2.text}`);
   if (power) lines.push(`${power.label} ${power.text}`);
   lines.push(sample.xText);
@@ -229,9 +249,9 @@ export function componentReadout({ circuit, result, componentId, index, x, acBas
 
   if (component.type === "COUPLED_L" || component.type === "XFMR_IDEAL") return magneticReadout({ base, component, point, pins, ref, title, sample, acBasis });
 
-  const descriptor = currentDirectionDescriptor(component);
   const rawCurrent = own(point?.componentCurrents, component.id);
-  const current = rawCurrent === undefined ? null : { ...quantity(rawCurrent, "A", acBasis), direction: descriptor?.label ?? "" };
+  const scale = sample.mode === "ac" ? 0 : pointCurrentScale(point?.componentCurrents);
+  const current = currentEntry(component, rawCurrent, { acBasis, scale });
 
   let rawVoltage = null;
   let voltageLabel = "";

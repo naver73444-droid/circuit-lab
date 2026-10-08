@@ -1,5 +1,6 @@
 import { CircuitError, deserializeCircuit, parseValue, pinCount, serializeCircuit } from "./circuit-engine.js";
 import { isSafeColor } from "./safe-dom.js";
+import { sanitizeCurrentReferences } from "./current-direction.js";
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -89,6 +90,8 @@ export function deserializeProject(text, fallbackSettings = {}) {
   }
   if (wrapped) validateProjectSettings(settings, new Set(Object.keys(payload.settings ?? {})));
   const circuit = deserializeCircuit(JSON.stringify(wrapped ? payload.circuit : payload));
+  // Optional display field (no version bump): flipCurrent / flipCurrent2 = true flips a part's shown current reference. Anything else is dropped.
+  sanitizeCurrentReferences(circuit.components);
   const probes = wrapped ? structuredClone(payload.probes ?? []) : [];
   if (wrapped) {
     const componentIds = new Set(circuit.components.map((component) => component.id));

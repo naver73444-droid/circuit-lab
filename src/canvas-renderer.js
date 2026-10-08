@@ -10,7 +10,9 @@ import {
   routeWirePoints,
   snapPoint,
 } from "./circuit-geometry.js";
-import { currentArrowGeometry, currentDirectionDescriptor } from "./current-direction.js";
+import { actualCurrentDirection, currentArrowGeometry, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection } from "./current-direction.js";
+import { flowSampleIndex } from "./wire-current-model.js";
+import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { sourceInlineDescriptor } from "./ui-model.js";
@@ -74,8 +76,9 @@ export function magneticSymbolMarkup(component) {
  * A component drag takes a cheaper path (updateMoved): move that part's <g transform> and the `d` of the wires attached to it.
  */
 export function createCanvasRenderer(deps) {
-  const { state, elements, workspace, currentConnections, afterCanvasRender, onDragFrame } = deps;
+  const { state, elements, workspace, currentConnections, afterCanvasRender, onDragFrame, scopeView } = deps;
   let overlayFrame = null;
+  let arrowFrame = null;
   let dragFrame = null;
   let pendingDrag = null;
   // Render counters (debug hook): full rebuilds vs cheap drag updates.
@@ -206,13 +209,8 @@ export function createCanvasRenderer(deps) {
     const probe = currentProbes[0];
     const probed = probe ? " probed" : "";
     const color = probe ? ` style="--probe-color:${traceColor(probe.color)}"` : "";
-    const directionMarkup = currentProbes.map((item) => {
-      const direction = currentDirectionDescriptor(component, geometryVersion, item.winding);
-      const arrow = currentArrowGeometry(direction);
-      return arrow
-        ? `<g class="current-direction" aria-hidden="true"><title>${escapeHtml(direction.label)} · 양수 기준</title><line x1="${arrow.start.x}" y1="${arrow.start.y}" x2="${arrow.end.x}" y2="${arrow.end.y}"/><path d="M${arrow.head.map(point => `${point.x} ${point.y}`).join("L")}Z"/></g>`
-        : "";
-    }).join("");
+    const arrowSample = currentArrowSample();
+    const directionMarkup = currentProbes.map((item) => currentArrowMarkup(component, item.winding === 2 ? 2 : 1, geometryVersion, arrowSample)).join("");
     const connectionStatus = connection?.status ?? "solver-check";
     const badgeRotation = -Number(component.rotation ?? 0);
     const connectionMarkup = connectionStatus !== "referenced" ? `<rect class="connection-halo status-${escapeHtml(connectionStatus)}" x="-47" y="-47" width="94" height="94" rx="3"/><g class="connection-badge status-${escapeHtml(connectionStatus)}" data-show-connection="${escapeHtml(component.id)}" role="button" tabindex="0" aria-label="${ref} 연결 상태 보기" transform="translate(-35 -34) rotate(${badgeRotation})"><title>${escapeHtml(connection?.label ?? "연결 상태 보기")} · 클릭하여 설명</title><circle r="11"/><text y="4">${escapeHtml(connection?.badge ?? "?")}</text></g>` : "";
@@ -227,6 +225,89 @@ export function createCanvasRenderer(deps) {
     const modeMarkup = ["V", "I"].includes(component.type) && !sourceDescriptor ? `<text class="source-mode-label" x="${labelX}" y="${valueY + 16}" style="text-anchor:${anchor}">${escapeHtml(mode)}</text>` : "";
     const labels = `<g class="upright-labels" transform="rotate(${upright})"><text class="label" x="${labelX}" y="${labelY}" style="text-anchor:${anchor}">${ref}</text>${value ? `<text class="value-label" data-edit-prop="${escapeHtml(editProp)}" x="${labelX}" y="${valueY}" style="text-anchor:${anchor}">${value}</text>` : ""}${modeMarkup}</g>`;
     return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${escapeHtml(connectionStatus)}" aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${labels}${deleteMarkup}</g>`;
+  }
+
+  /**
+   * The sample the probe arrows describe: the DC point, or the transient sample of the scope cursor (else the last one), like the hover
+   * readout and the flow overlay. null (reference arrows) without a fresh real-valued result, and always for AC.
+   */
+  function currentArrowSample() {
+    const result = state.result;
+    if (!result || state.stale || state.runState?.status === "stale") return null;
+    const index = flowSampleIndex(result, scopeView?.cursorIndex);
+    const point = index === null ? null : result.points[index];
+    if (!point?.componentCurrents) return null;
+    return { point, scale: pointCurrentScale(point.componentCurrents) };
+  }
+
+  /** Text next to an arrow tip (or beside an arrow), kept upright on screen and pushed away from `at` along `unit` as seen on screen. */
+  function arrowTextMarkup(component, at, unit, text, className) {
+    const angle = (Number(component.rotation ?? 0) * Math.PI) / 180;
+    const screen = { x: unit.x * Math.cos(angle) - unit.y * Math.sin(angle), y: unit.x * Math.sin(angle) + unit.y * Math.cos(angle) };
+    const horizontal = Math.abs(screen.x) >= Math.abs(screen.y);
+    const anchor = horizontal ? (screen.x > 0 ? "start" : "end") : "middle";
+    const dy = horizontal ? "0.35em" : screen.y > 0 ? "1em" : "-0.3em";
+    const x = Math.round((at.x + unit.x * 4) * 10) / 10, y = Math.round((at.y + unit.y * 4) * 10) / 10;
+    return `<text class="${className}" x="0" y="0" dy="${dy}" style="text-anchor:${anchor}" transform="translate(${x} ${y}) rotate(${-Number(component.rotation ?? 0)})">${escapeHtml(text)}</text>`;
+  }
+
+  /**
+   * One current probe's arrow. With a fresh DC/transient sample it points the way the current really flows and carries the magnitude
+   * ("2.91 A"; "0 A" and no arrow near zero). Otherwise (AC, no result, stale) it is the reference direction the phasors and the signed
+   * scope traces use, labelled "기준" (a flipped part shows its flipped reference).
+   */
+  function currentArrowMarkup(component, winding, geometryVersion, sample) {
+    const reference = referenceDirection(component, geometryVersion, winding);
+    if (!reference) return "";
+    let direction = reference, text = "기준", mode = "reference";
+    let title = `기준 방향 ${reference.label} · AC 페이저와 그래프 부호의 기준`;
+    if (sample) {
+      const raw = sample.point.componentCurrents[probeCurrentKey({ componentId: component.id, winding })];
+      const actual = actualCurrentDirection(component, raw, { geometryVersion, winding, scale: sample.scale });
+      if (actual) {
+        mode = actual.zero ? "zero" : "actual";
+        direction = actual.zero ? null : actual.direction;
+        text = actual.zero ? "0 A" : engineering(actual.magnitude, "A");
+        title = actual.zero ? "전류 ≈ 0 A · 방향 없음" : `실제 방향 ${actual.label} · ${text}`;
+      }
+    }
+    const arrow = currentArrowGeometry(direction ?? reference);
+    if (!arrow) return "";
+    const lineMarkup = direction
+      ? `<line x1="${arrow.start.x}" y1="${arrow.start.y}" x2="${arrow.end.x}" y2="${arrow.end.y}"/><path d="M${arrow.head.map(point => `${point.x} ${point.y}`).join("L")}Z"/>`
+      : "";
+    const middle = { x: (arrow.start.x + arrow.end.x) / 2, y: (arrow.start.y + arrow.end.y) / 2 };
+    // A winding arrow runs beside its coil, between two pins and above the value label: its text goes on the outer side of the arrow.
+    // Other parts put it past the tip (their sides hold the ref and value labels); "0 A" sits where the reference tip would be.
+    const outward = isMagneticPart(component) ? { x: Math.sign(middle.x) || 1, y: 0 } : null;
+    const label = outward ? arrowTextMarkup(component, { x: middle.x + outward.x * 2, y: middle.y }, outward, text, "current-value")
+      : arrowTextMarkup(component, arrow.end, arrow.unit, text, "current-value");
+    const key = `${mode}|${direction?.label ?? reference.label}|${text}|${component.rotation ?? 0}`;
+    return `<g class="current-direction ${mode}" data-current-for="${escapeHtml(component.id)}" data-winding="${winding}" data-current-mode="${mode}" data-current-key="${escapeHtml(key)}" aria-hidden="true"><title>${escapeHtml(title)}</title>${lineMarkup}${label}</g>`;
+  }
+
+  /** Redraw only the probe arrows (scope cursor moved, result turned stale): one frame at most, the rest of the canvas is untouched. */
+  function refreshCurrentArrows() {
+    if (arrowFrame !== null) return;
+    arrowFrame = requestAnimationFrame(() => {
+      arrowFrame = null;
+      if (!workspace.circuitActive) return;
+      const groups = elements["component-layer"].querySelectorAll("g.current-direction[data-current-for]");
+      if (!groups.length) return;
+      const sample = currentArrowSample();
+      const geometryVersion = circuitGeometryVersion(state.circuit);
+      const byId = new Map(state.circuit.components.map((component) => [component.id, component]));
+      for (const group of groups) {
+        const component = byId.get(group.dataset.currentFor);
+        if (!component) continue;
+        const holder = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        holder.innerHTML = currentArrowMarkup(component, Number(group.dataset.winding) === 2 ? 2 : 1, geometryVersion, sample);
+        const next = holder.firstElementChild;
+        // An unchanged arrow is left alone (no DOM write while the cursor moves over a flat stretch or the DC point is re-shown).
+        if (next?.dataset.currentKey === group.dataset.currentKey) continue;
+        if (next) group.replaceWith(next); else group.remove();
+      }
+    });
   }
 
   /**
@@ -436,5 +517,5 @@ export function createCanvasRenderer(deps) {
     return routes;
   }
 
-  return { updateCanvasView, scheduleOverlayRender, scheduleDragUpdate, cancelDragUpdate, setMarquee, applySelection, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId, wireRoutes, stats };
+  return { refreshCurrentArrows, updateCanvasView, scheduleOverlayRender, scheduleDragUpdate, cancelDragUpdate, setMarquee, applySelection, renderCanvas, renderOverlay, endpointPosition, pinPosition, routeForWireId, wireRoutes, stats };
 }

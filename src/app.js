@@ -76,11 +76,13 @@ const session = createEditorSession({
   onPendingWireDropped: () => input.restoreToolHint(),
 });
 const renderer = createCanvasRenderer({
-  state, elements, workspace, currentConnections: session.currentConnections,
+  state, elements, workspace, scopeView, currentConnections: session.currentConnections,
   afterCanvasRender: () => flow.refresh(),
   onDragFrame: () => flow.suspend(),
 });
 const flow = createFlowLayer({ state, elements, scopeView, wireRoutes: renderer.wireRoutes });
+// Probe arrows show the real direction at the scope cursor time in a transient run, so they follow the cursor (one frame per move).
+scopeView.subscribe((type) => { if (type === "cursor") renderer.refreshCurrentArrows(); });
 const analysis = createAnalysisRunner({
   state, elements, workspace, inputDrafts, scopeView, phasorView, renderAll, setStatus, showCanvas, phasorPanelVisible,
   mutate: session.mutate, currentConnections: session.currentConnections, bumpGeneration: session.bumpGeneration, removeProbe: session.removeProbe,
@@ -90,7 +92,7 @@ const analysis = createAnalysisRunner({
   updateDraftNotice: (...args) => inspector.updateDraftNotice(...args),
   openProbeContextMenu: (...args) => input.openProbeContextMenu(...args),
   measureView,
-  onStaleChange: () => flow.refresh(),
+  onStaleChange: () => { flow.refresh(); renderer.refreshCurrentArrows(); },
 });
 const inspector = createInspector({
   state, elements, workspace, inputDrafts, phasorView, renderAll, setStatus, showInspector, isCircuitUiActive,
@@ -98,6 +100,7 @@ const inspector = createInspector({
   synchronizeIntent: analysis.synchronizeIntent, cancelScheduledRun: analysis.cancelScheduledRun, markInputDirty: analysis.markInputDirty,
   scheduleAutoRun: analysis.scheduleAutoRun, renderPhasorLearning: analysis.renderPhasorLearning,
   runSweep: analysis.runSweep, clearSweep: analysis.clearSweep,
+  flipCurrentReference: (...args) => { session.flipCurrentReference(...args); hover.refresh(); },
 });
 const hover = createHoverReadout({ state, elements, workspace, scopeView });
 const input = createEditorInput({

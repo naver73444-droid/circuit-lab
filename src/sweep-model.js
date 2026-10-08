@@ -207,12 +207,12 @@ function rawSeries(result, probe) {
  * N개 해석 결과를 한 프로브의 오버레이 시리즈로 병합.
  *   plan: planSweep 결과, results: plan.values와 같은 순서의 엔진 결과(또는 {ok:false, reason}/null — 건너뜀)
  *   probe: 프로젝트 probe {key, kind:"voltage"|"current", componentId, pin | junctionId, label, color}
- *   options: {acView:"magnitude"|"phase", palette}
+ *   options: {acView:"magnitude"|"phase", palette, currentSign} — currentSign −1: 기준 방향을 뒤집은 전류 프로브(표시 값 ×(−1))
  * 반환: {ok, analysis, sharedX, xValues, series:[{key, label, color, sweepIndex, sweepText, sweepValue, quantity, unit, baseUnit, xValues, raw, values}], skipped:[{index, label, reason}]}
  *   - 시리즈 라벨: `${probe.label} @ ${스윕 라벨}` (스윕 값마다 서로 다름), 색: 팔레트를 index 순서로 (서로 다름)
  *   - AC: acView에 따라 dB 크기(quantity dBV/dBA) 또는 위상(°)
  */
-export function mergeSweepResults({ plan, results, probe, acView = "magnitude", palette = SWEEP_COLORS } = {}) {
+export function mergeSweepResults({ plan, results, probe, acView = "magnitude", palette = SWEEP_COLORS, currentSign = 1 } = {}) {
   if (!plan?.ok || !Array.isArray(results)) return { ok: false, reason: "스윕 계획과 결과가 필요합니다.", series: [], skipped: [] };
   if (!probe) return { ok: false, reason: "프로브를 선택하세요.", series: [], skipped: [] };
   const series = [];
@@ -225,6 +225,7 @@ export function mergeSweepResults({ plan, results, probe, acView = "magnitude", 
     const { result } = unwrapped;
     const extracted = rawSeries(result, probe);
     if (extracted.error) { skipped.push({ index, label, reason: extracted.error }); return; }
+    if (extracted.baseUnit === "A" && currentSign === -1) extracted.raw = extracted.raw.map((value) => (typeof value === "object" ? { re: -value.re, im: -value.im } : -value));
     analysis ??= result.analysis;
     let values;
     let unit = extracted.baseUnit;

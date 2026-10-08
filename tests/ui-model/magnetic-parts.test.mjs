@@ -104,10 +104,15 @@ test("예전(version 1~3) 프로젝트 파일은 그대로 읽힌다", () => {
 
 test("전류 프로브 라벨 I(K1.1)·I(K1.2), 결과 키, CSV 머리글", () => {
   const example = cloneExample("coupled-coils");
-  const k1 = example.circuit.components.find((item) => item.id === "K1");
+  // The example flips the winding-2 reference to the textbook direction; the default label is checked on an unflipped copy.
+  const flipped = example.circuit.components.find((item) => item.id === "K1");
+  const { flipCurrent2, ...k1 } = flipped;
+  assert.equal(flipCurrent2, true);
   const t1 = { ...k1, id: "T1", type: "XFMR_IDEAL", props: { ref: "T1" } };
   assert.equal(currentProbeLabel(k1), "I(K1.1)");
   assert.equal(currentProbeLabel(k1, 2, 2), "I(K1.2)");
+  assert.equal(currentProbeLabel(flipped, 2, 2), "I(K1.2, 기준 2b→2a)");
+  assert.equal(currentProbeLabel(flipped, 2, 1), "I(K1.1)", "only winding 2 is flipped");
   assert.equal(currentProbeLabel(t1, 2, 2), "I(T1.2)");
   assert.equal(probeCurrentKey({ componentId: "K1" }), "K1");
   assert.equal(probeCurrentKey({ componentId: "K1", winding: 2 }), secondaryCurrentKey("K1"));

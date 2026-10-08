@@ -1,6 +1,7 @@
 import { CIRCUIT_LIMITS, endpointKey, isKnownComponentType, pinCount, validateCircuitStructure } from "./circuit-engine.js";
 import { remapFragment, extractFragment } from "./circuit-edit.js";
 import { GRID_SIZE } from "./circuit-geometry.js";
+import { currentReferenceFields } from "./current-direction.js";
 
 /**
  * Internal clipboard for Ctrl+C / Ctrl+X / Ctrl+V (DOM 없음). A clipboard is a plain fragment — parts, junctions and the wires
@@ -130,7 +131,7 @@ export function parseClipboardText(text) {
     const props = cleanProps(component.props);
     if (!props) return null;
     const control = cleanControl(component.type, component.control);
-    cleanComponents.push({ id: component.id, type: component.type, x: component.x, y: component.y, ...(rotation !== undefined ? { rotation } : {}), props, ...(control ? { control } : {}) });
+    cleanComponents.push({ id: component.id, type: component.type, x: component.x, y: component.y, ...(rotation !== undefined ? { rotation } : {}), props, ...(control ? { control } : {}), ...currentReferenceFields(component) });
     typeById.set(component.id, component.type);
   }
   for (const junction of junctions) {

@@ -1,7 +1,7 @@
 import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geometry.js";
 import { endpointExists } from "./circuit-edit.js";
 import { classifyCircuitConnections, connectionFrequency } from "./circuit-status.js";
-import { currentProbeLabel, isMagneticPart } from "./current-direction.js";
+import { currentProbeLabel, isMagneticPart, toggleCurrentReference } from "./current-direction.js";
 import { nextAvailableProbeColor, removeProbeByKey } from "./ui-model.js";
 import { allocatorFor } from "./id-allocator.js";
 
@@ -203,6 +203,19 @@ export function createEditorSession(deps) {
     committed();
   }
 
+  /**
+   * Flip the shown reference direction of a part's (winding's) current. Display only, like a probe edit: one undo step and a save,
+   * but no new generation, no stale result and no re-run; the probe label, scope sign, phasors and canvas arrow follow.
+   */
+  function flipCurrentReference(componentId, winding = 1) {
+    const component = state.circuit.components.find((item) => item.id === componentId);
+    if (!component || component.type === "GND" || (winding === 2 && !isMagneticPart(component))) return;
+    recordProbeEdit();
+    toggleCurrentReference(component, winding);
+    refreshProbeViews();
+    committed();
+  }
+
   function removeProbe(key) {
     recordProbeEdit();
     state.probes = removeProbeByKey(state.probes, key);
@@ -238,5 +251,5 @@ export function createEditorSession(deps) {
     committed();
   }
 
-  return { currentConnections, snapshot, restore, mutate, bumpGeneration, commitMove, mutateGrouped, closeEditGroup, undo, redo, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe };
+  return { currentConnections, snapshot, restore, mutate, bumpGeneration, commitMove, mutateGrouped, closeEditGroup, undo, redo, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe, flipCurrentReference };
 }

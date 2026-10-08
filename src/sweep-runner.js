@@ -1,5 +1,6 @@
 import { buildSweepCircuits, mergeSweepResults, planSweep, sweepTarget } from "./sweep-model.js";
 import { AnalysisCancelledError } from "./analysis-worker-client.js";
+import { currentReferenceSign } from "./current-direction.js";
 
 /** Whole-sweep wall-clock guard on top of the engine's own per-run budget. */
 export const SWEEP_TIME_LIMIT_MS = 60000;
@@ -110,10 +111,12 @@ export function createSweepRunner(deps) {
         say(`스윕이 ${limitMs / 1000}초 안전 한도를 넘어 중단했습니다. 점 수나 해석 범위를 줄이세요.`, "error");
         setStatus("스윕 중단", "error");
       } else if (!aborted) {
-        const overlay = { id: (overlaySerial += 1), generation: job.generation, probe, plan, results, componentRef: target.ref, views: new Map(), resultLike: null };
+        // A current probe keeps the reference direction it had when the sweep ran (flipped parts: ×(−1)), like the label it carries.
+        const currentSign = probe.kind === "current" ? currentReferenceSign(state.circuit.components.find((item) => item.id === probe.componentId), probe.winding ?? 1) : 1;
+        const overlay = { id: (overlaySerial += 1), generation: job.generation, probe, plan, results, currentSign, componentRef: target.ref, views: new Map(), resultLike: null };
         const view = viewFor(overlay, state.acView);
         if (!view) {
-          const merged = mergeSweepResults({ plan, results, probe, acView: state.acView });
+          const merged = mergeSweepResults({ plan, results, probe, acView: state.acView, currentSign });
           say(`스윕 결과를 만들 수 없습니다: ${merged.reason}`, "error");
           setStatus("스윕 실패", "error");
         } else {
@@ -136,7 +139,7 @@ export function createSweepRunner(deps) {
 
   function viewFor(overlay, acView) {
     if (overlay.views.has(acView)) return overlay.views.get(acView);
-    const merged = mergeSweepResults({ plan: overlay.plan, results: overlay.results, probe: overlay.probe, acView });
+    const merged = mergeSweepResults({ plan: overlay.plan, results: overlay.results, probe: overlay.probe, acView, currentSign: overlay.currentSign ?? 1 });
     let view = null;
     if (merged.ok) {
       // One result-like object per overlay, so toggling magnitude/phase keeps the scope cursors.

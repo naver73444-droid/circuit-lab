@@ -7,6 +7,8 @@ import { bindSweep, sweepMarkup } from "./sweep-panel.js";
 import { describeSelection, selectedItems, setSingleSelection } from "./selection-model.js";
 import { yDeltaCommandState } from "./y-delta-circuit.js";
 import { amplitudeText, normalizeAcBasis } from "./ac-basis.js";
+import { circuitGeometryVersion } from "./circuit-geometry.js";
+import { isCurrentReferenceFlipped, isMagneticPart, referenceDirection } from "./current-direction.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
 const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기" };
@@ -18,7 +20,7 @@ const needsPositive = (type, key) => (["R", "C", "L"].includes(type) && key === 
 
 export function createInspector(deps) {
   const { state, elements, workspace, inputDrafts, phasorView, mutate, currentConnections, synchronizeIntent, cancelScheduledRun, markInputDirty, scheduleAutoRun, renderPhasorLearning,
-    setStatus, renderAll, showInspector, isCircuitUiActive, runSweep, clearSweep } = deps;
+    setStatus, renderAll, showInspector, isCircuitUiActive, runSweep, clearSweep, flipCurrentReference } = deps;
 
   // Inspector re-renders rebuild innerHTML, which would drop keyboard focus (Tab lands on BODY).
   // Remember the focused control (and any in-flight Tab direction) by a stable key, then re-focus it or its successor.
@@ -199,6 +201,25 @@ export function createInspector(deps) {
       + `<div class="connection-detail status-referenced"><strong>이상 변압기 부호 규약</strong><span>V1, V2 점 극성 같으면 +n; I1, I2 모두 점으로 들어가면 −n.</span><small>v2 = ±n·v1, i1 = ∓n·i2. 전류 방향은 화면 기준 고정(i1: 1a→1b, i2: 2a→2b)이고, 점 위치는 부호(±n)에만 영향을 줍니다. 전력은 S1(흡수) + S2(흡수) = 0 ⇔ 1차 입력 = 2차 출력이며, Zin = ZL/n². 핀 1(1a)·2(1b)가 1차, 핀 3(2a)·4(2b)가 2차이며 각각 GND 기준이 필요합니다. 전류 프로브는 I 프로브 도구로 부품의 왼쪽 절반(I(T.1)) 또는 오른쪽 절반(I(T.2))을 누르세요.</small></div>`;
   }
 
+  /**
+   * The reference direction of the part's current (both windings for a magnetic part) and the button that flips it. Display only:
+   * AC phasors and the signed scope traces follow it, the solver and the DC/instantaneous readouts (always the real direction) do not.
+   */
+  function currentReferenceMarkup(component) {
+    if (component.type === "GND") return "";
+    const windings = isMagneticPart(component) ? [1, 2] : [1];
+    const geometryVersion = circuitGeometryVersion(state.circuit);
+    const rows = windings.map((winding) => {
+      const reference = referenceDirection(component, geometryVersion, winding);
+      const flipped = isCurrentReferenceFlipped(component, winding);
+      const name = windings.length > 1 ? (winding === 2 ? "2차 " : "1차 ") : "";
+      return `<div class="current-reference-row"><span>${name}기준 <b>${escapeHtml(reference?.label ?? "")}</b>${flipped ? " · 뒤집음" : ""}</span>`
+        + `<button type="button" data-flip-current="${winding}" aria-pressed="${flipped}" title="AC 페이저·그래프 부호의 기준 방향을 반대로 (계산은 그대로)">기준 뒤집기</button></div>`;
+    }).join("");
+    return `<fieldset class="source-group current-reference"><legend>전류 기준 방향</legend>${rows}`
+      + `<p class="field-help">AC 페이저와 그래프 부호(±)의 기준입니다. 교재 그림과 방향이 다르면 뒤집으세요: 표시 값이 ×(−1)이 되고 계산은 그대로입니다. DC·순간값은 늘 실제로 흐르는 방향과 크기로 보입니다.</p></fieldset>`;
+  }
+
   function selectedConnectionStatus(componentId) {
     try {
       return currentConnections().byComponent[componentId];
@@ -209,8 +230,9 @@ export function createInspector(deps) {
 
   /** Stable identity of an inspector control: survives re-renders that add or remove other fields. */
   function inspectorKey(control) {
-    const { prop, propSlider, controlTarget, controlDirection } = control.dataset;
+    const { prop, propSlider, controlTarget, controlDirection, flipCurrent } = control.dataset;
     if (prop !== undefined) return `prop:${prop}`;
+    if (flipCurrent !== undefined) return `flip-current:${flipCurrent}`;
     if (propSlider !== undefined) return `slider:${propSlider}`;
     if (controlTarget !== undefined) return "control-target";
     if (controlDirection !== undefined) return "control-direction";
@@ -343,6 +365,7 @@ export function createInspector(deps) {
     if (component.type === "COUPLED_L") html += couplingFields(p);
     if (component.type === "XFMR_IDEAL") html += transformerFields(p);
     if (component.type === "GND") html += `<p class="field-help">0 V 기준점입니다.</p>`;
+    html += currentReferenceMarkup(component);
     html += sweepMarkup(component, state);
     const savedFocus = captureInspectorFocus();
     elements["inspector-content"].innerHTML = html;
@@ -408,6 +431,11 @@ export function createInspector(deps) {
     };
     controlTarget?.addEventListener("change", commitControlReference);
     controlDirection?.addEventListener("change", commitControlReference);
+    elements["inspector-content"].querySelectorAll("[data-flip-current]").forEach((button) => button.addEventListener("click", () => {
+      if (!isCircuitUiActive()) return;
+      flipCurrentReference?.(selected.id, Number(button.dataset.flipCurrent) === 2 ? 2 : 1);
+      renderInspector();
+    }));
     restoreInspectorFocus(savedFocus);
   }
 

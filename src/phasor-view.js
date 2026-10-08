@@ -3,7 +3,7 @@ import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { relativePhase } from "./phasor-practice.js";
-import { probeCurrentKey } from "./current-direction.js";
+import { currentReferenceSign, probeCurrentKey, signedCurrent } from "./current-direction.js";
 import { acScale, normalizeAcBasis, scaleComplex, unitWithBasis } from "./ac-basis.js";
 
 /** Reads solved phasors. Does not run a solver, change probes, or write to state. */
@@ -25,7 +25,9 @@ export function createPhasorView(elements, state, parseNumeric, hasPendingInputs
         if (node === undefined) return null;
         return { probe, value: point.nodeVoltages[node], baseUnit: "V" };
       }
-      const value = point.componentCurrents[probeCurrentKey(probe)];
+      // Shown in the probe's reference direction: a flipped part (winding) shows −I, so the phasor matches the textbook figure.
+      const component = state.circuit.components.find((item) => item.id === probe.componentId);
+      const value = signedCurrent(point.componentCurrents[probeCurrentKey(probe)], currentReferenceSign(component, probe.winding ?? 1));
       return value === undefined ? null : { probe, value, baseUnit: "A" };
     }).filter(Boolean);
   }

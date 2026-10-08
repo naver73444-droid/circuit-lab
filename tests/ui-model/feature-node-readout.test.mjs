@@ -36,7 +36,8 @@ test("분압기 DC: 부품 판독 — R1 5 mA, 5 V, 25 mW / 전원은 50 mW 공�
   assert.equal(r1.ok, true);
   near(r1.current.value, 0.005, 1e-12);
   assert.equal(r1.current.text, "5 mA");
-  assert.equal(r1.current.direction, "pin 1→2");
+  assert.equal(r1.current.direction, "1→2", "DC: the real direction (R1 carries 5 mA from pin 1 to pin 2)");
+  assert.equal(r1.current.reference, "1→2");
   assert.equal(r1.voltage.value, 5);
   assert.equal(r1.voltage.text, "5 V");
   near(r1.power.value, 0.025, 1e-12);

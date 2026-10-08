@@ -249,6 +249,9 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .current-direction { pointer-events: none; color: var(--probe-color); }
 .current-direction line { stroke: currentColor; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
 .current-direction path { fill: currentColor; stroke: var(--canvas); stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* Reference arrows (AC phasors, no fresh result) are dashed; a fresh DC/transient arrow is solid and points the real way. */
+.current-direction.reference line { stroke-dasharray: 4 3; }
+.current-direction .current-value { fill: currentColor; font-size: 10px; font-weight: 700; paint-order: stroke; stroke: var(--canvas); stroke-width: 3px; stroke-linejoin: round; }
 .current-direction-note { flex: 1 1 100%; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .inline-value-editor { position: absolute; z-index: 10; width: 100px; min-height: 38px; padding: 4px 8px; border: 2px solid var(--accent); border-radius: 7px; background: var(--field); color: var(--text); }
 .probe-context-menu { position: absolute; z-index: 12; display: grid; min-width: 190px; max-width: calc(100% - 8px); padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--raised); box-shadow: 0 3px 10px #0005; }
@@ -279,6 +282,8 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .source-group { min-width: 0; margin: 0 0 10px; padding: 7px; border: 1px solid var(--line-soft); border-radius: 7px; }
 .source-group legend { color: var(--accent); font-weight: 600; font-size: 12px; }
 .source-group.active-group { border-color: var(--accent); }
+.current-reference-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 0 6px; font-size: 12px; }
+.current-reference-row button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .source-help { margin-top: 3px; }
 .connection-detail { display: grid; gap: 4px; margin-bottom: 10px; padding: 8px; border-left: 3px solid var(--warning); border-radius: 9px; background: var(--warning-bg); }
 .connection-detail strong { font-size: 12px; }

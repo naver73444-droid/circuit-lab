@@ -4,7 +4,7 @@ import { acMagnitudeLevel, acPhaseDegrees, currentDisplayScale } from "./plot-fo
 import { suggestAnalysis } from "./analysis-policy.js";
 import { AnalysisCancelledError, AnalysisWorkerClient } from "./analysis-worker-client.js";
 import { describeCircuitFailure, failureRecord, resultAvailabilityText } from "./analysis-diagnostics.js";
-import { currentDirectionGuide, currentProbeLabel, probeCurrentKey } from "./current-direction.js";
+import { actualCurrentDirection, currentDirectionGuide, currentProbeLabel, currentReferenceSign, pointCurrentScale, probeCurrentKey, signedCurrent } from "./current-direction.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
@@ -257,6 +257,21 @@ export function createAnalysisRunner(deps) {
     return `${Number(value.toPrecision(6))} ${unit}`;
   }
 
+  /**
+   * DC chip value. A current is a magnitude with the direction it really flows ("5 mA (2→1)", no direction near 0), whatever the
+   * probe's reference: the scope and CSV keep the signed value in the reference shown in the probe label.
+   */
+  function dcReading(probe, series, unit) {
+    if (probe.kind !== "current") return displayNumber(series.values[0], unit);
+    const component = state.circuit.components.find((item) => item.id === probe.componentId);
+    const point = state.result.points[0];
+    const actual = component ? actualCurrentDirection(component, point.componentCurrents[probeCurrentKey(probe)], {
+      geometryVersion: circuitGeometryVersion(state.circuit), winding: probe.winding ?? 1, scale: pointCurrentScale(point.componentCurrents),
+    }) : null;
+    if (!actual) return displayNumber(series.values[0], unit);
+    return actual.zero ? `0 ${unit}` : `${displayNumber(Math.abs(series.values[0]), unit)} (${actual.label})`;
+  }
+
   function renderProbes() {
     const sweepView = sweepRunner.view(state.acView);
     if (sweepView) {
@@ -272,7 +287,7 @@ export function createAnalysisRunner(deps) {
     const chips = visibleProbes.map((probe) => {
       const series = seriesByKey.get(probe.key);
       const unit = series?.unit ?? (probe.kind === "voltage" ? "V" : "A");
-      const reading = state.result?.analysis === "dc" && series ? displayNumber(series.values[0], unit) : unit;
+      const reading = state.result?.analysis === "dc" && series ? dcReading(probe, series, unit) : unit;
       return `<span class="probe-chip" data-probe-key="${escapeHtml(probe.key)}" title="우클릭하면 이 프로브만 제거" style="--chip-color:${traceColor(probe.color)}"><i></i><span>${escapeHtml(probe.label)}</span><small>${reading}</small><button data-remove-probe="${escapeHtml(probe.key)}" type="button" aria-label="프로브 제거">×</button></span>`;
     }).join("");
     const guide = visibleProbes.some((probe) => probe.kind === "current")
@@ -301,7 +316,10 @@ export function createAnalysisRunner(deps) {
       const raw = state.result.points.map((point) => point.nodeVoltages[node]);
       return { probe, raw, baseUnit: "V" };
     }
-    const raw = state.result.points.map((point) => point.componentCurrents[probeCurrentKey(probe)]);
+    // Scope, measurements and CSV show the current in the probe's reference direction (flipped parts: ×(−1)); the solver numbers stay.
+    const component = state.circuit.components.find((item) => item.id === probe.componentId);
+    const sign = currentReferenceSign(component, probe.winding ?? 1);
+    const raw = state.result.points.map((point) => signedCurrent(point.componentCurrents[probeCurrentKey(probe)], sign));
     if (raw.some((value) => value === undefined)) return null;
     return { probe, raw, baseUnit: "A" };
   }
