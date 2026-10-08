@@ -162,6 +162,40 @@ export function loopCurrentField(model, point) {
 }
 
 /**
+ * loopCurrentField for pictures that sample many points: (x, y, z, out) => boolean writes B into out[0..2] and returns false
+ * inside the wire exclusion zone. The loop basis and the checks of the model are worked out once; per point the arithmetic is
+ * that of loopExclusion + loopFieldClosedForm in the same order, so the numbers are bit-identical (tested). The caller keeps
+ * the point within the ±20 m model range (loopCurrentField refuses points outside it).
+ */
+export function createLoopSampler({ current, center = [0, 0, 0], radius, normal = [0, 0, 1] }) {
+  const I = finite(current, '전류'), a = finite(radius, '고리 반지름');
+  if (Math.abs(I) > 100) throw new EMInputError('전류는 ±100 A 범위여야 합니다.', 'OUT_OF_RANGE');
+  if (a < .05 || a > 5) throw new EMInputError('고리 반지름은 0.05…5 m 범위여야 합니다.', 'OUT_OF_RANGE');
+  const { n: [n0, n1, n2], e1: [f0, f1, f2], e2: [g0, g1, g2] } = loopBasis(normal), [c0, c1, c2] = center;
+  const exclusion = Math.max(EXCLUSION_METERS, .02 * a), factor = MU0 * I / (2 * Math.PI);
+  return (px, py, pz, out) => {
+    const d0 = px - c0, d1 = py - c1, d2 = pz - c2, z = d0 * n0 + d1 * n1 + d2 * n2;
+    if (I !== 0 && Math.hypot(Math.hypot(d0 - n0 * z, d1 - n1 * z, d2 - n2 * z) - a, z) <= exclusion) return false;
+    if (I === 0) { out[0] = 0; out[1] = 0; out[2] = 0; return true; }
+    const x = d0 * f0 + d1 * f1 + d2 * f2, y = d0 * g0 + d1 * g1 + d2 * g2, rho = Math.hypot(x, y);
+    let bRho, bz;
+    if (rho < LOOP_AXIS_FRACTION * a) {
+      const s2 = a * a + z * z;
+      bz = MU0 * I * a * a / (2 * s2 ** 1.5);
+      bRho = 3 * MU0 * I * a * a * z * rho / (4 * s2 ** 2.5);
+    } else {
+      const alpha2 = (a - rho) ** 2 + z * z, beta2 = (a + rho) ** 2 + z * z, beta = Math.sqrt(beta2);
+      const { K: k, E: e } = ellipticKE(4 * a * rho / beta2, Math.sqrt(alpha2 / beta2));
+      bz = factor / beta * (k + (a * a - rho * rho - z * z) / alpha2 * e);
+      bRho = factor * z / (rho * beta) * ((a * a + rho * rho + z * z) / alpha2 * e - k);
+    }
+    const r0 = rho > 0 ? x / rho : 0, r1 = rho > 0 ? y / rho : 0, s = bRho * r0, t = bRho * r1;
+    out[0] = n0 * bz + (f0 * s + g0 * t); out[1] = n1 * bz + (f1 * s + g1 * t); out[2] = n2 * bz + (f2 * s + g2 * t);
+    return true;
+  };
+}
+
+/**
  * The converged numerical alternative (Biot-Savart segment sums, 64 -> 1024 segments until two passes agree). Kept as the
  * independent reference the closed form is tested against; it gets slow close to the wire.
  */

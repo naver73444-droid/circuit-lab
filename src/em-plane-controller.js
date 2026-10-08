@@ -16,6 +16,7 @@ import { ampereReadout, forceReadout, gaussReadout, sensorReadout } from './em-r
 import * as chargeEdit from './em-source-edit.js';
 import { cycleSelectionTarget } from './em-source-edit.js';
 import { createInteraction } from './em-interaction.js';
+import { perfMeasure } from './em-perf-marks.js';
 
 const SENSOR_GRAB = 16;
 // A fingertip is far less precise than a mouse: touches grab the sensor, a source handle and a Gauss / Ampere ring from
@@ -146,10 +147,13 @@ export function createPlaneController({
   }
 
   function draw() {
-    const view = geometry();
+    // geometry() reads the canvas size, which forces a layout when the DOM changed since the last one (em:layout).
+    const laidOut = performance.now(), view = geometry();
+    perfMeasure('em:layout', laidOut);
     if (!(view.width > 1 && view.height > 1)) return null;
     renderedSize = [view.width, view.height];
-    const info = measure(), { mode } = info;
+    const measured = performance.now(), info = measure(), { mode } = info;
+    perfMeasure('em:readout', measured);
     // While a drag, a wheel burst or a resize is in progress the picture is sampled coarsely (quality 'draft'); a finished render is fine.
     renderer.render({
       view, plane: info.plane, fixed: mode.fixed(), field: mode.field(), fieldKey: mode.fieldKey(), sources: mode.sources(),

@@ -3,16 +3,18 @@
 // Gauss circle, sensor and scale bar are drawn on the upper canvas every frame, so dragging the sensor or the Gauss surface
 // costs almost nothing. The sampled scalar grid, the traced lines and the arrow samples are cached apart from the painting:
 // they depend on the field, the view and the quality only, so toggling a chip or the theme repaints without evaluating the
-// field again. All colours come from the palette (CSS tokens).
+// field again. While a source is dragged, the grids are summed from per-source contributions (createSuperpositionSampler): only
+// the moving source is evaluated again, the others come from the cache. All colours come from the palette (CSS tokens).
 import { compress, compressedLevels, contourSet, typicalMagnitude } from './em-contour.js';
-import { computePlaneLines, sampleScalarGrid, sampleVectorGrid } from './em-plane-field.js';
+import { computePlaneLines, createSuperpositionSampler } from './em-plane-field.js';
 import { planeAxes, planeNormal, scaleBar, sectionRadius } from './em-plane-geometry.js';
-import { cssRgb, cssRgba, mixRgb } from './em-palette.js';
+import { cssRgb, cssRgba } from './em-palette.js';
 import { sourceCenter } from './em-playground-state.js';
 import { strengthText } from './em-source-edit.js';
 import { strengthText as currentStrengthText } from './em-current-edit.js';
 import { circleBasis, planeBasis, screenSense, sheetLineDirection, strengthOf, wireHit } from './em-current-field.js';
 import { dot3 } from './em-physics.js';
+import { perfMeasure } from './em-perf-marks.js';
 
 const FONT = 'system-ui, "Malgun Gothic", sans-serif';
 const CLIP = 25; // |v| / reference at which the colour map saturates
@@ -37,19 +39,21 @@ function sizeCanvas(canvas, ctx, width, height, dpr) {
 
 // ---- base layer -------------------------------------------------------------------------------------------------
 
+// One pixel per grid value, written straight into the image (the colours are those of mixRgb: round(bg + (target - bg) t)).
 function paintPotential(ctx, tile, grid, ref, signed, colors, width, height) {
-  const { cols, rows, values } = grid, image = new ImageData(cols, rows);
+  const { cols, rows, values } = grid, image = new ImageData(cols, rows), data = image.data, { bg } = colors;
   const top = Math.asinh(CLIP);
   for (let i = 0; i < values.length; i += 1) {
     const v = values[i];
     if (!Number.isFinite(v)) continue;
     const t = Math.max(-1, Math.min(1, compress(v, ref) / top));
-    const rgb = signed
-      ? mixRgb(colors.bg, t >= 0 ? colors.pos : colors.neg, 0.78 * Math.abs(t))
-      : mixRgb(colors.bg, colors.accent, 0.78 * Math.max(0, t));
-    image.data.set([rgb[0], rgb[1], rgb[2], 255], i * 4);
+    const target = signed ? (t >= 0 ? colors.pos : colors.neg) : colors.accent, amount = signed ? 0.78 * Math.abs(t) : 0.78 * Math.max(0, t);
+    data[4 * i] = Math.round(bg[0] + (target[0] - bg[0]) * amount);
+    data[4 * i + 1] = Math.round(bg[1] + (target[1] - bg[1]) * amount);
+    data[4 * i + 2] = Math.round(bg[2] + (target[2] - bg[2]) * amount);
+    data[4 * i + 3] = 255;
   }
-  tile.width = cols; tile.height = rows;
+  if (tile.width !== cols || tile.height !== rows) { tile.width = cols; tile.height = rows; }
   tile.getContext('2d').putImageData(image, 0, 0);
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(tile, 0, 0, width, height);
@@ -387,16 +391,20 @@ function drawScaleBar(ctx, view, palette, wavelengths) {
 
 export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
   const ctx = canvas.getContext('2d'), baseCtx = baseCanvas.getContext('2d'), tile = document.createElement('canvas');
+  const sampler = createSuperpositionSampler();
   let baseKey = null, gridCache = null, linesCache = null, arrowCache = null;
   // gridBuilds counts how often the field was sampled for the colour map; a chip or theme change must not raise it.
-  const stats = { baseMs: 0, baseCached: false, gridCached: false, gridBuilds: 0, overlayMs: 0, cols: 0, rows: 0, lines: 0, stages: {} };
+  // partsEvaluated / partsReused: source contributions sampled afresh / taken from the per-source cache (colour and arrow grids).
+  const stats = {
+    baseMs: 0, baseCached: false, gridCached: false, gridBuilds: 0, overlayMs: 0, cols: 0, rows: 0, lines: 0, stages: {}, partsEvaluated: 0, partsReused: 0,
+  };
 
   function sampleGrid(scene, draft, key) {
     if (gridCache?.key === key) return gridCache;
     const { view } = scene, cell = draft ? 16 : 7;
     const cols = Math.max(8, Math.min(260, Math.ceil(view.width / cell))), rows = Math.max(8, Math.min(200, Math.ceil(view.height / cell)));
     const { aMin, aMax, bMin, bMax } = view.area, da = (aMax - aMin) / (2 * cols), db = (bMax - bMin) / (2 * rows);
-    const grid = sampleScalarGrid(
+    const grid = sampler.scalarGrid(
       scene.field, scene.plane, scene.fixed, { aMin: aMin + da, aMax: aMax - da, bMin: bMin + db, bMax: bMax - db }, cols, rows);
     stats.gridBuilds += 1;
     gridCache = { key, grid, ref: typicalMagnitude(grid.values), arrows: null };
@@ -407,7 +415,7 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
   function drawBase(scene, palette, dpr, gridKey) {
     const { view } = scene, started = performance.now(), stages = {};
     let mark = started;
-    const lap = name => { const now = performance.now(); stages[name] = now - mark; mark = now; };
+    const lap = name => { const now = performance.now(); stages[name] = now - mark; perfMeasure(`em:${name}`, mark, now); mark = now; };
     sizeCanvas(baseCanvas, baseCtx, view.width, view.height, dpr);
     baseCtx.fillStyle = palette.bg.css;
     baseCtx.fillRect(0, 0, view.width, view.height);
@@ -442,12 +450,15 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
     if (!gridCache.arrows) {
       const spacing = draft ? 62 : ARROW_SPACING;
       const cols = Math.max(4, Math.floor(view.width / spacing)), rows = Math.max(3, Math.floor(view.height / spacing));
-      const samples = sampleVectorGrid(scene.field, scene.plane, scene.fixed, view.area, cols, rows);
+      const samples = sampler.vectorGrid(scene.field, scene.plane, scene.fixed, view.area, cols, rows);
       gridCache.arrows = { samples, typical: typicalMagnitude(samples.map(item => item.magnitude), 1) };
     }
     if (scene.chips.arrows !== false) strokeFieldArrows(baseCtx, gridCache.arrows, scene, palette);
     lap('arrows');
-    Object.assign(stats, { baseMs: performance.now() - started, cols: grid.cols, rows: grid.rows, lines: lines.length, stages });
+    Object.assign(stats, {
+      baseMs: perfMeasure('em:base', started) - started, cols: grid.cols, rows: grid.rows, lines: lines.length, stages,
+      partsEvaluated: sampler.stats.evaluated, partsReused: sampler.stats.reused,
+    });
   }
 
   return {
@@ -477,7 +488,7 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
       if (scene.force) drawForce(ctx, overlay, palette);
       if (scene.sensor) drawSensor(ctx, overlay, palette);
       drawScaleBar(ctx, view, palette, scene.field.kind === 'wave');
-      stats.overlayMs = performance.now() - started;
+      stats.overlayMs = perfMeasure('em:overlay', started) - started;
       return stats;
     },
   };

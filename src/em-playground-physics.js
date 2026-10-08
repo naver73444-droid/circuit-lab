@@ -180,6 +180,64 @@ export function createPointChargeEvaluator(sources, { jacobian = false } = {}) {
   return point => evaluateValidatedWorld(checked, validatePoint(point, '측정점'), jacobian);
 }
 
+// ---- allocation-free sampling for pictures ---------------------------------------------------------------------------
+// The plane view evaluates the field at tens of thousands of points per frame (colour grid, arrows, field lines). These
+// samplers take plain coordinates and write into a caller's buffer instead of building arrays and result objects, but they do
+// the same arithmetic in the same order as evaluateValidatedWorld, so every number is bit-identical (tested).
+
+/** True where evaluatePointChargeWorld accepts the point (finite, within ±20 m on every axis). */
+export const inModelRange = (x, y, z) => Math.abs(x) <= MAX_COORDINATE_METERS && Math.abs(y) <= MAX_COORDINATE_METERS
+  && Math.abs(z) <= MAX_COORDINATE_METERS;
+
+function pointChargePart(source) {
+  const [px, py, pz] = source.position, factor = K * source.q;
+  return (x, y, z, out) => {
+    const r0 = x - px, r1 = y - py, r2 = z - pz, r = Math.hypot(r0, r1, r2);
+    if (r <= EXCLUSION_METERS) return false;
+    const invR3 = 1 / r ** 3;
+    out[0] = factor * r0 * invR3; out[1] = factor * r1 * invR3; out[2] = factor * r2 * invR3; out[3] = factor / r;
+    return true;
+  };
+}
+
+function lineChargePart(source) {
+  const field = source.type === 'finite-line' ? finiteLineChargeField : infiniteLineChargeField;
+  return (x, y, z, out) => {
+    const result = field(source, [x, y, z]);
+    if (result.status !== 'valid') return false;
+    out[0] = result.E[0]; out[1] = result.E[1]; out[2] = result.E[2]; out[3] = result.potential;
+    return true;
+  };
+}
+
+/**
+ * One entry per source that contributes (enabled, non-zero), in source order: { key, at(x, y, z, out) } where `at` writes that
+ * source's E (out[0..2]) and potential (out[3]) and returns false inside its exclusion zone. `key` changes whenever the source
+ * does, so a cache of contributions can tell which sources moved. `sources` must be validated (validatePointSources).
+ */
+export function pointChargeParts(validated) {
+  return validated.filter(source => source.enabled && (source.type === 'point' ? source.q : source.lambda) !== 0)
+    .map(source => ({ key: JSON.stringify(source), at: source.type === 'point' ? pointChargePart(source) : lineChargePart(source) }));
+}
+
+/**
+ * (x, y, z, out) => boolean: the total E into out[0..2] and the potential into out[3]; false where the model has no value
+ * (outside ±20 m or inside an exclusion zone). Same numbers as createPointChargeEvaluator.
+ */
+export function createPointChargeSampler(validated, parts = pointChargeParts(validated)) {
+  const ats = parts.map(part => part.at), one = new Float64Array(4);
+  return (x, y, z, out) => {
+    if (!inModelRange(x, y, z)) return false;
+    let e0 = 0, e1 = 0, e2 = 0, potential = 0;
+    for (const at of ats) {
+      if (!at(x, y, z, one)) return false;
+      e0 += one[0]; e1 += one[1]; e2 += one[2]; potential += one[3];
+    }
+    out[0] = e0; out[1] = e1; out[2] = e2; out[3] = potential;
+    return true;
+  };
+}
+
 export function pointChargePlaneSample(sources, plane, fixedCoordinate, { grid = 25, span = 2, jacobian = true } = {}) {
   if (!['xy', 'xz', 'yz'].includes(plane)) throw new PointChargeInputError('편집 평면은 XY, XZ, YZ 중 하나여야 합니다.');
   const fixed = finite(fixedCoordinate, '평면 고정 좌표');

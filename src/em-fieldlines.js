@@ -4,8 +4,9 @@
 // outside the model (excluded zone, invalid). Lines follow the field direction only; the step length adapts to the
 // distance from the nearest stop so a line crawls near a charge and strides through empty space.
 
-const length = v => Math.hypot(...v);
-const distance = (a, b) => length(a.map((value, i) => value - b[i]));
+// Plane lines are 2D: spelling the arguments out avoids the spread and the temporary array of the general form (same numbers).
+const length = v => (v.length === 2 ? Math.hypot(v[0], v[1]) : Math.hypot(...v));
+const distance = (a, b) => (a.length === 2 ? Math.hypot(a[0] - b[0], a[1] - b[1]) : length(a.map((value, i) => value - b[i])));
 const inside = (p, bounds) => p.every((value, i) => value >= bounds.min[i] && value <= bounds.max[i]);
 
 // A stop is a disk (point charge) or, with `end`, a capsule around the segment center-end (a line charge seen in the
@@ -23,13 +24,15 @@ const stopGap = (stop, q) => distance(q, stopAxisPoint(stop, q)) - stop.radius;
 // function of the step parameter (distance to a convex set), so its minimum is found by ternary search and the entry point
 // by bisection before it: a step that crosses a thin line charge is caught even when both end points are far outside it.
 // A step shorter than the gap to a stop cannot reach it, which rejects almost every stop without any search.
-function firstHit(p, next, stops) {
+// `gaps` holds stopGap(stop, p) for every stop (the caller has them already for the step length).
+function firstHit(p, next, stops, gaps) {
   const reach = distance(p, next);
   let best = null;
-  stops.forEach((stop, index) => {
-    if (stopGap(stop, p) > reach) return;
+  for (let index = 0; index < stops.length; index += 1) {
+    const stop = stops[index];
+    if (gaps[index] > reach) continue;
     const at = t => p.map((value, i) => value + t * (next[i] - value));
-    const gap = t => stopGap(stop, at(t));
+    const gap = !stop.end && p.length === 2 ? diskGap(stop, p, next) : t => stopGap(stop, at(t));
     let found = 0;
     if (gap(0) > 0) {
       let lo = 0, hi = 1;
@@ -38,14 +41,19 @@ function firstHit(p, next, stops) {
         if (gap(a) < gap(b)) hi = b; else lo = a;
       }
       const bottom = (lo + hi) / 2;
-      if (gap(bottom) > 0) return;
+      if (gap(bottom) > 0) continue;
       lo = 0; hi = bottom;
       for (let iter = 0; iter < 40; iter += 1) { const mid = (lo + hi) / 2; if (gap(mid) <= 0) hi = mid; else lo = mid; }
       found = hi;
     }
     if (!best || found < best.t) best = { index, t: found, point: at(found) };
-  });
+  }
   return best;
+}
+
+// stopGap(stop, at(t)) of a disk in 2D without the temporary arrays (same arithmetic, same numbers).
+function diskGap({ center: [c0, c1], radius }, [p0, p1], [n0, n1]) {
+  return t => Math.hypot(p0 + t * (n0 - p0) - c0, p1 + t * (n1 - p1) - c1) - radius;
 }
 
 /**
@@ -71,13 +79,15 @@ export function traceStreamline({
   };
   const points = [seed.slice()];
   let p = seed.slice(), travelled = 0, heading = null;
+  // The gap from q to every stop (kept for firstHit) and the smallest of them.
+  const gaps = new Float64Array(stops.length);
   const nearest = q => {
-    let best = Infinity, index = -1;
-    stops.forEach((stop, i) => {
-      const d = stopGap(stop, q);
-      if (d < best) { best = d; index = i; }
-    });
-    return { distance: best, index };
+    let best = Infinity;
+    for (let i = 0; i < stops.length; i += 1) {
+      const d = gaps[i] = stopGap(stops[i], q);
+      if (d < best) best = d;
+    }
+    return { distance: best };
   };
   for (let count = 0; count < maxSteps; count += 1) {
     const k1 = unitAt(p);
@@ -92,7 +102,7 @@ export function traceStreamline({
     const k2 = unitAt(mid) ?? k1;
     const next = p.map((value, i) => value + h * k2[i]);
     travelled += h;
-    const hit = firstHit(p, next, stops);
+    const hit = firstHit(p, next, stops, gaps);
     if (hit) {
       const stop = stops[hit.index];
       points.push(stopAxisPoint(stop, hit.point).slice());

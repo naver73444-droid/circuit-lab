@@ -19,6 +19,7 @@ import { createPalette, watchReducedMotion } from './em-palette.js';
 import { freeSpot } from './em-source-edit.js';
 import { planeNormal } from './em-plane-geometry.js';
 import { siText } from './em-format.js';
+import { perfMeasure } from './em-perf-marks.js';
 
 export { parseEMNumber } from './em-source-edit.js';
 
@@ -36,8 +37,11 @@ function loadEMCourseModule() {
 export function prefetchEMCourse() { loadEMCourseModule().catch(() => {}); }
 
 const WAVE_CYCLES_PER_SECOND = 0.5;
-// Assigning identical text still invalidates layout; the readouts update on every drag frame.
+// Assigning identical text still invalidates layout; the readouts update on every drag frame. The toolbar is synced on every
+// frame too, so it only writes what changed: an untouched DOM lets the plane read its size without forcing a layout.
 const setText = (node, text) => { if (node.textContent !== text) node.textContent = text; };
+const setHidden = (node, hidden) => { if (node.hidden !== hidden) node.hidden = hidden; };
+const setAttr = (node, name, value) => { if (node.getAttribute(name) !== value) node.setAttribute(name, value); };
 const FIELD_KEY = 'circuit-lab.em-field-mode';
 const MAGNETIC_ONLY = ['mcolor', 'arrows', 'ampere', 'force']; // the H chip is gone: |B| and |H| are both always in the readout
 const UNDO_SCOPE = '원천 편집만 되돌림(암페어 루프·칩·확대는 제외)';
@@ -158,8 +162,9 @@ export function createEMController(root) {
     narrow?.addEventListener('change', fit, listen);
     return {
       sync(magnetic) {
-        advanced.hidden = !magnetic;
-        paletteFold.hidden = presetFold.hidden = !magnetic;
+        setHidden(advanced, !magnetic);
+        setHidden(paletteFold, !magnetic);
+        setHidden(presetFold, !magnetic);
         // 등크기선 (magnetic) is an advanced chip; 등전위선 (electric) stays in the main row.
         const home = magnetic ? advancedBody : chipsBox;
         if (contours.parentNode !== home) { if (magnetic) advancedBody.prepend(contours); else chipsBox.insertBefore(contours, $('#em-chip-gauss')); }
@@ -172,47 +177,47 @@ export function createEMController(root) {
   function syncChrome() {
     const sandbox = lab.scene === 'playground', mode = getMode(), magnetic = isMagnetic(), electric = sandbox && !magnetic;
     if (magnetic && lab.tab === '3d') lab.tab = 'plane'; // the 3D view only knows the charges
-    root.querySelectorAll('[data-em-field-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emFieldMode === lab.field)));
-    $('#em-field-mode').hidden = !sandbox;
-    $('#em-current-palette').hidden = !magnetic;
-    $('#em-current-presets').hidden = !magnetic;
-    MAGNETIC_ONLY.forEach(name => { $(`#em-chip-${name}`).hidden = !magnetic; });
+    root.querySelectorAll('[data-em-field-mode]').forEach(button => setAttr(button, 'aria-pressed', String(button.dataset.emFieldMode === lab.field)));
+    setHidden($('#em-field-mode'), !sandbox);
+    setHidden($('#em-current-palette'), !magnetic);
+    setHidden($('#em-current-presets'), !magnetic);
+    MAGNETIC_ONLY.forEach(name => setHidden($(`#em-chip-${name}`), !magnetic));
     chrome.sync(magnetic);
-    $('#em-pg-undo').title = magnetic ? UNDO_SCOPE : '';
-    root.querySelector('[data-em-tab="3d"]').hidden = magnetic;
-    root.querySelector('[data-em-chip="lines"]').textContent = magnetic ? '자기장선' : '장선';
-    root.querySelectorAll('[data-em-tab]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emTab === lab.tab)));
-    root.querySelectorAll('[data-em-scene]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.emScene === lab.scene)));
-    root.querySelectorAll('[data-em-chip]').forEach(button => button.setAttribute('aria-pressed', String(lab.chips[button.dataset.emChip])));
-    $('#em-plane').hidden = lab.tab !== 'plane';
-    $('#em-plane-base').hidden = lab.tab !== 'plane';
-    $('#em-canvas').hidden = lab.tab !== '3d';
-    $('#em-3d-bar').hidden = lab.tab !== '3d';
-    $('#em-palette').hidden = !electric;
-    $('#em-chip-gauss').hidden = !electric;
-    $('#em-chip-contours').hidden = lab.tab === '3d';
+    setAttr($('#em-pg-undo'), 'title', magnetic ? UNDO_SCOPE : '');
+    setHidden(root.querySelector('[data-em-tab="3d"]'), magnetic);
+    setText(root.querySelector('[data-em-chip="lines"]'), magnetic ? '자기장선' : '장선');
+    root.querySelectorAll('[data-em-tab]').forEach(button => setAttr(button, 'aria-pressed', String(button.dataset.emTab === lab.tab)));
+    root.querySelectorAll('[data-em-scene]').forEach(button => setAttr(button, 'aria-pressed', String(button.dataset.emScene === lab.scene)));
+    root.querySelectorAll('[data-em-chip]').forEach(button => setAttr(button, 'aria-pressed', String(lab.chips[button.dataset.emChip])));
+    setHidden($('#em-plane'), lab.tab !== 'plane');
+    setHidden($('#em-plane-base'), lab.tab !== 'plane');
+    setHidden($('#em-canvas'), lab.tab !== '3d');
+    setHidden($('#em-3d-bar'), lab.tab !== '3d');
+    setHidden($('#em-palette'), !electric);
+    setHidden($('#em-chip-gauss'), !electric);
+    setHidden($('#em-chip-contours'), lab.tab === '3d');
     const history = activeEditor().state;
-    $('#em-pg-undo').hidden = !sandbox;
-    $('#em-pg-redo').hidden = !sandbox;
-    $('#em-pg-undo').disabled = !history.past.length;
-    $('#em-pg-redo').disabled = !history.future.length;
-    $('#em-chip-contours').textContent = electric || mode.field().scalarName === 'V' ? '등전위선' : '등크기선';
-    $('#em-inspector').hidden = !electric;
-    $('#em-current-inspector').hidden = !magnetic;
-    $('#em-wave-controls').hidden = lab.scene !== 'wave';
-    $('#em-play').textContent = s.playing ? '정지' : '재생';
+    setHidden($('#em-pg-undo'), !sandbox);
+    setHidden($('#em-pg-redo'), !sandbox);
+    if ($('#em-pg-undo').disabled !== !history.past.length) $('#em-pg-undo').disabled = !history.past.length;
+    if ($('#em-pg-redo').disabled !== !history.future.length) $('#em-pg-redo').disabled = !history.future.length;
+    setText($('#em-chip-contours'), electric || mode.field().scalarName === 'V' ? '등전위선' : '등크기선');
+    setHidden($('#em-inspector'), !electric);
+    setHidden($('#em-current-inspector'), !magnetic);
+    setHidden($('#em-wave-controls'), lab.scene !== 'wave');
+    setText($('#em-play'), s.playing ? '정지' : '재생');
     // The preset text describes the sources it loaded: after an undo, a drag or any edit it no longer does.
     if (lab.presetNote && JSON.stringify(cs.sources) !== lab.presetSources) lab.presetNote = '';
-    $('#em-readout-target').textContent = magnetic ? '측정점 (B · H)' : sandbox ? '시험전하' : sceneTitle(lab.scene);
-    $('#em-hint').textContent = lab.tab === '3d' ? HINTS['3d'] : magnetic ? (lab.presetNote || HINTS.current) : sandbox ? HINTS.sandbox : HINTS.scene;
-    $('#em-plane').setAttribute('aria-label', magnetic
+    setText($('#em-readout-target'), magnetic ? '측정점 (B · H)' : sandbox ? '시험전하' : sceneTitle(lab.scene));
+    setText($('#em-hint'), lab.tab === '3d' ? HINTS['3d'] : magnetic ? (lab.presetNote || HINTS.current) : sandbox ? HINTS.sandbox : HINTS.scene);
+    setAttr($('#em-plane'), 'aria-label', magnetic
       ? '전류와 자기장 평면. 도선·루프·판과 노란 측정점, 암페어 루프를 끌어 움직이고, 휠로 확대합니다. 키보드: 대괄호 [ ]로 원천을 고르고 화살표로 옮깁니다.'
       : '전하와 전기장 평면. 전하와 노란 시험전하를 끌어 움직이고, 휠로 확대합니다. 키보드: 대괄호 [ ]로 전하를 고르고 화살표로 옮깁니다.');
     const select = $('#em-pg-plane');
     if (select.value !== mode.plane()) select.value = mode.plane();
     const error = magnetic ? cs.error : sandbox ? pg.error : lab.error || s.error;
-    $('#em-error').hidden = !error;
-    $('#em-error').textContent = error || '';
+    setHidden($('#em-error'), !error);
+    setText($('#em-error'), error || '');
   }
 
   function showReadouts(info) {
@@ -286,7 +291,7 @@ export function createEMController(root) {
     if (destroyed || !s.active) return;
     const started = performance.now();
     syncChrome();
-    const chromeDone = performance.now();
+    const chromeDone = perfMeasure('em:chrome', started);
     const info = lab.tab === 'plane' ? plane.draw() : (threeD.draw(), plane.measure());
     const drawDone = performance.now();
     diagnostics.frames += 1;
@@ -296,7 +301,8 @@ export function createEMController(root) {
     else scenesPanel.refresh();
     showTime();
     calculus.update(interaction.active);
-    const done = performance.now();
+    const done = perfMeasure('em:frame', started);
+    perfMeasure('em:panels', drawDone, done);
     Object.assign(diagnostics, {
       lastDrawMs: drawDone - started, lastFrameMs: done - started, chromeMs: chromeDone - started, panelsMs: done - drawDone,
     });

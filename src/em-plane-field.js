@@ -4,8 +4,13 @@
 //   display3: a point in display coordinates (metres, except the plane wave, which is shown in wavelengths: unit = lambda).
 //   vector:   E (V/m) for electric models, B (T) for current models, E for the wave.
 //   scalar:   the potential (V) where one exists, otherwise |vector| (the map shows the strength).
+// The sandbox fields (charges, currents) also offer fast paths for the picture:
+//   sample(x, y, z, out) => boolean   vector into out[0..2], scalar into out[3], no arrays per point (same numbers as evaluate)
+//   parts, inRange, scalarOfSum       one contribution per source, for the per-source cache of createSuperpositionSampler
 import { C, norm3, sceneMeasurement } from './em-physics.js';
-import { createPointChargeEvaluator } from './em-playground-physics.js';
+import {
+  createPointChargeEvaluator, createPointChargeSampler, inModelRange, pointChargeParts, validatePointSources,
+} from './em-playground-physics.js';
 import { planeAxes, planeNormal } from './em-plane-geometry.js';
 import { traceSourceLines, traceStreamline } from './em-fieldlines.js';
 import { traceCurrentLines } from './em-current-lines.js';
@@ -14,9 +19,10 @@ const FAILED = { status: 'excluded', vector: null, scalar: NaN };
 
 /** Field of the free charge sandbox (point and line sources). */
 export function createSandboxField(sources) {
-  const evaluator = createPointChargeEvaluator(sources);
+  const evaluator = createPointChargeEvaluator(sources), validated = validatePointSources(sources), parts = pointChargeParts(validated);
   return {
     kind: 'sandbox', electric: true, unit: 1, scalarName: 'V',
+    sample: createPointChargeSampler(validated, parts), parts, inRange: inModelRange, scalarOfSum: 'sum',
     evaluate(point) {
       let result;
       try { result = evaluator(point); } catch { return FAILED; } // beyond the +-20 m model range
@@ -48,13 +54,30 @@ export function createSceneField(model, timeCycles = 0) {
   };
 }
 
-function planePointBuilder(plane, fixed) {
-  const [a, b] = planeAxes(plane), normal = planeNormal(plane);
-  return (u, v) => {
-    const p = [0, 0, 0];
-    p[a] = u; p[b] = v; p[normal] = fixed;
-    return p;
+/** The field at (x, y, z) into out (vector 0..2, scalar 3); false where it has no value. Uses the fast path when there is one. */
+function samplerOf(field) {
+  if (field.sample) return field.sample;
+  return (x, y, z, out) => {
+    const result = field.evaluate([x, y, z]);
+    if (result.status !== 'valid') return false;
+    out[0] = result.vector[0]; out[1] = result.vector[1]; out[2] = result.vector[2]; out[3] = result.scalar;
+    return true;
   };
+}
+
+// Plane positions of a grid as a flat [x, y, z, x, y, z, ...] list (display coordinates). `centres` false: cols x rows points
+// with the outer ones on the edges of the area (the colour grid); true: the centres of cols x rows cells (the arrow grid).
+function gridPoints(plane, fixed, area, cols, rows, centres) {
+  const [axisA, axisB] = planeAxes(plane), normal = planeNormal(plane), points = new Float64Array(cols * rows * 3);
+  for (let row = 0; row < rows; row += 1) {
+    const b = centres ? area.bMax - (area.bMax - area.bMin) * (row + 0.5) / rows : area.bMax - (area.bMax - area.bMin) * row / (rows - 1);
+    for (let col = 0; col < cols; col += 1) {
+      const a = centres ? area.aMin + (area.aMax - area.aMin) * (col + 0.5) / cols : area.aMin + (area.aMax - area.aMin) * col / (cols - 1);
+      const i = 3 * (row * cols + col);
+      points[i + axisA] = a; points[i + axisB] = b; points[i + normal] = fixed;
+    }
+  }
+  return points;
 }
 
 /**
@@ -62,15 +85,9 @@ function planePointBuilder(plane, fixed) {
  * cols x rows pixels stretched over it). NaN marks points inside a model exclusion zone.
  */
 export function sampleScalarGrid(field, plane, fixed, area, cols, rows) {
-  const make = planePointBuilder(plane, fixed), values = new Float32Array(cols * rows);
-  for (let row = 0; row < rows; row += 1) {
-    const b = area.bMax - (area.bMax - area.bMin) * row / (rows - 1);
-    for (let col = 0; col < cols; col += 1) {
-      const a = area.aMin + (area.aMax - area.aMin) * col / (cols - 1);
-      const result = field.evaluate(make(a, b));
-      values[row * cols + col] = result.status === 'valid' ? result.scalar : NaN;
-    }
-  }
+  const points = gridPoints(plane, fixed, area, cols, rows, false), values = new Float32Array(cols * rows);
+  const at = samplerOf(field), out = new Float64Array(4);
+  for (let i = 0; i < values.length; i += 1) values[i] = at(points[3 * i], points[3 * i + 1], points[3 * i + 2], out) ? out[3] : NaN;
   return { cols, rows, values };
 }
 
@@ -79,18 +96,107 @@ export function sampleScalarGrid(field, plane, fixed, area, cols, rows) {
  * Returns [{ a, b, va, vb, magnitude }] with the in-plane components; excluded points are omitted.
  */
 export function sampleVectorGrid(field, plane, fixed, area, cols, rows) {
-  const make = planePointBuilder(plane, fixed), [axisA, axisB] = planeAxes(plane), out = [];
-  for (let row = 0; row < rows; row += 1) {
-    const b = area.bMax - (area.bMax - area.bMin) * (row + 0.5) / rows;
-    for (let col = 0; col < cols; col += 1) {
-      const a = area.aMin + (area.aMax - area.aMin) * (col + 0.5) / cols;
-      const result = field.evaluate(make(a, b));
-      if (result.status !== 'valid') continue;
-      const va = result.vector[axisA], vb = result.vector[axisB];
-      out.push({ a, b, va, vb, magnitude: Math.hypot(va, vb), full: norm3(result.vector) });
-    }
+  const points = gridPoints(plane, fixed, area, cols, rows, true), at = samplerOf(field);
+  return vectorSamples(plane, points, (i, out) => at(points[3 * i], points[3 * i + 1], points[3 * i + 2], out));
+}
+
+function vectorSamples(plane, points, valueAt) {
+  const [axisA, axisB] = planeAxes(plane), value = new Float64Array(4), out = [];
+  for (let i = 0; 3 * i < points.length; i += 1) {
+    if (!valueAt(i, value)) continue;
+    const va = value[axisA], vb = value[axisB];
+    out.push({
+      a: points[3 * i + axisA], b: points[3 * i + axisB], va, vb, magnitude: Math.hypot(va, vb), full: Math.hypot(value[0], value[1], value[2]),
+    });
   }
   return out;
+}
+
+/**
+ * Colour and arrow grids with a per-source cache. Both grids are sums of one contribution per source (superposition), so while
+ * one source is dragged only that source is evaluated on the grid and the remembered contributions of the others are added.
+ * Contributions are added in source order starting from zero, exactly as the direct evaluation does, so the sums carry the same
+ * bits as sampleScalarGrid / sampleVectorGrid (tested): the cache only skips evaluating sources whose description is unchanged.
+ * Fields without parts (the built-in scenes) are sampled directly. The last `keep` point sets (draft, final, arrows) are
+ * remembered; the contributions of sources that are gone are dropped on the next use of that point set. Each contribution keeps
+ * only what its grid needs: the potential (electric colour grid: a sum of potentials) or the vector (|sum of B|, the arrows).
+ */
+export function createSuperpositionSampler({ keep = 4 } = {}) {
+  // point-set key -> { points, vector, parts: Map(source key -> { valid: Uint8Array, values: Float64Array }) }
+  const sets = new Map();
+  const stats = { evaluated: 0, reused: 0 };
+
+  // vector: the contributions keep E or B (three numbers per point); otherwise the potential only.
+  function pointSet(plane, fixed, area, cols, rows, centres, vector) {
+    const key = JSON.stringify([plane, fixed, area.aMin, area.aMax, area.bMin, area.bMax, cols, rows, centres, vector]);
+    let set = sets.get(key);
+    if (set) sets.delete(key); // re-inserted below: the map order is the order of use
+    else set = { points: gridPoints(plane, fixed, area, cols, rows, centres), vector, parts: new Map() };
+    sets.set(key, set);
+    while (sets.size > keep) sets.delete(sets.keys().next().value);
+    return set;
+  }
+
+  function contribution(set, part) {
+    let entry = set.parts.get(part.key);
+    if (entry) { stats.reused += 1; return entry; }
+    const { points, vector } = set, count = points.length / 3, valid = new Uint8Array(count);
+    const values = new Float64Array((vector ? 3 : 1) * count), one = new Float64Array(4);
+    for (let i = 0; i < count; i += 1) {
+      if (!part.at(points[3 * i], points[3 * i + 1], points[3 * i + 2], one)) continue;
+      valid[i] = 1;
+      if (vector) { values[3 * i] = one[0]; values[3 * i + 1] = one[1]; values[3 * i + 2] = one[2]; } else values[i] = one[3];
+    }
+    stats.evaluated += 1;
+    entry = { valid, values };
+    set.parts.set(part.key, entry);
+    return entry;
+  }
+
+  // The summed field of all parts on a point set: (i, out) => boolean, like a field's sample() at point i.
+  function summed(field, set) {
+    const entries = field.parts.map(part => contribution(set, part)), used = new Set(field.parts.map(part => part.key));
+    for (const key of [...set.parts.keys()]) if (!used.has(key)) set.parts.delete(key);
+    const { points, vector } = set, magnitude = field.scalarOfSum === 'magnitude';
+    if (!vector) {
+      return (i, out) => {
+        if (!field.inRange(points[3 * i], points[3 * i + 1], points[3 * i + 2])) return false;
+        let scalar = 0;
+        for (const { valid, values } of entries) { if (!valid[i]) return false; scalar += values[i]; }
+        out[3] = scalar;
+        return true;
+      };
+    }
+    return (i, out) => {
+      if (!field.inRange(points[3 * i], points[3 * i + 1], points[3 * i + 2])) return false;
+      let v0 = 0, v1 = 0, v2 = 0;
+      for (const { valid, values } of entries) {
+        if (!valid[i]) return false;
+        v0 += values[3 * i]; v1 += values[3 * i + 1]; v2 += values[3 * i + 2];
+      }
+      out[0] = v0; out[1] = v1; out[2] = v2; out[3] = magnitude ? Math.hypot(v0, v1, v2) : NaN;
+      return true;
+    };
+  }
+
+  return {
+    stats,
+    /** Same result as sampleScalarGrid(field, plane, fixed, area, cols, rows). */
+    scalarGrid(field, plane, fixed, area, cols, rows) {
+      if (!field.parts) return sampleScalarGrid(field, plane, fixed, area, cols, rows);
+      const set = pointSet(plane, fixed, area, cols, rows, false, field.scalarOfSum === 'magnitude');
+      const valueAt = summed(field, set), values = new Float32Array(cols * rows);
+      const out = new Float64Array(4);
+      for (let i = 0; i < values.length; i += 1) values[i] = valueAt(i, out) ? out[3] : NaN;
+      return { cols, rows, values };
+    },
+    /** Same result as sampleVectorGrid(field, plane, fixed, area, cols, rows). */
+    vectorGrid(field, plane, fixed, area, cols, rows) {
+      if (!field.parts) return sampleVectorGrid(field, plane, fixed, area, cols, rows);
+      const set = pointSet(plane, fixed, area, cols, rows, true, true);
+      return vectorSamples(plane, set.points, summed(field, set));
+    },
+  };
 }
 
 /** Display coordinates <-> stored metres for a field (wave scenes show r / lambda). */
@@ -135,7 +241,8 @@ function currentSeeds(model, plane, fixed) {
 export function computePlaneLines(field, { plane, fixed, area, sources = [], model = null, quality = 'final' }) {
   const [a, b] = planeAxes(plane), normal = planeNormal(plane), options = QUALITY[quality];
   const bounds = { aMin: area.aMin, aMax: area.aMax, bMin: area.bMin, bMax: area.bMax };
-  const vectorOf = point => { const r = field.evaluate(point); return r.status === 'valid' ? r.vector : null; };
+  const at = samplerOf(field), out = new Float64Array(4);
+  const vectorOf = point => (at(point[0], point[1], point[2], out) ? [out[0], out[1], out[2]] : null);
   if (field.kind === 'current') return traceCurrentLines(sources, vectorOf, { plane, fixed, bounds, quality });
   const chargeSources = model ? sceneChargeSources(model) : sources;
   if (chargeSources.length) {
