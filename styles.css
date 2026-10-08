@@ -989,3 +989,48 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .diagnostic-fixes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .diagnostic-fixes button { min-height: 36px; }
 @media (max-width: 899px) { .empty-hint button[data-first-run-example], .probe-suggest > button { min-height: 44px; } .node-chips button, .diagnostic-fixes button { min-height: 44px; } }
+
+/* ---- Editor panels: bottom tab bar with undo/redo, the waveform value line on screen, a low empty waveform panel, caption ⓘ ---- */
+.caption-info, .tabbar-history { display: none; }
+/* No probe yet, so nothing can be plotted (app.js sets data-idle): the waveform panel is only its header and the hint, at any width,
+   and the desktop grid gives the rest to the circuit. It follows the probes, not the result, so the circuit never changes size
+   under the student's hand when a run finishes; the first probe (a deliberate step) gives the panel its full height. */
+#wave-panel[data-idle] .wave-body { flex: 0 0 auto; }
+#wave-panel[data-idle] .plot-wrap { flex: 0 0 auto; height: auto; }
+#wave-panel[data-idle] :is(#wave-plot, .cursor-readout) { display: none; }
+#wave-panel[data-idle] .plot-empty { position: static; padding: 10px 15px; }
+@media (min-width: 900px) {
+  .workbench:has(> #wave-panel[data-idle]) { grid-template-rows: minmax(0,1fr) auto; }
+}
+@media (max-width: 899px) {
+  /* Tab bar: 회로 · 속성 · 결과 · 파형, then undo · redo (moved here by responsive-editor.js), on screen whichever panel is shown. */
+  .view-tabs { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+  .view-tab-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; min-width: 0; }
+  .tabbar-history { display: flex; gap: 4px; }
+  .tabbar-history button { min-width: 44px; min-height: 46px; padding: 0 4px; font-size: 18px; border-radius: 12px; }
+  .tabbar-history button:disabled { opacity: .4; }
+  /* 파형: the value line right under the plot, then the measurement summary and the scale controls, and a plot low enough that it
+     and its value line fit above the tab bar (and the value sheet) together. */
+  #wave-panel .wave-body { display: contents; }
+  #wave-panel > .wave-header { order: 0; }
+  #wave-panel .plot-wrap { order: 1; height: clamp(200px, calc(100dvh - 400px), 280px); }
+  #wave-panel > .cursor-readout { order: 2; }
+  #wave-panel > .measure-panel { order: 3; }
+  #wave-panel > .scope-zero-note { order: 4; }
+  #wave-panel .scope-controls { order: 5; }
+  #wave-panel[data-idle] .plot-wrap { height: auto; }
+  /* Title row: ⓘ unfolds the circuit's description (an example's answer, rms note) as a full-width row under the header. */
+  .canvas-caption { display: contents; }
+  .canvas-caption strong { flex: 1 1 0; min-width: 0; align-self: center; }
+  .caption-info { display: grid; place-items: center; flex: 0 0 auto; min-width: 44px; min-height: 44px; padding: 0; font-size: 18px; color: var(--muted); border-color: transparent; background: transparent; }
+  .canvas-caption[data-open] .caption-info { color: var(--accent); }
+  .canvas-caption:has(#canvas-subtitle:empty) .caption-info { display: none; }
+  .canvas-head:has(.canvas-caption[data-open]) { flex-wrap: wrap; }
+  .canvas-caption[data-open] span { display: block; order: 10; flex: 1 1 100%; padding: 6px 10px; white-space: normal; overflow: visible; font-size: 13px; line-height: 1.45; color: var(--text); background: var(--raised); border: 1px solid var(--line-soft); border-radius: 10px; }
+  /* Narrow screens: the theme names fit ("라이트", "시스템"), and the status and tool hint wrap instead of being cut off. */
+  .appearance { width: 84px; padding: 0 2px 0 6px; }
+  /* The status wraps inside a fixed three-line box (within the 44 px row), so a run that changes its text never moves the canvas below. */
+  .analysis-bar .status-dot { flex: 1 1 0; min-width: 0; height: 42px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; white-space: normal; overflow: hidden; text-overflow: clip; font-size: 12px; line-height: 14px; overflow-wrap: anywhere; align-self: center; }
+  .canvas-footer { flex-wrap: wrap; row-gap: 0; padding-block: 3px; }
+  #tool-hint { flex: 1 1 100%; white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.35; }
+}

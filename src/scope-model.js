@@ -125,3 +125,25 @@ export function axisDisplayUnit(axis, quantity) {
   const prefixes = { [-15]: "f", [-12]: "p", [-9]: "n", [-6]: "µ", [-3]: "m", 0: "", 3: "k", 6: "M", 9: "G", 12: "T" };
   return { scale: 10 ** -exponent, unit: `${prefixes[exponent]}${quantity}` };
 }
+
+/**
+ * A pinned cursor remembered by its x value: { analysis, first, last, x } (first/last: the x range of the result it was pinned on).
+ * Null for no pin, a DC result or an index outside the result.
+ */
+export function cursorPin(result, index) {
+  const xs = result?.xValues;
+  if (index === null || index === undefined || !xs?.length || index < 0 || index >= xs.length || result.analysis === "dc") return null;
+  return { analysis: result.analysis, first: xs[0], last: xs.at(-1), x: xs[index] };
+}
+
+/**
+ * Where a pinned cursor goes when a new result replaces the one it was pinned on (a value edit re-ran the circuit): the sample nearest
+ * to the same x, when the new result is the same kind of analysis over the same x range; otherwise null (the pin is released).
+ */
+export function repinnedIndex(pin, result) {
+  const xs = result?.xValues;
+  if (!pin || !xs?.length || result.analysis !== pin.analysis || result.analysis === "dc") return null;
+  const tolerance = Math.max(Math.abs(pin.last - pin.first), Math.abs(pin.first), Math.abs(pin.last)) * 1e-9;
+  if (Math.abs(xs[0] - pin.first) > tolerance || Math.abs(xs.at(-1) - pin.last) > tolerance) return null;
+  return nearestSampleIndex(xs, pin.x);
+}

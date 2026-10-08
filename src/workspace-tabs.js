@@ -5,11 +5,12 @@
 // calls load('?retry=N') and the loader must append that suffix to the URL.
 // `modules` (paths relative to src/, see module-preload-map.js) are preloaded all
 // at once before the import, so the browser does not walk the import graph level by level.
+// A load the student asked for (tab intent, a switch) is requested with high priority; background warming with low.
 export function createLazyController({ host, load, create, modules = [] }) {
   let modulePromise = null, building = null, controller = null, statusNode = null, failures = 0;
-  function loadModule() {
+  function loadModule(priority = 'high') {
     if (!modulePromise) {
-      preloadModules(modules);
+      preloadModules(modules, undefined, { priority });
       const promise = Promise.resolve().then(() => load(failures ? '?retry=' + failures : ''));
       modulePromise = promise;
       promise.catch(() => { if (modulePromise === promise) { modulePromise = null; failures += 1; } });
@@ -61,26 +62,36 @@ export function createLazyController({ host, load, create, modules = [] }) {
   }
   return {
     get controller() { return controller; },
-    /** Network only: request the modules without running them. */
-    preload() { preloadModules(modules); },
-    prefetch() { loadModule().catch(() => {}); },
+    /** Network only: request the modules without running them (low priority). Resolves once every module arrived or failed. */
+    preload() { return preloadModules(modules, undefined, { priority: 'low' }); },
+    /** Download and run the module now; 'high' for a tab the student is about to open, 'low' for background warming. Never rejects. */
+    prefetch(priority = 'high') { return loadModule(priority).then(() => {}, () => {}); },
     ensure,
     whenReady,
   };
 }
 
-const preloaded = new Set();
-/** Adds one <link rel="modulepreload"> per module (once each); browsers without modulepreload just ignore them. */
-export function preloadModules(files, doc = globalThis.document) {
-  if (!doc?.head) return;
+const preloaded = new Map(); // href -> promise settled once that module arrived (or failed)
+/**
+ * Adds one <link rel="modulepreload"> per module (once each); browsers without modulepreload just ignore them.
+ * `priority` ('high' | 'low' | 'auto') becomes the link's fetchpriority. Resolves once every listed module has arrived or failed
+ * (never rejects), so background downloads can be queued one bundle at a time.
+ */
+export function preloadModules(files, doc = globalThis.document, { priority = 'auto' } = {}) {
+  if (!doc?.head) return Promise.resolve();
+  const waits = [];
   for (const file of files) {
     const href = new URL(file, import.meta.url).href;
-    if (preloaded.has(href)) continue;
-    preloaded.add(href);
+    if (preloaded.has(href)) { waits.push(preloaded.get(href)); continue; }
     const link = doc.createElement('link');
     link.rel = 'modulepreload'; link.href = href;
+    if (priority !== 'auto') link.fetchPriority = priority;
+    const settled = new Promise((done) => { link.onload = link.onerror = () => done(); });
+    preloaded.set(href, settled);
+    waits.push(settled);
     doc.head.append(link);
   }
+  return Promise.all(waits).then(() => {});
 }
 
 /** Top-level workspaces; each non-circuit one owns a panel with id "<name>-workspace". */
@@ -119,6 +130,7 @@ export function createWorkspaceTabs({ onBeforeChange = () => {}, onChange = () =
     tab.addEventListener('pointerdown', () => {
       const name = tab.dataset.workspaceTab;
       if (name === active) return;
+      intent(); // a touch may bring no pointerenter before the press
       prepared = { from: active, to: name };
       onBeforeChange(active, name);
       // Finish the switch before native focus moves and fires blur. Closing a

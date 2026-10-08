@@ -1,5 +1,7 @@
 /** Fixed editor layout. Desktop: palette | canvas | properties-or-results, waveform below (the "파형 크게" button swaps the split).
- * Phone: one panel at a time under the canvas, chosen from a bottom tab bar.
+ * Phone: one panel at a time under the canvas, chosen from a bottom tab bar (회로 · 속성 · 결과 · 파형). "회로" is the canvas with the
+ * part list right under it: from another panel it scrolls back to the canvas, from the canvas it scrolls on to the part list. The
+ * highlighted tab follows the scroll position: the open panel's tab while that panel fills the screen, 회로 while the canvas does.
  * Presentation only; nothing here is saved, and it never touches workspace visibility. */
 const PANELS = { palette: 'palette-panel', inspector: 'inspector-panel', results: 'results-panel', wave: 'wave-panel' };
 const RESULT_PANES = { phasor: 'phasor-panel', port: 'port-panel' };
@@ -12,7 +14,11 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
   const panes = Object.fromEntries(Object.entries(RESULT_PANES).map(([name, id]) => [name, document.getElementById(id)]));
   const viewButtons = [...document.querySelectorAll('[data-view]')];
   const resultButtons = [...document.querySelectorAll('[data-result-view]')];
+  const tabBar = document.querySelector?.('.view-tabs') ?? null;
+  // Layout boxes; a node without layout (a hidden one, or a test double) counts as an empty box at its offset.
+  const box = (node) => node?.getBoundingClientRect?.() ?? { top: node?.offsetTop ?? 0, bottom: node?.offsetTop ?? 0, height: 0 };
   let sideView = 'inspector', phoneView = 'palette', resultView = 'phasor', frame = null;
+  let current = 'palette'; // phone: the tab the scroll position belongs to
 
   const sideShows = (name) => name === 'inspector' || name === 'results';
   function isOpen(name) {
@@ -34,30 +40,84 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
     side.hidden = !sideOpen; side.inert = !sideOpen || !active;
     for (const name of Object.keys(RESULT_PANES)) { panes[name].hidden = resultView !== name; }
     for (const button of viewButtons) {
-      const selected = mobile.matches ? phoneView === button.dataset.view : sideView === button.dataset.view;
-      button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
+      const opened = mobile.matches ? phoneView === button.dataset.view : sideView === button.dataset.view;
       // The "new result" dot only means something on the phone tab bar, and only until that panel is looked at.
-      if (button.dataset.fresh && (!mobile.matches || selected)) { delete button.dataset.fresh; button.setAttribute('aria-label', (button.textContent ?? '').trim()); }
+      if (button.dataset.fresh && (!mobile.matches || opened)) { delete button.dataset.fresh; button.setAttribute('aria-label', (button.textContent ?? '').trim()); }
     }
+    current = measureCurrent();
+    markTabs();
     for (const button of resultButtons) button.setAttribute('aria-pressed', String(resultView === button.dataset.resultView));
     notify();
+  }
+  function markTabs() {
+    for (const button of viewButtons) {
+      const onPhoneBar = mobile.matches && tabBar?.contains(button);
+      const selected = onPhoneBar ? current === button.dataset.view : mobile.matches ? phoneView === button.dataset.view : sideView === button.dataset.view;
+      button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
+    }
+  }
+  /** Phone: the lowest screen line not covered by the fixed tab bar or the docked value sheet. */
+  function visibleBottom() {
+    let bottom = Math.min(box(workbench).bottom || Infinity, globalThis.innerHeight ?? Infinity);
+    for (const element of [tabBar, document.getElementById('value-sheet')]) {
+      if (!element || element.hidden) continue;
+      const area = box(element);
+      if (area.height > 0 && area.top < bottom) bottom = area.top;
+    }
+    return bottom;
+  }
+  const panelNode = (name) => (sideShows(name) ? side : nodes[name]);
+  /** Phone: the open panel's tab while it fills (most of) the visible area, else 회로 (the canvas and part list above it). */
+  function measureCurrent() {
+    if (!mobile.matches || phoneView === 'palette') return phoneView;
+    const panel = panelNode(phoneView);
+    const top = box(workbench).top, bottom = visibleBottom(), area = box(panel);
+    const seen = Math.max(0, Math.min(area.bottom, bottom) - Math.max(area.top, top));
+    return seen >= Math.min(area.height * 0.9, (bottom - top) * 0.5) ? phoneView : 'palette';
+  }
+  function updateCurrent() {
+    const next = measureCurrent();
+    if (next !== current) { current = next; markTabs(); }
+  }
+  let scrollFrame = null;
+  workbench.addEventListener('scroll', () => {
+    if (scrollFrame !== null || !mobile.matches) return;
+    scrollFrame = requestAnimationFrame(() => { scrollFrame = null; updateCurrent(); });
+  }, { passive: true });
+
+  /** Phone: the plot's value line must be readable, not under the tab bar or the value sheet: scroll on until it clears them, but
+   * never past the top of the plot. Used when 파형 opens (after the panel top is brought up) and after a tap on the plot. */
+  function revealReadout() {
+    if (!mobile.matches || phoneView !== 'wave') return;
+    const plot = document.querySelector?.('#wave-panel .plot-wrap'), readout = document.getElementById('cursor-readout');
+    if (!plot?.getBoundingClientRect || !readout?.getBoundingClientRect) return;
+    const overflow = box(readout).bottom - (visibleBottom() - 6);
+    if (overflow <= 0) return;
+    const room = box(plot).top - (box(workbench).top + 6);
+    if (room > 0) workbench.scrollTop += Math.min(overflow, room);
   }
   function scrollTo(node) {
     if (!mobile.matches || !node) return;
     workbench.scrollTop = Math.max(0, node.offsetTop - 6);
+    if (node === nodes.wave) revealReadout();
   }
   /** name: palette | inspector | results | wave | phasor | port. */
   function show(name, { scroll = true } = {}) {
     if (!isActive() || !(name in PANELS || name in RESULT_PANES)) return;
     beforeChange();
+    // 회로 tab: back to the canvas from anywhere else; already at the canvas with the part list under it, on to the part list.
+    const toCanvas = name === 'palette' && mobile.matches && !(phoneView === 'palette' && workbench.scrollTop < 8);
     if (name in RESULT_PANES) { resultView = name; name = 'results'; }
     if (sideShows(name)) sideView = name;
     phoneView = name;
     synchronize();
-    if (scroll) scrollTo(sideShows(name) ? side : nodes[name]);
+    if (scroll) { if (toCanvas) workbench.scrollTop = 0; else scrollTo(panelNode(name)); }
+    updateCurrent();
   }
   /** Phone only: bring the canvas back into view, e.g. after choosing a part or a port pin. */
-  function showCanvas() { if (mobile.matches) workbench.scrollTop = 0; }
+  function showCanvas() { if (mobile.matches) { workbench.scrollTop = 0; updateCurrent(); } }
+  // The plot's own pointer handling pins the cursor (editor-input.js); this only watches, after it.
+  document.getElementById('wave-plot')?.addEventListener('pointerup', () => requestAnimationFrame(revealReadout));
 
   /**
    * A new result worth looking at in `name` (an AC or transient run finished). Never switches panels: the phone puts a dot on that tab
@@ -112,6 +172,6 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
   synchronize();
   return {
     show, showCanvas, isOpen, mobile, synchronize, notifyResult, cancelInteractions: beforeChange,
-    inspect: () => ({ mobile: mobile.matches, side: sideView, view: phoneView, result: resultView, fresh: freshViews() }),
+    inspect: () => ({ mobile: mobile.matches, side: sideView, view: phoneView, current, result: resultView, fresh: freshViews() }),
   };
 }

@@ -39,6 +39,7 @@
 <link rel="modulepreload" href="src/viewport-guard.js"/>
 <link rel="modulepreload" href="src/canvas-actions.js"/>
 <link rel="modulepreload" href="src/first-run-guide.js"/>
+<link rel="modulepreload" href="src/back-navigation.js"/>
 <link rel="modulepreload" href="src/circuit-engine.js"/>
 <link rel="modulepreload" href="src/circuit-geometry.js"/>
 <link rel="modulepreload" href="src/circuit-edit.js"/>
@@ -97,7 +98,7 @@
 </aside>
 <section aria-label="회로 캔버스 영역" class="canvas-panel panel">
 <div class="canvas-head">
-<div class="canvas-caption"><strong id="canvas-title">새 회로</strong><span id="canvas-subtitle">빈 캔버스에서 시작하세요</span></div>
+<div class="canvas-caption" id="canvas-caption"><strong id="canvas-title">새 회로</strong><button aria-controls="canvas-subtitle" aria-expanded="false" aria-label="회로 설명 보기" class="caption-info" id="caption-info-button" type="button">ⓘ</button><span id="canvas-subtitle">빈 캔버스에서 시작하세요</span></div>
 <div class="head-tools" id="head-tools"></div>
 <details class="file-menu" id="file-menu" open><summary>파일</summary><div class="file-actions">
 <select aria-label="예제 회로" id="example-select"><option value="">예제 불러오기…</option></select>
@@ -241,7 +242,7 @@
 </section>
 </section>
 </aside>
-<section aria-label="파형" class="wave-panel panel" id="wave-panel">
+<section aria-label="파형" class="wave-panel panel" data-idle="" id="wave-panel">
 <div class="wave-header">
 <div class="wave-title"><strong>파형</strong><span id="result-summary">회로에서 프로브를 선택하고 해석을 실행하세요.</span></div>
 <div class="probe-list" id="probe-list"><span class="probe-empty">추가된 프로브 없음</span></div>
@@ -265,11 +266,14 @@
 <details class="measure-panel hidden" id="measure-panel"><summary id="measure-summary"></summary></details>
 <div aria-live="polite" class="cursor-readout" id="cursor-readout" role="status">그래프를 눌러 값을 읽습니다.</div>
 </section>
-<nav aria-label="패널 선택" class="view-tabs" role="tablist">
-<button aria-controls="palette-panel" aria-selected="true" data-view="palette" role="tab" type="button">부품</button>
+<nav aria-label="편집기 하단 막대" class="view-tabs">
+<div aria-label="패널 선택" class="view-tab-list" role="tablist">
+<button aria-controls="palette-panel" aria-selected="true" data-view="palette" role="tab" title="회로 캔버스와 부품 목록" type="button">회로</button>
 <button aria-controls="inspector-panel" aria-selected="false" data-view="inspector" role="tab" type="button">속성</button>
 <button aria-controls="results-panel" aria-selected="false" data-view="results" role="tab" type="button">결과</button>
 <button aria-controls="wave-panel" aria-selected="false" data-view="wave" role="tab" type="button">파형</button>
+</div>
+<div aria-label="편집 이력" class="tabbar-history" id="tabbar-history" role="group"></div>
 </nav>
 </main>
 <main aria-labelledby="circuit-course-workspace-tab" hidden id="circuit-course-workspace" inert role="tabpanel"><header class="circuit-course-integration-header"><button id="circuit-course-back" type="button">← 회로 편집기</button></header><div id="circuit-course-host"></div></main>

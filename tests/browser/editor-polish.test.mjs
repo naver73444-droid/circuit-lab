@@ -212,12 +212,12 @@ describe("editor handling round 2", { timeout: 300000 }, () => {
     assert.equal((await actions()).bar, true, "after the drop the part's actions are right there");
   });
 
-  test("390x844 value sheet docks above the tab bar (결과 · 파형 stay one tap away); undo and redo sit in the lower canvas corner", async () => {
+  test("390x844 value sheet docks above the tab bar (결과 · 파형 stay one tap away); undo and redo sit in the bottom tab bar", async () => {
     await phone("/?example=divider", PHONE);
     const undo = await rectOf("#undo-button");
-    const wrap = await rectOf("#canvas-wrap");
-    assert.ok(undo.y > (await ev("innerHeight")) / 2 && undo.bottom <= wrap.bottom, `undo is in the thumb zone (lower half, on the canvas): ${JSON.stringify(undo)}`);
-    assert.equal(await ev(`document.getElementById("redo-button").closest("#canvas-corner") !== null`), true, "redo sits next to it");
+    const bar = await rectOf(".view-tabs");
+    assert.ok(undo.y > (await ev("innerHeight")) / 2 && undo.top >= bar.top && undo.bottom <= bar.bottom, `undo is in the thumb zone (in the bottom tab bar): ${JSON.stringify(undo)}`);
+    assert.equal(await ev(`document.getElementById("redo-button").closest(".view-tabs") !== null`), true, "redo sits next to it");
     await tap(await partPoint("R1"));
     assert.equal((await sheet()).visible, true);
     const sheetBox = await rectOf("#value-sheet"), tabs = await rectOf(".view-tabs");
