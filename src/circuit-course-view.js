@@ -75,7 +75,21 @@ const style = [
 '.circuit-course .cc-pass{color:var(--success)}.circuit-course .cc-fail{color:var(--warning);font-weight:bold}.circuit-course .cc-curve path.cc-line{fill:none;stroke:var(--accent);stroke-width:2.5}',
 // Phone width (390 px): tool fields stack label over input, sliders get a 44 px touch band, and text fields are 16 px so iOS does not zoom in on focus.
 '@media(max-width:480px){.circuit-course .cc-field-row{grid-template-columns:minmax(0,1fr)}.circuit-course input[type=range]{min-height:44px}.circuit-course input[type=text],.circuit-course input:not([type]),.circuit-course select,.circuit-course textarea{font-size:16px;min-height:44px}}',
-'@media(max-width:760px){.circuit-course{padding:10px}.circuit-course .circuit-course-layout{grid-template-columns:1fr}.circuit-course h2{font-size:21px}.circuit-course .circuit-course-chapters,.circuit-course .circuit-course-tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}.circuit-course .circuit-course-nav button{padding:6px 3px;font-size:14px;overflow-wrap:anywhere}.circuit-course .circuit-course-chapters button{white-space:nowrap}.circuit-course .circuit-course-chapter-long,.circuit-course .circuit-course-tab-long{display:none}.circuit-course .circuit-course-tab-short{display:inline}.circuit-course .circuit-course-graphs{grid-template-columns:1fr}}'
+'@media(max-width:760px){.circuit-course{padding:10px}.circuit-course .circuit-course-layout{grid-template-columns:1fr}.circuit-course h2{font-size:21px}.circuit-course .circuit-course-chapters,.circuit-course .circuit-course-tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}.circuit-course .circuit-course-nav button{padding:6px 3px;font-size:14px;overflow-wrap:anywhere}.circuit-course .circuit-course-chapters button{white-space:nowrap}.circuit-course .circuit-course-chapter-long,.circuit-course .circuit-course-tab-long{display:none}.circuit-course .circuit-course-tab-short{display:inline}.circuit-course .circuit-course-graphs{grid-template-columns:1fr}}',
+// Phone touch: inputs, then the results (graphs), then the formula card (a numeric experiment used to put a screen of formulas
+// between the inputs and their graphs); the period scrubber stays at the bottom edge while its graphs are on screen; folds and
+// sliders are 44 px touch targets (28 px thumb); the intro sentence gives its line to the content.
+'@media(max-width:760px){.circuit-course>header>p{display:none}.circuit-course .circuit-course-layout>aside{display:contents}'
+  + '.circuit-course .circuit-course-layout>main{order:1}.circuit-course [data-circuit-course-theory]{order:2}'
+  + '.circuit-course .circuit-course-time{position:sticky;bottom:0;z-index:2;margin:0;padding:6px 12px;box-shadow:0 -6px 14px rgb(0 0 0/.28)}'
+  + '.circuit-course .circuit-course-time .circuit-course-sample{margin:0;font-size:13px}'
+  + '.circuit-course details>summary,.circuit-course .circuit-course-display>summary{min-height:44px;padding:11px 0;box-sizing:border-box}'
+  + '.circuit-course input[type=range]{min-height:44px;-webkit-appearance:none;appearance:none;background:transparent}'
+  + '.circuit-course input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--line)}'
+  + '.circuit-course input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;margin-top:-11px;border-radius:50%}'
+  + '.circuit-course input[type=range]::-webkit-slider-thumb{background:var(--accent);border:3px solid var(--canvas);box-shadow:0 0 0 1px var(--accent)}'
+  + '.circuit-course input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:var(--line)}'
+  + '.circuit-course input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:var(--accent);border:3px solid var(--canvas)}}',
 ].join('\n');
 // Phasors arrive as internal RMS; they are drawn and printed in the display basis (peak = √2 · RMS). raw: true marks a quantity without that rule.
 export function phasorGraphs(phasors, basis = 'rms') {

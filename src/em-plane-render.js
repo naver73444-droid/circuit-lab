@@ -359,6 +359,11 @@ function drawSensor(ctx, scene, palette) {
   let bx = x + 16, by = y + 14;
   if (bx + width > view.width - 4) bx = x - 16 - width;
   if (by + height > view.height - 4) by = y - 14 - height;
+  // Under a finger: centred well above the fingertip, where the hand does not cover it.
+  if (sensor.lift) {
+    bx = Math.max(4, Math.min(view.width - width - 4, x - width / 2));
+    by = Math.max(4, y - 48 - height);
+  }
   ctx.fillStyle = cssRgba(palette.bg.rgb, 0.88);
   ctx.strokeStyle = palette.sensor.css; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.roundRect(bx, by, width, height, 6); ctx.fill(); ctx.stroke();
