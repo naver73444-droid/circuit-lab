@@ -145,12 +145,13 @@ export async function startServer() {
   throw new Error(`server.mjs did not report a URL: ${ctx.serverLog}`);
 }
 
-export async function startBrowser() {
+/** `args`: extra Edge command-line switches (e.g. the load-time measurement trusts its local TLS certificate). */
+export async function startBrowser({ args = [] } = {}) {
   const executable = findBrowser();
   ctx.profile = mkdtempSync(join(tmpdir(), "circuit-lab-smoke-"));
   ctx.edge = spawn(executable, [
     "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-extensions",
-    "--disable-background-networking", "--remote-debugging-port=0", `--user-data-dir=${ctx.profile}`, "about:blank",
+    "--disable-background-networking", "--remote-debugging-port=0", `--user-data-dir=${ctx.profile}`, ...args, "about:blank",
   ], { stdio: "ignore", windowsHide: true });
   let debugPort = 0;
   for (let n = 0; n < 200 && !debugPort; n += 1) {

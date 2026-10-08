@@ -7,6 +7,7 @@ import { InputDrafts } from "./input-drafts.js";
 import { createPanelController } from "./panel-controller.js";
 import { initializePhasorPractice } from "./phasor-practice.js";
 import { createLazyController, createWorkspaceTabs } from "./workspace-tabs.js";
+import { WORKSPACE_MODULES } from "./module-preload-map.js";
 import { initResponsiveEditor } from "./responsive-editor.js";
 import { createEditorSession, createEditorState } from "./editor-session.js";
 import { createCanvasRenderer } from "./canvas-renderer.js";
@@ -304,12 +305,14 @@ function setupEvents() {
 }
 
 // Warm the lazy workspace modules once the page is idle so the first tab click
-// is instant. Skipped on Save-Data connections.
+// is instant: right after load only the downloads start (modulepreload, no script
+// runs), and 1.5 s later the modules are imported. Skipped on Save-Data connections.
 function scheduleWorkspacePrefetch(lazies) {
   if (navigator.connection?.saveData) return;
+  const idle = (run, timeout) => (typeof requestIdleCallback === "function" ? requestIdleCallback(run, { timeout }) : setTimeout(run, 0));
+  const download = () => { for (const lazy of lazies) lazy.preload(); };
   const warm = () => { for (const lazy of lazies) lazy.prefetch(); };
-  const whenIdle = () => (typeof requestIdleCallback === "function" ? requestIdleCallback(warm, { timeout: 4000 }) : setTimeout(warm, 0));
-  const start = () => setTimeout(whenIdle, 1500);
+  const start = () => { idle(download, 1000); setTimeout(() => idle(warm, 4000), 1500); };
   if (document.readyState === "complete") start(); else window.addEventListener("load", start, { once: true });
 }
 
@@ -324,9 +327,21 @@ function initialize() {
     onChange: () => { if (workspace.circuitActive) { renderer.updateCanvasView(); scopeView.render(); analysis.renderPhasorLearning(); } },
     isActive: () => workspace.circuitActive,
   });
-  emLazy = createLazyController({ host: document.getElementById("em-workspace"), load: (retry) => import("./em-controller.js" + retry), create: (module, host) => module.createEMController(host) });
-  circuitCourseLazy = createLazyController({ host: document.getElementById("circuit-course-host"), load: (retry) => import("./circuit-course-controller.js" + retry), create: (module, host) => module.createCircuitCourseController(host) });
-  signalsLazy = createLazyController({ host: document.getElementById("signals-workspace"), load: (retry) => import("./signals-course-controller.js" + retry), create: (module, host) => module.createSignalsCourseController(host) });
+  emLazy = createLazyController({
+    host: document.getElementById("em-workspace"),
+    load: (retry) => import("./em-controller.js" + retry), modules: WORKSPACE_MODULES.em,
+    create: (module, host) => module.createEMController(host),
+  });
+  circuitCourseLazy = createLazyController({
+    host: document.getElementById("circuit-course-host"),
+    load: (retry) => import("./circuit-course-controller.js" + retry), modules: WORKSPACE_MODULES["circuit-course"],
+    create: (module, host) => module.createCircuitCourseController(host),
+  });
+  signalsLazy = createLazyController({
+    host: document.getElementById("signals-workspace"),
+    load: (retry) => import("./signals-course-controller.js" + retry), modules: WORKSPACE_MODULES.signals,
+    create: (module, host) => module.createSignalsCourseController(host),
+  });
   const lazyWorkspaces = { em: emLazy, signals: signalsLazy, "circuit-course": circuitCourseLazy };
   const requestedWorkspace = new URLSearchParams(location.search).get("workspace");
   const startupWorkspace = Object.hasOwn(lazyWorkspaces, requestedWorkspace) ? requestedWorkspace : document.querySelector('[data-workspace-tab][aria-selected="true"]')?.dataset.workspaceTab;
