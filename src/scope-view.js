@@ -1,6 +1,6 @@
 import { traceColor } from "./trace-color.js";
 import { escapeHtml } from "./safe-dom.js";
-import { axisDisplayUnit, engineering, extremaIndices, fittedAxis, fittedXAxis, nearestSampleIndex, zoomAxis, X_DIVISIONS, Y_DIVISIONS } from "./scope-model.js";
+import { axisDisplayUnit, cursorPin, engineering, extremaIndices, fittedAxis, fittedXAxis, nearestSampleIndex, repinnedIndex, zoomAxis, X_DIVISIONS, Y_DIVISIONS } from "./scope-model.js";
 import { axisSide, cursorIndexAfterKey, layoutCursorLabels } from "./cursor-label-model.js";
 import { describeCursorDelta, nextCursorB } from "./cursor-delta-model.js";
 
@@ -21,6 +21,8 @@ export class ScopeView {
     this.cursorIndex = null;
     this.hoverIndex = null;
     this.pinnedIndex = null;
+    // The pinned cursor by its x value (scope-model cursorPin): a re-run over the same x range (a value edit) keeps it there.
+    this.pin = null;
     // Second (reference) cursor B and the trace the A/B delta and the measurement summary describe.
     this.cursorB = null;
     this.bArmed = false;
@@ -68,6 +70,7 @@ export class ScopeView {
     this.cursorIndex = null;
     this.hoverIndex = null;
     this.pinnedIndex = null;
+    this.pin = null;
     this.cursorB = null;
     this.bArmed = false;
     this.activeTraceKey = null;
@@ -188,8 +191,9 @@ export class ScopeView {
     this.forceFit = false;
     if (changedResult) {
       this.hoverIndex = null;
-      this.pinnedIndex = null;
-      this.selectedTraceKeys.clear();
+      // Same analysis over the same x range (e.g. a part value changed): the pinned cursor stays at its x, on the nearest new sample.
+      this.pinnedIndex = repinnedIndex(this.pin, result);
+      if (this.pinnedIndex === null) { this.pin = null; this.selectedTraceKeys.clear(); }
     }
     this.cursorIndex = result.analysis === "dc" ? 0 : this.pinnedIndex ?? this.hoverIndex;
     this.render();
@@ -284,6 +288,7 @@ export class ScopeView {
     const index = this.indexAtPoint(point);
     if (index === null) return false;
     this.pinnedIndex = index;
+    this.pin = cursorPin(this.result, index);
     this.cursorIndex = index;
     this.renderCursor();
     return true;
@@ -292,6 +297,7 @@ export class ScopeView {
   clearPinnedCursor() {
     if (this.pinnedIndex === null) return false;
     this.pinnedIndex = null;
+    this.pin = null;
     this.cursorIndex = this.hoverIndex;
     this.renderCursor();
     return true;
@@ -314,6 +320,7 @@ export class ScopeView {
     if (next === null) return false;
     if (next !== this.pinnedIndex) {
       this.pinnedIndex = next;
+      this.pin = cursorPin(this.result, next);
       this.cursorIndex = next;
       this.renderCursor();
     }

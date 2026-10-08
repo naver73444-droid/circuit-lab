@@ -4,7 +4,7 @@ import { InputDrafts } from "./input-drafts.js";
 import { createPanelController } from "./panel-controller.js";
 import { createLazyController, createWorkspaceTabs } from "./workspace-tabs.js";
 import { LAZY_MODULES, WORKSPACE_MODULES } from "./module-preload-map.js";
-import { initResponsiveEditor } from "./responsive-editor.js";
+import { initResponsiveEditor, PHONE_QUERY } from "./responsive-editor.js";
 import { createEditorSession, createEditorState } from "./editor-session.js";
 import { createCanvasRenderer } from "./canvas-renderer.js";
 import { createRunState } from "./run-state.js";
@@ -21,6 +21,7 @@ import { createValueSheet } from "./value-sheet.js";
 import { installViewportGuard } from "./viewport-guard.js";
 import { createCanvasActions } from "./canvas-actions.js";
 import { createFirstRunGuide } from "./first-run-guide.js";
+import { createBackNavigation, detailsOverlay } from "./back-navigation.js";
 
 const elements = Object.fromEntries([
   "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "flow-layer", "flow-toggle", "flow-hint", "empty-hint",
@@ -56,6 +57,8 @@ let emLazy = null;
 let circuitCourseLazy = null;
 let signalsLazy = null;
 let workspaceSeq = 0;
+let backgroundLoads = null; // background warming of the lazy workspaces (createBackgroundLoads)
+let backNavigation = null;  // browser back button: workspace steps and phone overlays (back-navigation.js)
 
 function setStatus(text, kind = "ready") {
   elements["engine-status"].textContent = text;
@@ -218,6 +221,12 @@ function afterHistoryRestore() {
   input.restoreToolHint();
 }
 
+/** No probe, nothing to plot: the waveform panel shrinks to its hint (styles.css). Follows the probes, never the run, so the canvas
+ * does not change size when a result arrives. */
+function syncWaveIdle() {
+  document.getElementById("wave-panel").toggleAttribute("data-idle", state.probes.length === 0);
+}
+
 function updateHistoryButtons() {
   elements["undo-button"].disabled = state.history.length === 0;
   elements["redo-button"].disabled = state.future.length === 0;
@@ -230,6 +239,7 @@ function refreshProbeViews() {
   analysis.renderPlot();
   analysis.renderPhasorLearning();
   updateHistoryButtons();
+  syncWaveIdle();
 }
 
 /** Selection changed: toggle the canvas classes (no rebuild) and refresh only what depends on the selection. */
@@ -266,6 +276,7 @@ function renderAll() {
   analysis.renderPortPanel();
   if (state.runState.status === "error" && state.runState.error) analysis.renderFailureDiagnostic(state.runState.error);
   updateHistoryButtons();
+  syncWaveIdle();
   syncSelectionButtons();
   hover.refresh();
   valueSheet.sync();
@@ -308,23 +319,37 @@ function setupEvents() {
 }
 
 // Once the page is idle after the load event, first import the result side (the first analysis needs it, so it should be in before
-// the student finishes a circuit), then warm the lazy workspace modules so the first tab click is instant: only the downloads start
-// (modulepreload, no script runs), and 1.5 s later the modules are imported. While a first analysis is waiting or running (an example
-// or a restored project), the workspace downloads wait for it (at most 8 s) so they do not slow its result down. Skipped on Save-Data
-// connections (everything then loads on first use).
-function scheduleBackgroundLoads(lazies) {
-  if (navigator.connection?.saveData) return;
-  const idle = (run, timeout) => (typeof requestIdleCallback === "function" ? requestIdleCallback(run, { timeout }) : setTimeout(run, 0));
-  const download = () => { for (const lazy of lazies) lazy.preload(); };
-  const warm = () => { for (const lazy of lazies) lazy.prefetch(); };
-  const analysisPending = () => state.autoTimer !== null || state.runState.status === "running";
-  const giveUp = performance.now() + 8000;
-  const workspaces = () => {
-    if (analysisPending() && performance.now() < giveUp) { setTimeout(workspaces, 200); return; }
-    download(); setTimeout(() => idle(warm, 4000), 1500);
-  };
-  const start = () => idle(() => results.ensure().then(workspaces, workspaces), 1000);
-  if (document.readyState === "complete") start(); else window.addEventListener("load", start, { once: true });
+// the student finishes a circuit), then warm the lazy workspace modules so the first tab click is instant: the bundles are downloaded
+// one at a time with low priority (modulepreload, no script runs), and 1.5 s after the last one they are imported, again one by one.
+// While a first analysis is waiting or running (an example or a restored project), the workspace downloads wait for it (at most 8 s)
+// so they do not slow its result down. A tab the student reaches for (pointerenter / pointerdown / focus → prioritize) starts its own
+// workspace at once with high priority and nothing new is started until it is in; a bundle already on the wire keeps going.
+// Save-Data connections skip the warming (everything then loads on first use).
+function createBackgroundLoads(lazies) {
+  let urgent = null;
+  const waitUrgent = async () => { while (urgent) await urgent; };
+  function prioritize(name) {
+    const lazy = lazies[name];
+    if (!lazy || lazy.controller) return;
+    const mine = lazy.prefetch("high").finally(() => { if (urgent === mine) urgent = null; });
+    urgent = mine;
+  }
+  function start() {
+    if (navigator.connection?.saveData) return;
+    const idle = (run, timeout) => (typeof requestIdleCallback === "function" ? requestIdleCallback(run, { timeout }) : setTimeout(run, 0));
+    const queue = Object.values(lazies);
+    const warm = async () => { for (const lazy of queue) { await waitUrgent(); await lazy.prefetch("low"); } };
+    const analysisPending = () => state.autoTimer !== null || state.runState.status === "running";
+    const giveUp = performance.now() + 8000;
+    const workspaces = async () => {
+      if (analysisPending() && performance.now() < giveUp) { setTimeout(workspaces, 200); return; }
+      for (const lazy of queue) { await waitUrgent(); await lazy.preload(); }
+      setTimeout(() => idle(warm, 4000), 1500);
+    };
+    const begin = () => idle(async () => { await waitUrgent(); results.ensure().then(workspaces, workspaces); }, 1000);
+    if (document.readyState === "complete") begin(); else window.addEventListener("load", begin, { once: true });
+  }
+  return { prioritize, start };
 }
 
 function initialize() {
@@ -359,6 +384,8 @@ function initialize() {
     create: (module, host) => module.createSignalsCourseController(host),
   });
   const lazyWorkspaces = { em: emLazy, signals: signalsLazy, "circuit-course": circuitCourseLazy };
+  // Warmed in the order of the tabs on screen (전자기학 · 신호 · 과정); a tab the student reaches for jumps the queue.
+  backgroundLoads = createBackgroundLoads({ em: emLazy, signals: signalsLazy, "circuit-course": circuitCourseLazy });
   const requestedWorkspace = new URLSearchParams(location.search).get("workspace");
   const startupWorkspace = Object.hasOwn(lazyWorkspaces, requestedWorkspace) ? requestedWorkspace : document.querySelector('[data-workspace-tab][aria-selected="true"]')?.dataset.workspaceTab;
   lazyWorkspaces[startupWorkspace]?.prefetch();
@@ -373,7 +400,7 @@ function initialize() {
         valueSheet.sync();
       } else lazyWorkspaces[from]?.controller?.deactivate();
     },
-    onIntent: (name) => lazyWorkspaces[name]?.prefetch(),
+    onIntent: (name) => backgroundLoads.prioritize(name),
     onChange: (name) => {
       if (Object.hasOwn(lazyWorkspaces, name)) activateLazyWorkspace(lazyWorkspaces[name], name);
       else {
@@ -412,6 +439,7 @@ function initialize() {
     getCanvasActions: () => canvasActions.inspect(),
     getFirstRun: () => firstRunGuide.inspect(),
     getWorkspace: () => workspaceTabs.active,
+    getBackNavigation: () => backNavigation?.inspect() ?? null,
     // Lazy controllers report null until loaded; await ensureWorkspace(name) first.
     getEMState: () => emLazy.controller?.inspect() ?? null,
     getCircuitCourseState: () => circuitCourseLazy.controller?.inspect() ?? null,
@@ -420,7 +448,21 @@ function initialize() {
     activateWorkspace: (name) => workspaceTabs.activate(name, false),
   };
   if (Object.hasOwn(lazyWorkspaces, requestedWorkspace)) workspaceTabs.activate(requestedWorkspace, false);
-  scheduleBackgroundLoads([emLazy, circuitCourseLazy, signalsLazy]);
+  // Back button: workspace switches are history entries; on a phone an open overlay is one more, so back closes it first.
+  const inCircuit = () => workspaceTabs.active === "circuit";
+  backNavigation = createBackNavigation({
+    workspaces: { active: () => workspaceTabs.active, activate: (name) => workspaceTabs.activate(name, false) },
+    phone: matchMedia(PHONE_QUERY),
+    overlays: [
+      { isOpen: () => inCircuit() && document.documentElement.classList.contains("value-sheet-open"), close: () => document.querySelector('#value-sheet [data-sheet-action="close"]')?.click() },
+      detailsOverlay(document.getElementById("file-menu"), inCircuit),
+      detailsOverlay(document.getElementById("interaction-help"), inCircuit),
+    ],
+  });
+  // The value sheet is watched through the class it sets on <html>, the two popovers through their toggle events.
+  new MutationObserver(() => backNavigation.overlaysChanged()).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+  for (const id of ["file-menu", "interaction-help"]) document.getElementById(id)?.addEventListener("toggle", () => backNavigation.overlaysChanged());
+  backgroundLoads.start();
   const query = new URLSearchParams(location.search);
   const exampleId = query.get("example");
   const exampleRequested = Boolean(exampleId && examples.some((example) => example.id === exampleId));
