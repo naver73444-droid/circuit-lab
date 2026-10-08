@@ -115,3 +115,10 @@ test("Backspace는 Delete처럼 삭제하고, 글자를 입력하는 칸이나 �
   assert.equal(shortcutFor(key("Backspace", { ctrlKey: true })), null);
   assert.equal(shortcutFor(key("Backspace", { altKey: true })), null, "Alt+Backspace는 브라우저 몫");
 });
+
+test("? 는 조작 도움말을 열고 닫는다 (Shift+/ 그대로), 입력란·수식키 조합·드래그 확정과는 무관", () => {
+  assert.deepEqual(shortcutFor(key("?", { shiftKey: true, code: "Slash" })), { action: "help", preventDefault: true });
+  assert.equal(action(key("?", { shiftKey: true }), { typing: true }), null, "입력란에서는 글자 ?");
+  assert.equal(shortcutFor(key("?", { shiftKey: true, ctrlKey: true })), null);
+  assert.equal(commitsActiveDrag("help"), false);
+});
