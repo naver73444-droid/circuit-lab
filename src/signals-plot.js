@@ -51,6 +51,11 @@ export function createSurface(doc, parent, { label, keys = null, className = '' 
   svg.addEventListener('touchstart', (event) => {
     if (grab && event.touches.length === 1 && grab(surface.pointer(event.touches[0]))) event.preventDefault();
   }, { passive: false });
+  // A finger that lands outside the draggable regions is scrolling the page: the views never see that pointerdown, so a
+  // scroll that happens to start on the plot does not move a value. Registered before any view listener, so it runs first.
+  svg.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'touch' && grab && !grab(surface.pointer(event))) event.stopImmediatePropagation();
+  });
   return surface;
 }
 

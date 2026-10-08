@@ -738,6 +738,18 @@ body :has(.topbar) { height: 100%; min-height: 0; }
   .em-param > input[type="range"] { grid-column: 1; }
   .em-param.no-slider .em-number { grid-column: 1 / -1; }
   .em-param > select { grid-column: 1 / -1; }
+  /* Touch: every button, fold and checkbox row is a 44 px target; sliders get a 28 px thumb on a 44 px band. */
+  .em-workspace button { min-height: 44px; min-width: 44px; }
+  .em-workspace summary { box-sizing: border-box; min-height: 44px; padding-top: 12px; padding-bottom: 12px; }
+  .em-check { min-height: 44px; }
+  .em-check input { width: 22px; height: 22px; }
+  .em-workspace input[type="range"] { height: 44px; min-height: 44px; -webkit-appearance: none; appearance: none; background: transparent; }
+  .em-workspace input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--line); }
+  .em-workspace input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 28px; height: 28px; margin-top: -11px; border-radius: 50%; background: var(--accent); border: 3px solid var(--canvas); box-shadow: 0 0 0 1px var(--accent); }
+  .em-workspace input[type="range"]::-moz-range-track { height: 6px; border-radius: 3px; background: var(--line); }
+  .em-workspace input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); border: 3px solid var(--canvas); }
+  .em-workspace input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .em-course-section li a { display: inline-block; padding: 3px 0; }
 }
 @media (prefers-reduced-motion: reduce) { .em-canvas-box canvas { transition: none; } }
 

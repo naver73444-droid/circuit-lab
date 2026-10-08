@@ -86,6 +86,8 @@ export const SIGNALS_STYLE = `
 .sg-legend .c3{--c:var(--text)}
 .sg-legend .c4{--c:var(--warning)}
 .sg-legend .c5{--c:var(--danger)}
+.sg-bubble{position:fixed;left:0;top:0;z-index:30;max-width:calc(100vw - 16px);padding:6px 10px;pointer-events:none;box-shadow:0 4px 14px rgb(0 0 0 / .35)}
+.sg-bubble{border:1px solid var(--accent);border-radius:10px;background:var(--panel);color:var(--text);font:600 15px/1.3 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:700px){
 .sg-tabs{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:8px}.sg-ref select{font-size:16px}
 .sg-tabs button{min-height:36px;padding:2px 2px;font-size:12px}
@@ -107,5 +109,21 @@ export const SIGNALS_STYLE = `
 .sg-stage{min-height:200px;margin-top:8px}
 .sg-read{font-size:13px}
 .sg-hint:not([hidden]){display:block}
+/* Phone touch: the plot comes first and the controls sit under it, so the hand on a slider never covers the curve it moves.
+   Every control is a 44 px target, text fields and selects use 16 px (iOS zooms into smaller ones), sliders get a 28 px thumb. */
+.sg{display:flex;flex-direction:column}
+.sg>*{min-width:0}
+.sg-stage{order:1}.sg-hint{order:2}.sg-live{order:3}.sg-controls{order:4;margin-top:8px}.sg-read{order:5}.sg-status{order:6}.sg-details{order:7}
+.sg-tabs button,.sg-scrub>button,.sg-details>summary{min-height:44px}
+.sg-details>summary{padding:12px 2px}
+.sg-ctl select,.sg-ref select,.sg-advanced input[type=text]{min-height:44px;font-size:16px}
+.sg-ctl.sg-choice select{min-height:44px}
+.sg-ctl>input[type=range]{height:44px}
+.sg input[type=range]{-webkit-appearance:none;appearance:none;background:transparent}
+.sg input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--line)}
+.sg input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;margin-top:-11px;border-radius:50%;background:var(--accent);border:3px solid var(--canvas);box-shadow:0 0 0 1px var(--accent)}
+.sg input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:var(--line)}
+.sg input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:var(--accent);border:3px solid var(--canvas)}
+.sg input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 }
 `;

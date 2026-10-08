@@ -56,6 +56,15 @@ const DRAG_HINTS = {
   roc: () => '● 극점을 끌어 이동',
 };
 
+// The touch bubble shows the value being dragged; before the drag has changed anything it falls back to the read-out up
+// to its first ' · ', at most BUBBLE_MAX characters.
+const BUBBLE_GAP = 36; // px between the finger and the bubble's lower edge
+const BUBBLE_MAX = 60;
+export function bubbleText(live) {
+  const head = String(live ?? '').split(' · ')[0].trim();
+  return head.length > BUBBLE_MAX ? `${head.slice(0, BUBBLE_MAX - 1)}…` : head;
+}
+
 export function createSignalsCourseController(host) {
   if (!host || typeof host.querySelector !== 'function') throw new TypeError('신호 학습 패널 host가 필요합니다.');
   const doc = host.ownerDocument;
@@ -72,6 +81,7 @@ export function createSignalsCourseController(host) {
   let playTimer = 0;
   let layoutWidth = 0;
   let resizer = null;
+  let lastPatch = null; // the latest change from a view, the keyboard or a slider (what a touch bubble names)
   const ui = {};
 
   // ---------------------------------------------------------------- state
@@ -137,6 +147,7 @@ export function createSignalsCourseController(host) {
     ui.title = el('h2', {}, ui.head);
     ui.controls = el('section', { class: 'sg-controls', 'aria-label': '조건 슬라이더' }, ui.root);
     ui.stage = el('div', { class: 'sg-stage' }, ui.root);
+    watchTouchDrags();
     ui.read = el('p', { class: 'sg-read', 'data-signals-read': '' }, ui.root);
     ui.hint = el('p', { class: 'sg-hint', 'data-signals-hint': '', hidden: '' }, ui.root);
     ui.live = el('p', { class: 'sg-live', 'data-signals-live': '' }, ui.root);
@@ -151,6 +162,40 @@ export function createSignalsCourseController(host) {
       resizer.observe(ui.stage);
     }
     mounted = true;
+  }
+
+  // A finger dragging on the plot covers the values under it (and the hand covers everything below the finger), so while a
+  // touch drag runs, a small bubble above the finger names the value being dragged. Touches that only scroll never reach
+  // the stage (signals-plot.js stops their pointerdown), so every touch pointerdown here is a drag. The view handled the
+  // same pointerdown first, so `lastPatch` already holds what this drag moves.
+  function dragText() {
+    const state = current();
+    const spec = lastPatch?.cursor !== undefined ? cursorSpec(state) : null;
+    if (spec) return cursorText(spec, state.cursor);
+    const parts = Object.keys(lastPatch?.params ?? {}).map((key) => ui.sliders.get(key)).filter(Boolean)
+      .map(({ spec: control, input, output }) => `${control.label}: ${output?.textContent || input.getAttribute('aria-valuetext') || ''}`);
+    return parts.length ? parts.join(' · ') : bubbleText(ui.live.textContent);
+  }
+
+  function watchTouchDrags() {
+    ui.bubble = el('div', { class: 'sg-bubble', 'data-signals-bubble': '', 'aria-hidden': 'true', hidden: '' }, ui.root);
+    let finger = null;
+    const place = (event) => {
+      const box = ui.bubble.getBoundingClientRect();
+      const x = clamp(event.clientX - box.width / 2, 8, Math.max(8, win.innerWidth - box.width - 8));
+      const y = Math.max(8, event.clientY - box.height - BUBBLE_GAP);
+      ui.bubble.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    };
+    ui.stage.addEventListener('pointerdown', (event) => {
+      if (event.pointerType !== 'touch' || finger !== null) return;
+      finger = event.pointerId;
+      ui.bubble.textContent = dragText();
+      ui.bubble.hidden = !ui.bubble.textContent;
+      place(event);
+    });
+    ui.stage.addEventListener('pointermove', (event) => { if (event.pointerId === finger && !ui.bubble.hidden) place(event); });
+    const end = (event) => { if (event.pointerId === finger) { finger = null; ui.bubble.hidden = true; } };
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) ui.stage.addEventListener(type, end);
   }
 
   function buildAdvanced() {
@@ -316,6 +361,7 @@ export function createSignalsCourseController(host) {
 
   // views and the keyboard report changes as patches: { cursor?, params? }
   function applyPatch(patch) {
+    lastPatch = patch;
     const state = current();
     if (patch.params) {
       const controls = lessonOf().controls(state.family, state.params);
@@ -424,6 +470,7 @@ export function createSignalsCourseController(host) {
     try {
       view.update(info);
       ui.live.textContent = lesson.describe?.(info) ?? '';
+      if (!ui.bubble.hidden) ui.bubble.textContent = dragText();
       ui.status.textContent = state.extra.error; // an earlier paint error goes away once a paint succeeds
     } catch (error) {
       ui.status.textContent = error.message;

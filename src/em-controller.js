@@ -453,10 +453,19 @@ export function createEMController(root) {
       lab.gauss = { ...lab.gauss, radius: Number(event.target.value) };
       requestRender();
     }
+    // The strength slider re-solves the whole field on every step: draw drafts while it moves (like a drag), the final
+    // picture when it is released. (The inspector has already applied the value.)
+    if (event.target.dataset?.emField === 'strength-slider') {
+      interaction.begin('strength-slider');
+      lab.quality = 'draft';
+      requestRender();
+    }
   }, listen);
   const endSlider = event => {
-    const token = event.target.id === AMPERE_SLIDER ? 'ampere-slider' : event.target.id === 'em-gauss-radius' ? 'gauss-slider' : null;
+    const token = event.target.id === AMPERE_SLIDER ? 'ampere-slider' : event.target.id === 'em-gauss-radius' ? 'gauss-slider'
+      : event.target.dataset?.emField === 'strength-slider' ? 'strength-slider' : null;
     if (!token || !interaction.end(token)) return;
+    if (token === 'strength-slider' && !plane.isDragging()) lab.quality = 'final';
     requestRender();
   };
   root.addEventListener('change', endSlider, listen);

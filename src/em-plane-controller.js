@@ -18,6 +18,9 @@ import { cycleSelectionTarget } from './em-source-edit.js';
 import { createInteraction } from './em-interaction.js';
 
 const SENSOR_GRAB = 16;
+// A fingertip is far less precise than a mouse: touches grab the sensor, a source handle and a Gauss / Ampere ring from
+// further away (px). The mouse keeps the tight radii above and in em-plane-geometry.js.
+const TOUCH_GRAB = { sensor: 28, source: 32, edge: 20 };
 const KEY_STEP = 0.05;
 // A burst of wheel turns / resizes renders at draft quality; one converged render follows this long after the last event.
 const VIEW_SETTLE_MS = 150;
@@ -151,7 +154,8 @@ export function createPlaneController({
     renderer.render({
       view, plane: info.plane, fixed: mode.fixed(), field: mode.field(), fieldKey: mode.fieldKey(), sources: mode.sources(),
       model: mode.model(), quality: lab.quality, chips: lab.chips, selectedId: activeEditor().state.selectedId,
-      sensor: { point: info.sensor, vector: info.inPlane, text: info.readout.compact },
+      // lift: the sensor is under a finger, so its label goes above it instead of under the hand.
+      sensor: { point: info.sensor, vector: info.inPlane, text: info.readout.compact, lift: drag?.type === 'sensor' && drag.touch === true },
       gauss: info.gauss ? { ...lab.gauss, label: info.gauss.status === 'ok' ? info.gauss.lines[1] : '' } : null,
       gaussEnclosed: info.gauss?.enclosure.enclosedIds ?? [],
       ampere: info.ampere ? { ...lab.ampere, enclosedIds: info.ampere.enclosure.enclosedIds, label: info.ampere.compact } : null,
@@ -166,59 +170,119 @@ export function createPlaneController({
     mode.moveSensor(pointOnPlane(view, mode.plane(), mode.fixed(), x, y));
   }
 
+  // ---- two-finger pinch: zoom about the fingers and pan with them. Only when the first finger landed on empty space (it
+  // only brought the sensor over, which is undone): a finger that holds a charge, the sensor or a ring keeps it, and a second
+  // finger cannot take over that drag. The gesture stays a pinch until every finger is up. ------------------------------------
+  const fingers = new Map();
+  let pinch = null;
+
+  function startPinch() {
+    if (drag) {
+      const undone = drag;
+      stopGesture();
+      if (undone.type === 'source') undone.editor.cancelDrag();
+      undone.restore?.();
+    }
+    const [p, q] = [...fingers.values()], view = geometry();
+    const mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+    pinch = { view, distance: Math.max(1, Math.hypot(p[0] - q[0], p[1] - q[1])), anchor: view.toWorld(...mid) };
+    interaction.begin('plane-pinch');
+    lab.quality = 'draft';
+    onChange();
+  }
+
+  function movePinch() {
+    if (fingers.size < 2) return;
+    const [p, q] = [...fingers.values()].slice(0, 2), start = pinch.view;
+    const mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], distance = Math.max(1, Math.hypot(p[0] - q[0], p[1] - q[1]));
+    // zoomAbout clamps the span to the allowed range; the offset then keeps the world point first under the fingers there.
+    const { span } = zoomAbout(start, mid[0], mid[1], pinch.distance / distance);
+    const scale = Math.min(start.width, start.height) / (2 * span);
+    lab.view.span = span;
+    lab.view.offset = [pinch.anchor[0] - (mid[0] - start.width / 2) / scale, pinch.anchor[1] - (start.height / 2 - mid[1]) / scale];
+    viewPulse();
+    onChange();
+  }
+
+  function liftFinger(event) {
+    if (!fingers.delete(event.pointerId) || !pinch) return;
+    if (fingers.size === 0) { pinch = null; interaction.end('plane-pinch'); viewPulse(); onChange(); }
+  }
+
   function startDrag(event) {
+    const touch = event.pointerType === 'touch';
+    if (touch) {
+      // The primary touch is the first finger of a new gesture: forget fingers whose release never arrived.
+      if (event.isPrimary) { fingers.clear(); if (pinch) { pinch = null; interaction.end('plane-pinch'); } }
+      fingers.set(event.pointerId, local(event));
+      if (pinch) return; // a finger joining a running pinch
+      if (fingers.size === 2) {
+        if (!drag || drag.empty) { event.preventDefault(); startPinch(); return; }
+        fingers.delete(event.pointerId); // ignored while the first finger holds something; it never joins a later pinch
+      }
+    }
     // One gesture at a time: a second finger (or button) must not overwrite the drag that is already running.
     if (event.button !== 0 || (drag && drag.pointerId !== event.pointerId)) return;
     const [x, y] = local(event), view = geometry(), mode = getMode(), plane = mode.plane();
     const [sx, sy] = sensorPixel(view, mode), sensorDistance = Math.hypot(sx - x, sy - y);
+    const sensorGrab = touch ? TOUCH_GRAB.sensor : SENSOR_GRAB, edge = touch ? TOUCH_GRAB.edge : undefined;
     const sandbox = editable(mode), ed = activeEditor();
-    const hit = sandbox ? hitSource(mode.sources(), view, plane, x, y) : null;
+    const hit = sandbox ? hitSource(mode.sources(), view, plane, x, y, touch ? TOUCH_GRAB.source : undefined) : null;
     event.preventDefault();
     canvas.focus({ preventScroll: true });
     canvas.setPointerCapture?.(event.pointerId);
-    if (hit && !(sensorDistance <= SENSOR_GRAB && sensorDistance <= hit.distance)) {
+    if (hit && !(sensorDistance <= sensorGrab && sensorDistance <= hit.distance)) {
       ed.select(hit.source.id);
       if (!ed.beginDrag(hit.source.id, plane, hit.handle, hit.position)) { onChange(); return; }
       const grab = pointOnPlane(view, plane, hit.position[planeNormal(plane)], x, y);
       const normal = hit.position[planeNormal(plane)];
-      startGesture({ type: 'source', editor: ed, pointerId: event.pointerId, normal, offset: hit.position.map((v, i) => v - grab[i]) });
+      startGesture({ type: 'source', editor: ed, pointerId: event.pointerId, touch, normal, offset: hit.position.map((v, i) => v - grab[i]) });
       lab.quality = 'draft';
       onChange();
       return;
     }
-    if (sensorDistance > SENSOR_GRAB && mode.kind === 'current' && lab.chips.ampere && lab.ampere) {
-      const where = hitAmpere(view, plane, lab.ampere, x, y);
+    if (sensorDistance > sensorGrab && mode.kind === 'current' && lab.chips.ampere && lab.ampere) {
+      const where = hitAmpere(view, plane, lab.ampere, x, y, edge);
       if (where) {
-        const grab = pointOnPlane(view, plane, mode.fixed(), x, y);
+        const grab = pointOnPlane(view, plane, mode.fixed(), x, y), before = lab.ampere;
         startGesture({
-          type: where === 'inside' ? 'ampere-move' : 'ampere-resize', part: where, pointerId: event.pointerId,
-          offset: lab.ampere.center.map((v, i) => v - grab[i]),
+          type: where === 'inside' ? 'ampere-move' : 'ampere-resize', part: where, pointerId: event.pointerId, touch,
+          offset: lab.ampere.center.map((v, i) => v - grab[i]), restore: () => { lab.ampere = before; },
         });
         onChange();
         return;
       }
     }
-    if (sensorDistance > SENSOR_GRAB && mode.kind === 'sandbox' && lab.chips.gauss && lab.gauss) {
-      const where = hitGauss(view, plane, lab.gauss, mode.fixed(), x, y);
+    if (sensorDistance > sensorGrab && mode.kind === 'sandbox' && lab.chips.gauss && lab.gauss) {
+      const where = hitGauss(view, plane, lab.gauss, mode.fixed(), x, y, edge);
       if (where) {
-        const grab = pointOnPlane(view, plane, mode.fixed(), x, y);
+        const grab = pointOnPlane(view, plane, mode.fixed(), x, y), before = lab.gauss;
         const type = where === 'edge' ? 'gauss-resize' : 'gauss-move';
-        startGesture({ type, pointerId: event.pointerId, offset: lab.gauss.center.map((v, i) => v - grab[i]) });
+        startGesture({ type, pointerId: event.pointerId, touch, offset: lab.gauss.center.map((v, i) => v - grab[i]), restore: () => { lab.gauss = before; } });
         onChange();
         return;
       }
     }
-    startGesture({ type: 'sensor', pointerId: event.pointerId });
-    moveSensorTo(view, mode, x, y);
+    // A finger on (or a fingertip away from) the sensor grabs it where it is, so it does not jump under the fingertip;
+    // anywhere else the sensor comes to the finger. The mouse always puts it under the pointer.
+    const before = mode.sensor().slice(), grabbed = touch && sensorDistance <= sensorGrab;
+    const shift = grabbed ? [sx - x, sy - y] : [0, 0];
+    startGesture({ type: 'sensor', pointerId: event.pointerId, touch, shift, empty: !grabbed, restore: () => mode.moveSensor(before) });
+    if (!grabbed) moveSensorTo(view, mode, x, y);
     onChange();
   }
 
   function moveDrag(event) {
+    if (pinch) {
+      if (fingers.has(event.pointerId)) { fingers.set(event.pointerId, local(event)); event.preventDefault(); movePinch(); }
+      return;
+    }
+    if (event.pointerType === 'touch' && fingers.has(event.pointerId)) fingers.set(event.pointerId, local(event));
     const [x, y] = local(event), view = geometry(), mode = getMode(), plane = mode.plane();
-    if (!drag) { hover(view, mode, x, y); return; }
+    if (!drag) { if (event.pointerType !== 'touch') hover(view, mode, x, y); return; }
     if (event.pointerId !== drag.pointerId) return;
     event.preventDefault();
-    if (drag.type === 'sensor') moveSensorTo(view, mode, x, y);
+    if (drag.type === 'sensor') moveSensorTo(view, mode, x + drag.shift[0], y + drag.shift[1]);
     else if (drag.type === 'source') {
       const point = pointOnPlane(view, plane, drag.normal, x, y);
       drag.editor.previewDrag(point.map((v, i) => v + drag.offset[i]));
@@ -277,6 +341,10 @@ export function createPlaneController({
   canvas.addEventListener('pointerup', event => endDrag(event, false), { signal });
   canvas.addEventListener('pointercancel', event => endDrag(event, true), { signal });
   canvas.addEventListener('lostpointercapture', event => endDrag(event, true), { signal });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    canvas.addEventListener(type, liftFinger, { signal });
+    window.addEventListener(type, event => { if (event.target !== canvas) liftFinger(event); }, { signal });
+  }
   // If pointer capture is unavailable (or the release happens outside the page area), the window still ends the drag.
   window.addEventListener('pointermove', event => { if (drag && event.target !== canvas) moveDrag(event); }, { signal });
   window.addEventListener('pointerup', event => { if (event.target !== canvas) endDrag(event, false); }, { signal });
