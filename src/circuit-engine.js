@@ -366,6 +366,10 @@ export function validateCircuitStructure(circuit) {
         throw new CircuitError("BAD_WIRE", `${wire.id}의 waypoint 좌표가 올바르지 않습니다.`);
       }
     }
+    // anchors: the bend points the user clicked on an automatically routed wire (wire-router.js); same rule as waypoints.
+    if (wire.anchors !== undefined && (!Array.isArray(wire.anchors) || wire.anchors.some((point) => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)))) {
+      throw new CircuitError("BAD_WIRE", `${wire.id}의 경유점 좌표가 올바르지 않습니다.`);
+    }
     for (const endpoint of [wire.a, wire.b]) {
       const hasAnyPinField = endpoint && (endpoint.componentId !== undefined || endpoint.pin !== undefined);
       const hasPin = endpoint && endpoint.componentId !== undefined && endpoint.pin !== undefined;

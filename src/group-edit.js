@@ -11,7 +11,7 @@ export function movableItems(items) {
   return items.filter((item) => item.kind === "component" || item.kind === "junction");
 }
 
-/** Positions at the start of a gesture: {components, junctions: [{id, x, y}], wires: [{id, waypoints}]}. Plain data (JSON-safe). */
+/** Positions at the start of a gesture: {components, junctions: [{id, x, y}], wires: [{id, waypoints, anchors?}]}. Plain data (JSON-safe). */
 export function captureGroupOrigins(circuit, items) {
   const movable = movableItems(items);
   const componentIds = new Set(movable.filter((item) => item.kind === "component").map((item) => item.id));
@@ -20,7 +20,8 @@ export function captureGroupOrigins(circuit, items) {
   return {
     components: circuit.components.filter((component) => componentIds.has(component.id)).map((component) => ({ id: component.id, x: component.x, y: component.y, rotation: component.rotation ?? 0 })),
     junctions: (circuit.junctions ?? []).filter((junction) => junctionIds.has(junction.id)).map((junction) => ({ id: junction.id, x: junction.x, y: junction.y })),
-    wires: circuit.wires.filter((wire) => Array.isArray(wire.waypoints) && wire.waypoints.length && moves(wire.a) && moves(wire.b)).map((wire) => ({ id: wire.id, waypoints: structuredClone(wire.waypoints) })),
+    wires: circuit.wires.filter((wire) => ((Array.isArray(wire.waypoints) && wire.waypoints.length) || (Array.isArray(wire.anchors) && wire.anchors.length)) && moves(wire.a) && moves(wire.b))
+      .map((wire) => ({ id: wire.id, waypoints: structuredClone(wire.waypoints ?? []), ...(Array.isArray(wire.anchors) ? { anchors: structuredClone(wire.anchors) } : {}) })),
   };
 }
 
@@ -35,7 +36,12 @@ export function applyGroupOffset(circuit, origins, dx, dy, { snap = false } = {}
   const wires = new Map(circuit.wires.map((wire) => [wire.id, wire]));
   for (const origin of origins.components) { const item = components.get(origin.id); if (item) Object.assign(item, place(origin)); }
   for (const origin of origins.junctions) { const item = junctions.get(origin.id); if (item) Object.assign(item, place(origin)); }
-  for (const origin of origins.wires) { const wire = wires.get(origin.id); if (wire) wire.waypoints = origin.waypoints.map(place); }
+  for (const origin of origins.wires) {
+    const wire = wires.get(origin.id);
+    if (!wire) continue;
+    wire.waypoints = origin.waypoints.map(place);
+    if (origin.anchors) wire.anchors = origin.anchors.map(place); // the clicked points of a routed wire (wire-router) travel with it
+  }
 }
 
 export const restoreGroupOrigins = (circuit, origins) => applyGroupOffset(circuit, origins, 0, 0);
@@ -107,6 +113,10 @@ export function rotateGroup(circuit, items, direction = 1, pivot = null) {
     component.rotation = (((origin.rotation + turn) % 360) + 360) % 360;
   }
   for (const origin of origins.junctions) Object.assign(junctions.get(origin.id), rotate(origin));
-  for (const origin of origins.wires) wires.get(origin.id).waypoints = origin.waypoints.map(rotate);
+  for (const origin of origins.wires) {
+    const wire = wires.get(origin.id);
+    wire.waypoints = origin.waypoints.map(rotate);
+    if (origin.anchors) wire.anchors = origin.anchors.map(rotate);
+  }
   return count;
 }

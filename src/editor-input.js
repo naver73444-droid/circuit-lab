@@ -1,7 +1,8 @@
 import { componentDefaults, pinCount } from "./circuit-engine.js";
 import { componentIdPrefix, endpointExists, endpointsEqual, retargetWireProbes, splitWireAtJunction, wireJoins } from "./circuit-edit.js";
 import { allocatorFor } from "./id-allocator.js";
-import { appendFixedWaypoint, snapPoint } from "./circuit-geometry.js";
+import { pointsEqual, snapPoint } from "./circuit-geometry.js";
+import { captureWireShapes, newWireShape, rerouteWires, restoreWireShapes, wiresFollowingMove } from "./wire-router.js";
 import { commitsActiveDrag, createClipboardShortcutGate, isTypingTarget, shortcutFor } from "./editor-shortcuts.js";
 import { clearSelection, isSelected, marqueeHits, normalizeRect, selectedItems, selectedKeys, setSelectionItems, setSingleSelection, toggleSelection } from "./selection-model.js";
 import { applyGroupOffset, captureGroupOrigins, groupFootprint, restoreGroupOrigins } from "./group-edit.js";
@@ -191,25 +192,26 @@ export function createEditorInput(deps) {
       if (!endpointExists(state.circuit, state.pendingPin) || !endpointExists(state.circuit, target)) { cancelPendingWire(); return; }
       const duplicate = state.circuit.wires.some((wire) => wireJoins(wire, state.pendingPin, target));
       const start = structuredClone(state.pendingPin);
-      const waypoints = structuredClone(state.pendingWaypoints);
+      const anchors = structuredClone(state.pendingWaypoints);
       state.pendingPin = null;
       state.pendingWaypoints = [];
       state.pointer = null;
       restoreToolHint();
-      if (!duplicate) mutate(() => state.circuit.wires.push({ id: allocatorFor(state).next("W", state.circuit.wires), a: start, b: target, waypoints }));
+      if (!duplicate) mutate(() => state.circuit.wires.push({ id: allocatorFor(state).next("W", state.circuit.wires), a: start, b: target, ...newWireShape(state.circuit, start, target, anchors) }));
       else renderCanvas();
       return;
     }
   }
 
+  /** A clicked empty grid point while wiring: the wire will pass through it (the automatic route fills in the corners). */
   function addPendingWaypoint(point) {
     if (!state.pendingPin) return;
     const start = endpointPosition(state.pendingPin);
     if (!start) return;
     const target = snapPoint(point);
-    state.pendingWaypoints = appendFixedWaypoint(start, state.pendingWaypoints, target);
+    if (!pointsEqual(target, state.pendingWaypoints.at(-1) ?? start)) state.pendingWaypoints = [...state.pendingWaypoints, target];
     state.pointer = target;
-    elements["tool-hint"].textContent = `고정 꺾임 ${state.pendingWaypoints.length}개 · 빈 격자점을 더 누르거나 핀/배선/접속점에서 완료 · Esc 취소`;
+    elements["tool-hint"].textContent = `경유점 ${state.pendingWaypoints.length}개 · 빈 격자점을 더 누르거나 핀/배선/접속점에서 완료 · Esc 취소`;
     renderOverlay();
   }
 
@@ -364,7 +366,7 @@ export function createEditorInput(deps) {
 
   function createJunctionAndConnect(wireId, point) {
     const start = structuredClone(state.pendingPin);
-    const waypoints = structuredClone(state.pendingWaypoints);
+    const anchors = structuredClone(state.pendingWaypoints);
     const routePoints = routeForWireId(wireId);
     if (!endpointExists(state.circuit, start)) { cancelPendingWire(); return; }
     state.pendingPin = null;
@@ -376,7 +378,10 @@ export function createEditorInput(deps) {
       state.circuit = split.circuit;
       state.probes = retargetWireProbes(state.probes, wireId, split.replacementWireId, split);
       const duplicate = state.circuit.wires.some((wire) => wireJoins(wire, start, split.endpoint));
-      if (!endpointsEqual(start, split.endpoint) && !duplicate) state.circuit.wires.push({ id: allocatorFor(state).next("W", state.circuit.wires), a: start, b: split.endpoint, waypoints });
+      if (!endpointsEqual(start, split.endpoint) && !duplicate) {
+        const id = allocatorFor(state).next("W", state.circuit.wires);
+        state.circuit.wires.push({ id, a: start, b: split.endpoint, ...newWireShape(state.circuit, start, split.endpoint, anchors) });
+      }
       setSingleSelection(state, split.endpoint.junctionId ? { kind: "junction", id: split.endpoint.junctionId } : { kind: "component", id: split.endpoint.componentId });
     });
   }
@@ -421,7 +426,7 @@ export function createEditorInput(deps) {
   const undoEdit = () => { commitActiveDrag(); undo(); };
   const redoEdit = () => { commitActiveDrag(); redo(); };
 
-  const { deleteSelection, cloneSelection, rotateSelection, convertYDelta, nudgeSelection, selectAll, copySelection, pasteSelection } = createSelectionCommands({
+  const { deleteSelection, cloneSelection, rotateSelection, convertYDelta, nudgeSelection, selectAll, copySelection, pasteSelection, tidyWires } = createSelectionCommands({
     state, elements, mutate, mutateGrouped, closeEditGroup, commitActiveDrag, setStatus, renderSelection, isCircuitUiActive, reconcileAnalysis,
     notify: (text, kind = "info") => notices.show({ text, kind, autoHideMs: kind === "error" ? 9000 : 8000 }),
   });
@@ -622,6 +627,7 @@ export function createEditorInput(deps) {
           : state.circuit.components.find((component) => component.id === drag.id);
         if (item) { item.x = drag.origin.x; item.y = drag.origin.y; }
       }
+      if (drag.wireShapes) restoreWireShapes(state.circuit, drag.wireShapes);
       renderAll();
       return true;
     }
@@ -686,11 +692,32 @@ export function createEditorInput(deps) {
     if (drag.group) {
       // The whole selection moves by the primary item's snapped offset (so the group stays rigid) and every item lands on the grid itself.
       applyGroupOffset(state.circuit, drag.group, target.x - drag.origin.x, target.y - drag.origin.y, { snap: true });
+      followMove(drag, target);
       scheduleDragUpdate("group", groupFootprint(drag.group));
       return;
     }
     Object.assign(item, target);
+    followMove(drag, target);
     scheduleDragUpdate(drag.kind, drag.id);
+  }
+
+  /**
+   * Wires with one end on what is being carried follow it on an automatic route (through the points the user clicked, see wire-router).
+   * Routed only when the snapped position changes; back at the start the wires are exactly as before (so the drop is no edit).
+   */
+  function followMove(drag, target) {
+    if (drag.lastTarget && pointsEqual(drag.lastTarget, target)) return;
+    drag.lastTarget = target;
+    if (!drag.followers) {
+      const items = drag.group
+        ? [...drag.group.components.map((origin) => ({ kind: "component", id: origin.id })), ...drag.group.junctions.map((origin) => ({ kind: "junction", id: origin.id }))]
+        : [{ kind: drag.kind, id: drag.id }];
+      drag.followers = wiresFollowingMove(state.circuit, items);
+      drag.wireShapes = captureWireShapes(state.circuit, drag.followers);
+    }
+    if (!drag.followers.length) return;
+    if (pointsEqual(target, drag.origin)) restoreWireShapes(state.circuit, drag.wireShapes);
+    else rerouteWires(state.circuit, drag.followers);
   }
 
   // ---- touch hit testing and routing
@@ -905,6 +932,7 @@ export function createEditorInput(deps) {
     elements["zoom-in-button"].addEventListener("click", () => zoomCanvas(.82));
     elements["fit-button"].addEventListener("click", fitCanvas);
     elements["rotate-button"].addEventListener("click", () => rotateSelection(1));
+    elements["tidy-wires-button"]?.addEventListener("click", tidyWires);
     elements["delete-button"].addEventListener("click", deleteSelection);
     elements["inspector-content"].addEventListener("click", (event) => {
       const button = event.target.closest?.("[data-multi-action]");

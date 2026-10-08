@@ -28,7 +28,7 @@ const elements = Object.fromEntries([
   "load-button", "file-input", "probe-list", "result-summary", "ac-view-toggle", "wave-plot", "plot-empty", "cursor-readout", "reset-view-button", "csv-button",
   "phasor-panel", "phasor-summary", "voltage-plane-unit", "current-plane-unit", "voltage-phasor-plot", "current-phasor-plot",
   "voltage-phasor-values", "current-phasor-values", "phasor-time-plot", "phasor-time-units", "impedance-learning",
-  "clone-button", "zoom-out-button", "zoom-in-button", "fit-button", "inline-value-editor",
+  "clone-button", "tidy-wires-button", "zoom-out-button", "zoom-in-button", "fit-button", "inline-value-editor",
   "connection-summary", "probe-context-menu", "phasor-validity", "small-signal-note",
   "scope-controls", "analysis-intent", "analysis-recommendation", "auto-update", "advanced-analysis",
   "share-button", "canvas-notices", "hover-tip", "marquee-rect",

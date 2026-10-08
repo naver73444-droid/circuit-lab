@@ -61,6 +61,7 @@
 <button aria-label="다시 하기" id="redo-button" title="다시 하기 (Ctrl+Y)" type="button">↷</button>
 <button aria-label="선택 부품 복제" id="clone-button" title="선택 부품 복제 (Ctrl+D) · 제어원은 Shift+클릭으로 제어 대상까지" type="button">⧉</button>
 <button aria-label="선택 부품 회전" id="rotate-button" title="선택 부품 회전 (R · 반시계 Shift+R)" type="button">↻</button>
+<button aria-label="배선 정리" id="tidy-wires-button" title="배선 정리 — 선택한 배선(없으면 전체)을 자동 직교 경로로 다시 그리기 (Ctrl+Z로 되돌리기)" type="button">┌┘</button>
 <button aria-label="선택 항목 삭제" id="delete-button" title="선택 항목 삭제 (Delete · Backspace)" type="button">⌫</button>
 </div>
 <div aria-label="화면 배율" class="tool-group compact" id="zoom-group" role="group">
@@ -71,7 +72,7 @@
 <details class="interaction-help" id="interaction-help"><summary aria-label="조작 도움말" title="조작 도움말">조작 도움말</summary><div class="interaction-help-card">
 <ul>
 <li><b>선택·이동</b> 클릭으로 선택하고 끌어 이동, 빈 곳을 끌면 화면 이동. <kbd>Shift</kbd>+클릭은 선택에 더하거나 빼고, <kbd>Shift</kbd>+빈 곳 끌기는 상자로 고릅니다. 선택한 부품 중 하나를 끌면 함께 움직입니다 (터치: 선택한 부품만 끌기 · 두 손가락 확대·축소).</li>
-<li><b>배선·값</b> 핀에서 다른 핀(또는 배선·접속점)까지 끌거나, 핀 두 개를 차례로 누릅니다. 빈 격자점은 꺾임 고정 (터치: 배선 도구에서 끌기). 값 글자는 두 번 눌러 수정, R·C·L은 값 글자 위에서 휠로 E12 값 한 칸씩 변경.</li>
+<li><b>배선·값</b> 핀에서 다른 핀(또는 배선·접속점)까지 끌거나, 핀 두 개를 차례로 누릅니다. 빈 격자점은 경유점, 경로는 자동 직교 (터치: 배선 도구에서 끌기). 값 글자는 두 번 눌러 수정, R·C·L은 값 글자 위에서 휠로 E12 값 한 칸씩 변경.</li>
 <li><b>프로브·값 읽기</b> V 프로브는 핀·배선, I 프로브는 부품. 해석 뒤 핀·배선·부품에 마우스를 올리면(터치는 탭) 전압·전류·전력 표시. 그래프를 누르면 커서 고정, <kbd>←</kbd><kbd>→</kbd> 이동.</li>
 <li><b>단축키</b> <kbd>R</kbd>/<kbd>Shift+R</kbd> 회전 · <kbd>Delete</kbd>/<kbd>Backspace</kbd> 삭제 · <kbd>Ctrl+D</kbd> 복제 · <kbd>Ctrl+C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> 복사·잘라내기·붙여넣기 · <kbd>Ctrl+A</kbd> 모두 선택 · <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd> 되돌리기·다시 하기 · <kbd>Y</kbd> 저항 3개 Y↔Δ 변환 · <kbd>W</kbd> 배선 · <kbd>V</kbd>/<kbd>Esc</kbd> 선택 · <kbd>←↑↓→</kbd> 이동(<kbd>Shift</kbd> 5칸) · <kbd>Ctrl+S</kbd> 저장 · <kbd>Ctrl+Enter</kbd> 해석.</li>
 </ul>
