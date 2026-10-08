@@ -1,11 +1,11 @@
-import { hoverReadout } from "./node-readout-model.js";
-
 /**
  * Floating tooltip with analysis readouts over the circuit canvas: node voltage for pins, wires and junctions,
  * current/voltage/power for components. It only moves one position:fixed element (pointer-events:none); the canvas is never
  * re-rendered, and pointermove work is coalesced into one requestAnimationFrame.
+ * readoutModel() returns node-readout-model.js's hoverReadout, which loads with the result side (results-loader.js); there is no
+ * result to read before that.
  */
-export function createHoverReadout({ state, elements, workspace, scopeView }) {
+export function createHoverReadout({ state, elements, workspace, scopeView, readoutModel }) {
   const tip = elements["hover-tip"];
   const canvas = elements["circuit-canvas"];
   let frame = null;
@@ -59,7 +59,8 @@ export function createHoverReadout({ state, elements, workspace, scopeView }) {
 
   function content(target) {
     const result = state.result;
-    if (!result) return null;
+    const hoverReadout = readoutModel();
+    if (!result || !hoverReadout) return null;
     if (isStale()) return { title: "결과가 오래됨", lines: ["회로가 바뀌었습니다. 다시 해석하면 값이 갱신됩니다."], footer: "" };
     const choice = sampleChoice(result);
     const readout = hoverReadout({ circuit: state.circuit, result, target, index: choice.index, acBasis: state.acBasis });

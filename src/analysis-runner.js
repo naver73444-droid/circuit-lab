@@ -1,18 +1,20 @@
 import { pinCount } from "./circuit-engine.js";
 import { acceptsRunGeneration, endpointExists } from "./circuit-edit.js";
 import { acMagnitudeLevel, acPhaseDegrees, currentDisplayScale } from "./plot-format.js";
-import { suggestAnalysis } from "./analysis-policy.js";
 import { AnalysisCancelledError, AnalysisWorkerClient } from "./analysis-worker-client.js";
 import { describeCircuitFailure, diagnosticHighlightIds, failureRecord, resultAvailabilityText } from "./analysis-diagnostics.js";
 import { suggestGroundFix, suggestProbes } from "./editor-guide-model.js";
-import { actualCurrentDirection, currentDirectionGuide, currentProbeLabel, currentReferenceSign, pointCurrentScale, probeCurrentKey, signedCurrent } from "./current-direction.js";
+import { actualCurrentDirection, currentDirectionGuide, currentReferenceSign, pointCurrentScale, probeCurrentKey, signedCurrent } from "./current-direction.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { formatPortResult, probeKeysForTarget } from "./ui-model.js";
-import { createSweepRunner, createSweepState } from "./sweep-runner.js";
+import { createSweepRunner } from "./sweep-runner.js";
 import { sweepLegendMarkup, syncSweepStatus } from "./sweep-panel.js";
 import { setSingleSelection } from "./selection-model.js";
+import { presentProbe as presentProbeIn, synchronizeIntent as synchronizeIntentIn } from "./run-state.js";
+
+export { createRunState } from "./run-state.js";
 
 /** Isolated port result invalidation; no DOM, worker or solver dependency. */
 export function refreshInvalidatedPortPanel(job, portState, renderPanel) {
@@ -23,31 +25,12 @@ export function refreshInvalidatedPortPanel(job, portState, renderPanel) {
   return true;
 }
 
-/** Run/result slice of the shared state: results, run status, auto-update and the DC port analysis. */
-export function createRunState() {
-  return {
-    result: null,
-    phasorResult: null,
-    stale: false,
-    acView: "magnitude",
-    // Display basis of AC amplitudes ("peak" | "rms", see ac-basis.js). Not part of the project file: solving and stored values stay peak.
-    acBasis: "peak",
-    autoTimer: null,
-    lastRunMs: null,
-    runState: { status: "not-run", analysis: null, generation: null, error: null },
-    autoUpdate: true,
-    runSerial: 0,
-    port: { mode: null, p: null, n: null, loadIds: [], result: null, stale: false, error: null },
-    sweep: createSweepState(),
-  };
-}
-
 /**
  * Analysis lifecycle: scheduling, worker runs, serial/generation checks that drop outdated results, stale state,
  * diagnostics, and the panels that present results (probe list, scope, phasor, port).
  */
 export function createAnalysisRunner(deps) {
-  const { state, elements, workspace, inputDrafts, scopeView, phasorView, mutate, currentConnections, bumpGeneration, removeProbe, renderCanvas, renderAll, setStatus, setTool, showCanvas,
+  const { state, elements, workspace, inputDrafts, scopeView, phasorView, currentConnections, bumpGeneration, removeProbe, renderCanvas, renderAll, setStatus, setTool, showCanvas,
     phasorPanelVisible, commitPendingInputs, updateDraftNotice, openProbeContextMenu, measureView, onStaleChange, addProbes, addGround, onResultReady } = deps;
   /** Anything drawn from the result (the current-flow overlay) must go the moment the result turns stale, not on the next canvas render. */
   const staleChanged = () => { try { onStaleChange?.(); } catch { /* a failing observer must not break the run lifecycle */ } };
@@ -109,14 +92,7 @@ export function createAnalysisRunner(deps) {
     renderAll();
   }
 
-  function synchronizeIntent() {
-    const plan = suggestAnalysis(state.circuit, state.settings, state.intent);
-    state.settings = plan.settings;
-    // Manual (edited parameters) keeps the chosen analysis type visible in the single selector.
-    elements["analysis-intent"].value = state.intent === "manual" ? state.settings.analysis : state.intent;
-    elements["auto-update"].checked = state.autoUpdate;
-    elements["analysis-recommendation"].textContent = plan.reason;
-  }
+  const synchronizeIntent = () => synchronizeIntentIn(state, elements);
 
   function cancelScheduledRun() {
     clearTimeout(state.autoTimer);
@@ -160,7 +136,8 @@ export function createAnalysisRunner(deps) {
     if (show) setStatus(text, "ready");
   }
 
-  function scheduleAutoRun() {
+  /** Debounced automatic run. requestedAt: when the edit happened (a request queued before this module loaded keeps its own time). */
+  function scheduleAutoRun({ requestedAt = performance.now() } = {}) {
     cancelScheduledRun();
     showGroundAdvice(null);
     if (!state.autoUpdate) { setAutoHint("수동 실행"); return; }
@@ -177,9 +154,9 @@ export function createAnalysisRunner(deps) {
       }
     } catch { return; }
     const generation = state.generation;
-    const requestedAt = performance.now();
     setAutoHint("자동 갱신 대기");
-    state.autoTimer = setTimeout(() => runAnalysis({ automatic: true, generation, requestedAt }), 250);
+    const wait = Math.max(0, 250 - (performance.now() - requestedAt));
+    state.autoTimer = setTimeout(() => runAnalysis({ automatic: true, generation, requestedAt }), wait);
   }
 
   const groundFixButton = (fix) => (fix
@@ -354,21 +331,7 @@ export function createAnalysisRunner(deps) {
     return { probe, raw, baseUnit: "A" };
   }
 
-  /** Labels follow the parts: renaming R2 to Rload relabels its probes (the label stored with the probe is only a cache). */
-  function presentProbe(probe) {
-    if (!probe) return probe;
-    if (probe.kind === "current") {
-      const component = state.circuit.components.find((item) => item.id === probe.componentId);
-      if (component) probe.label = currentProbeLabel(component, circuitGeometryVersion(state.circuit), probe.winding);
-    } else if (probe.kind === "voltage") {
-      if (probe.junctionId !== undefined) probe.label = `V(${probe.junctionId})`;
-      else {
-        const component = state.circuit.components.find((item) => item.id === probe.componentId);
-        if (component) probe.label = `V(${component.props?.ref ?? component.id}.${probe.pin + 1})`;
-      }
-    }
-    return probe;
-  }
+  const presentProbe = (probe) => presentProbeIn(state, probe);
 
   function seriesForProbes(probes = state.probes) {
     const presented = probes.map(presentProbe).filter(Boolean);
@@ -625,18 +588,11 @@ export function createAnalysisRunner(deps) {
     state.sweep.form.componentId = null;
   }
 
-  /** Register the run, port, AC-view and scope-reset listeners. */
+  /**
+   * Register the cancel, port, AC-view, scope-reset and result-panel listeners. The analysis selector, the auto-update box and the run
+   * button are wired by results-loader.js on the first screen, before this module is loaded.
+   */
   function attach() {
-    elements["analysis-intent"].addEventListener("change", () => {
-      const requestedIntent = elements["analysis-intent"].value;
-      if (!commitPendingInputs()) { elements["analysis-intent"].value = state.intent; return; }
-      mutate(() => { state.intent = requestedIntent; });
-    });
-    elements["auto-update"].addEventListener("change", () => {
-      state.autoUpdate = elements["auto-update"].checked;
-      scheduleAutoRun();
-    });
-    elements["run-button"].addEventListener("click", runAnalysis);
     elements["cancel-analysis-button"].addEventListener("click", cancelActiveAnalysisFromUI);
     elements["port-p-button"].addEventListener("click", () => beginPortPick("p"));
     elements["port-n-button"].addEventListener("click", () => beginPortPick("n"));

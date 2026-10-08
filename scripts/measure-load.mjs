@@ -8,6 +8,8 @@
 //   - first-screen requests / transferred bytes / waterfall depth (requests sent before editor ready)
 //   - the first switch into each lazy workspace (전자기·신호·과정), tapped 2 s after the load event
 // then reloads the same URL in the same context (revisit) and records the same numbers again.
+// A second fresh context opens ?example=rc-charge (auto-update on, so the app analyses it right away) and records the first
+// result on screen: the frame after #result-summary reports a current result, plus the requests/bytes sent until then.
 //
 // Waterfall depth counts sequential round trips: the document is 1, and every other request is one deeper than the
 // deepest request (or the document) that had finished before it was sent.
@@ -106,7 +108,20 @@ function startPagesLikeServer(root, tls, { revalidate }) {
 const READY_MARKER = "__LOAD_PERF_READY__";
 const PAGE_HOOK = `(() => {
   if (location.protocol === "about:") return;
-  const perf = window.__LOAD_PERF__ = { hook: 0, ready: 0 };
+  const perf = window.__LOAD_PERF__ = { hook: 0, ready: 0, result: 0, resultSeen: 0 };
+  // First analysis result on screen: runAnalysis writes "… · 현재 회로 결과" into #result-summary, then renders.
+  document.addEventListener("DOMContentLoaded", () => {
+    const summary = document.getElementById("result-summary");
+    if (!summary) return;
+    const observer = new MutationObserver(() => {
+      if (perf.result || !summary.textContent.includes("현재 회로 결과")) return;
+      observer.disconnect();
+      perf.result = -1;
+      perf.resultSeen = performance.now();
+      requestAnimationFrame(() => setTimeout(() => { perf.result = performance.now(); }, 0));
+    });
+    observer.observe(summary, { childList: true, characterData: true, subtree: true });
+  });
   let value;
   Object.defineProperty(window, "__CIRCUIT_LAB__", { configurable: true, enumerable: true, get() { return value; }, set(next) {
     value = next;
@@ -159,7 +174,7 @@ function switchExpression(name, getter) {
 }
 
 /** Load the URL once in `cdp` (already throttled) and return the numbers for that load. */
-async function measureLoad(cdp, url, { tabs }) {
+async function measureLoad(cdp, url, { tabs = false, firstResult = false } = {}) {
   const requests = new Map();
   const problems = [];
   const off = cdp.on(({ method, params }) => {
@@ -183,8 +198,15 @@ async function measureLoad(cdp, url, { tabs }) {
     const loaded = eventWaiter(cdp, ({ method }) => method === "Page.loadEventFired", 120000, "load event");
     await cdp.send("Page.navigate", { url });
     await ready; await loaded;
+    if (firstResult) {
+      await evaluate(cdp, `new Promise((done, fail) => {
+        const limit = setTimeout(() => fail(new Error("no analysis result")), 90000);
+        const tick = () => { if (window.__LOAD_PERF__.result > 0) { clearTimeout(limit); done(); } else setTimeout(tick, 20); };
+        tick();
+      })`);
+    }
     const page = await evaluate(cdp, `({ origin: performance.timeOrigin, fcp: performance.getEntriesByName("first-contentful-paint")[0]?.startTime ?? null,
-      ready: window.__LOAD_PERF__.ready, hook: window.__LOAD_PERF__.hook, palette: document.querySelectorAll("#palette-list > *").length,
+      ready: window.__LOAD_PERF__.ready, hook: window.__LOAD_PERF__.hook, result: window.__LOAD_PERF__.result, resultSeen: window.__LOAD_PERF__.resultSeen, palette: document.querySelectorAll("#palette-list > *").length,
       load: performance.getEntriesByType("navigation")[0]?.loadEventStart ?? null })`);
     if (!page.palette) problems.push("palette is empty at editor ready");
     const all = [...requests.values()].map((entry) => ({ ...entry, sent: entry.wall - page.origin, end: entry.done === null ? null : entry.done - page.origin }));
@@ -199,8 +221,13 @@ async function measureLoad(cdp, url, { tabs }) {
       level.set(entry, deepest + 1);
     }
     const network = first.filter((entry) => !entry.cache);
+    // Requests sent before the result reached the page (not the frame after it: background prefetches may start in between).
+    const untilResult = firstResult ? all.filter((entry) => entry.sent <= page.resultSeen) : [];
     const result = {
       fcp: page.fcp, ready: page.ready, load: page.load,
+      firstResult: firstResult ? page.result : null,
+      resultRequests: firstResult ? untilResult.filter((entry) => !entry.cache).length : null,
+      resultBytes: firstResult ? untilResult.filter((entry) => !entry.cache).reduce((sum, entry) => sum + entry.bytes, 0) : null,
       requests: first.length, networkRequests: network.length,
       bytes: network.reduce((sum, entry) => sum + entry.bytes, 0),
       depth: Math.max(...level.values()), protocol: documentEntry?.protocol ?? "",
@@ -224,6 +251,17 @@ async function measureLoad(cdp, url, { tabs }) {
 }
 
 async function measureRun(browser, url, profile) {
+  const plain = await measureContext(browser, url, profile, { tabs: true });
+  const example = await measureContext(browser, `${url}?example=rc-charge`, profile, { firstResult: true });
+  for (const visit of ["cold", "warm"]) {
+    const { firstResult, resultRequests, resultBytes, problems } = example[visit];
+    Object.assign(plain[visit], { firstResult, resultRequests, resultBytes, problems: [...plain[visit].problems, ...problems] });
+  }
+  return plain;
+}
+
+/** One fresh browser context (empty cache): a cold load of `url`, then a revisit of the same URL. */
+async function measureContext(browser, url, profile, options) {
   const { browserContextId } = await browser.send("Target.createBrowserContext", { disposeOnDetach: true });
   const { targetId } = await browser.send("Target.createTarget", { url: "about:blank", browserContextId });
   const cdp = new Cdp(`ws://127.0.0.1:${ctx.debugPort}/devtools/page/${targetId}`);
@@ -235,10 +273,10 @@ async function measureRun(browser, url, profile) {
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: PAGE_HOOK });
-    const cold = await measureLoad(cdp, url, { tabs: true });
+    const cold = await measureLoad(cdp, url, options);
     await cdp.send("Page.navigate", { url: "about:blank" });
     await sleep(300);
-    const warm = await measureLoad(cdp, url, { tabs: true });
+    const warm = await measureLoad(cdp, url, options);
     return { cold, warm };
   } finally {
     cdp.close();
@@ -257,17 +295,17 @@ const median = (values) => {
 function summarize(runs) {
   const pick = (key) => median(runs.map((run) => run[key]));
   const tabs = Object.fromEntries(Object.keys(WORKSPACES).map((name) => [name, median(runs.map((run) => run.tabs[name]))]));
-  return { fcp: pick("fcp"), ready: pick("ready"), lastByte: pick("lastByte"), load: pick("load"), requests: pick("requests"), networkRequests: pick("networkRequests"), bytes: pick("bytes"), depth: pick("depth"), scripts: pick("scripts"), protocol: runs[0]?.protocol ?? "", tabs, problems: [...new Set(runs.flatMap((run) => [...run.problems, ...run.failed]))] };
+  return { fcp: pick("fcp"), ready: pick("ready"), firstResult: pick("firstResult"), resultRequests: pick("resultRequests"), resultBytes: pick("resultBytes"), lastByte: pick("lastByte"), load: pick("load"), requests: pick("requests"), networkRequests: pick("networkRequests"), bytes: pick("bytes"), depth: pick("depth"), scripts: pick("scripts"), protocol: runs[0]?.protocol ?? "", tabs, problems: [...new Set(runs.flatMap((run) => [...run.problems, ...run.failed]))] };
 }
 
 const ms = (value) => (value === null ? "-" : `${Math.round(value)}`);
 function printTable(label, rows) {
   console.log(`\n## ${label}`);
-  console.log("| 조건 | 방문 | FCP ms | 편집기 조작 가능 ms | 마지막 바이트 ms | 요청(네트워크/전체) | 전송 KB | waterfall 깊이 | 전자기 ms | 신호 ms | 과정 ms |");
-  console.log("|---|---|---|---|---|---|---|---|---|---|---|");
+  console.log("| 조건 | 방문 | FCP ms | 편집기 조작 가능 ms | 마지막 바이트 ms | 요청(네트워크/전체) | 전송 KB | waterfall 깊이 | 전자기 ms | 신호 ms | 과정 ms | 예제 첫 해석 ms | 해석까지 요청/KB |");
+  console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
   for (const row of rows) {
     const s = row.summary;
-    console.log(`| ${row.profile} (${s.protocol}) | ${row.visit} | ${ms(s.fcp)} | ${ms(s.ready)} | ${ms(s.lastByte)} | ${s.networkRequests}/${s.requests} | ${(s.bytes / 1024).toFixed(1)} | ${s.depth} | ${ms(s.tabs.em)} | ${ms(s.tabs.signals)} | ${ms(s.tabs["circuit-course"])} |`);
+    console.log(`| ${row.profile} (${s.protocol}) | ${row.visit} | ${ms(s.fcp)} | ${ms(s.ready)} | ${ms(s.lastByte)} | ${s.networkRequests}/${s.requests} | ${(s.bytes / 1024).toFixed(1)} | ${s.depth} | ${ms(s.tabs.em)} | ${ms(s.tabs.signals)} | ${ms(s.tabs["circuit-course"])} | ${ms(s.firstResult)} | ${s.resultRequests ?? "-"}/${s.resultBytes === null ? "-" : (s.resultBytes / 1024).toFixed(1)} |`);
     if (s.problems.length) console.log(`|  | 문제 | ${s.problems.slice(0, 3).join(" / ").replace(/\|/g, "/")} |`);
   }
 }

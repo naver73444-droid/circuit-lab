@@ -1,17 +1,14 @@
-import { parseValue } from "./circuit-engine.js";
 import { examples } from "./examples.js";
-import { createPhasorView } from "./phasor-view.js";
-import { ScopeView } from "./scope-view.js";
 import { initializeAppearance } from "./theme.js";
 import { InputDrafts } from "./input-drafts.js";
 import { createPanelController } from "./panel-controller.js";
-import { initializePhasorPractice } from "./phasor-practice.js";
 import { createLazyController, createWorkspaceTabs } from "./workspace-tabs.js";
-import { WORKSPACE_MODULES } from "./module-preload-map.js";
+import { LAZY_MODULES, WORKSPACE_MODULES } from "./module-preload-map.js";
 import { initResponsiveEditor } from "./responsive-editor.js";
 import { createEditorSession, createEditorState } from "./editor-session.js";
 import { createCanvasRenderer } from "./canvas-renderer.js";
-import { createAnalysisRunner, createRunState } from "./analysis-runner.js";
+import { createRunState } from "./run-state.js";
+import { createResultsLoader } from "./results-loader.js";
 import { createInspector } from "./inspector.js";
 import { createEditorInput, createInputState } from "./editor-input.js";
 import { createProjectIO } from "./project-io.js";
@@ -19,7 +16,6 @@ import { createHoverReadout } from "./hover-readout.js";
 import { normalizeAcBasis } from "./ac-basis.js";
 import { hasShareHash } from "./share-url.js";
 import { createFlowLayer } from "./flow-layer.js";
-import { createMeasureView } from "./measure-view.js";
 import { selectedItems, selectedKeys } from "./selection-model.js";
 import { createValueSheet } from "./value-sheet.js";
 import { installViewportGuard } from "./viewport-guard.js";
@@ -49,9 +45,6 @@ const workspace = { circuitActive: true, switching: false, discardingDrafts: fal
 const isCircuitUiActive = () => workspace.circuitActive && !workspace.switching && !workspace.discardingDrafts;
 
 const inputDrafts = new InputDrafts();
-const phasorView = createPhasorView(elements, state, parseValue, () => inputDrafts.size > 0);
-const scopeView = new ScopeView(elements["wave-plot"], elements["scope-controls"], elements["cursor-readout"]);
-const measureView = createMeasureView({ panel: elements["measure-panel"], summary: elements["measure-summary"], body: elements["measure-body"], bButton: elements["cursor-b-button"], scopeView });
 let panels = null;
 let workspaceTabs = null;
 let canvasActions = null; // phone selection bar + part strip, created once the editor input exists
@@ -73,6 +66,30 @@ const showCanvas = () => panels?.showCanvas();
 const phasorPanelVisible = () => !panels || panels.isOpen("phasor");
 
 // Modules are created in dependency order; calls that point back to a later module are wrapped in arrows.
+// The result side (analysis runner, scope, measurements, phasor panel) loads after the first screen; until then results-loader.js
+// stands in for it: analysis, scopeView, phasorView and measureView below are its forwarding stand-ins.
+const results = createResultsLoader({
+  state, elements, renderAll,
+  mutate: (...args) => session.mutate(...args),
+  commitPendingInputs: () => inspector.commitPendingInputs(),
+  load: (retry) => import("./result-views.js" + retry), modules: LAZY_MODULES.results,
+  build: (module) => module.createResultViews({
+    state, elements, workspace, inputDrafts, renderAll, setStatus, showCanvas, phasorPanelVisible,
+    hasPendingInputs: () => inputDrafts.size > 0,
+    currentConnections: session.currentConnections, bumpGeneration: session.bumpGeneration, removeProbe: session.removeProbe,
+    renderCanvas: renderer.renderCanvas,
+    setTool: (tool) => input.setTool(tool),
+    commitPendingInputs: () => inspector.commitPendingInputs(),
+    updateDraftNotice: (...args) => inspector.updateDraftNotice(...args),
+    openProbeContextMenu: (...args) => input.openProbeContextMenu(...args),
+    onStaleChange: () => { flow.refresh(); renderer.refreshCurrentArrows(); },
+    addProbes: session.addProbes,
+    addGround: session.addGround,
+    onResultReady: announceResult,
+  }),
+  onError: () => setStatus("결과 화면을 불러오지 못했습니다 · 연결을 확인한 뒤 다시 실행하세요", "error"),
+});
+const { analysis, scopeView, phasorView, measureView } = results;
 const session = createEditorSession({
   state, inputDrafts, renderAll, resetProjectSession, beforeHistoryRestore, afterHistoryRestore, refreshProbeViews,
   beforeProjectBoundary: () => projectIO.retireForBoundary(),
@@ -93,20 +110,6 @@ const renderer = createCanvasRenderer({
 const flow = createFlowLayer({ state, elements, scopeView, wireRoutes: renderer.wireRoutes });
 // Probe arrows show the real direction at the scope cursor time in a transient run, so they follow the cursor (one frame per move).
 scopeView.subscribe((type) => { if (type === "cursor") renderer.refreshCurrentArrows(); });
-const analysis = createAnalysisRunner({
-  state, elements, workspace, inputDrafts, scopeView, phasorView, renderAll, setStatus, showCanvas, phasorPanelVisible,
-  mutate: session.mutate, currentConnections: session.currentConnections, bumpGeneration: session.bumpGeneration, removeProbe: session.removeProbe,
-  renderCanvas: renderer.renderCanvas,
-  setTool: (tool) => input.setTool(tool),
-  commitPendingInputs: () => inspector.commitPendingInputs(),
-  updateDraftNotice: (...args) => inspector.updateDraftNotice(...args),
-  openProbeContextMenu: (...args) => input.openProbeContextMenu(...args),
-  measureView,
-  onStaleChange: () => { flow.refresh(); renderer.refreshCurrentArrows(); },
-  addProbes: session.addProbes,
-  addGround: session.addGround,
-  onResultReady: announceResult,
-});
 const inspector = createInspector({
   state, elements, workspace, inputDrafts, phasorView, renderAll, setStatus, showInspector, isCircuitUiActive,
   mutate: session.mutate, currentConnections: session.currentConnections,
@@ -115,7 +118,7 @@ const inspector = createInspector({
   runSweep: analysis.runSweep, clearSweep: analysis.clearSweep,
   flipCurrentReference: (...args) => { session.flipCurrentReference(...args); hover.refresh(); },
 });
-const hover = createHoverReadout({ state, elements, workspace, scopeView });
+const hover = createHoverReadout({ state, elements, workspace, scopeView, readoutModel: results.readoutModel });
 const valueSheet = createValueSheet({
   state, inputDrafts, isCircuitUiActive, setStatus, showInspector,
   mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, updateCanvasView: () => renderer.updateCanvasView(),
@@ -304,15 +307,23 @@ function setupEvents() {
   projectIO.attach();
 }
 
-// Warm the lazy workspace modules once the page is idle so the first tab click
-// is instant: right after load only the downloads start (modulepreload, no script
-// runs), and 1.5 s later the modules are imported. Skipped on Save-Data connections.
-function scheduleWorkspacePrefetch(lazies) {
+// Once the page is idle after the load event, first import the result side (the first analysis needs it, so it should be in before
+// the student finishes a circuit), then warm the lazy workspace modules so the first tab click is instant: only the downloads start
+// (modulepreload, no script runs), and 1.5 s later the modules are imported. While a first analysis is waiting or running (an example
+// or a restored project), the workspace downloads wait for it (at most 8 s) so they do not slow its result down. Skipped on Save-Data
+// connections (everything then loads on first use).
+function scheduleBackgroundLoads(lazies) {
   if (navigator.connection?.saveData) return;
   const idle = (run, timeout) => (typeof requestIdleCallback === "function" ? requestIdleCallback(run, { timeout }) : setTimeout(run, 0));
   const download = () => { for (const lazy of lazies) lazy.preload(); };
   const warm = () => { for (const lazy of lazies) lazy.prefetch(); };
-  const start = () => { idle(download, 1000); setTimeout(() => idle(warm, 4000), 1500); };
+  const analysisPending = () => state.autoTimer !== null || state.runState.status === "running";
+  const giveUp = performance.now() + 8000;
+  const workspaces = () => {
+    if (analysisPending() && performance.now() < giveUp) { setTimeout(workspaces, 200); return; }
+    download(); setTimeout(() => idle(warm, 4000), 1500);
+  };
+  const start = () => idle(() => results.ensure().then(workspaces, workspaces), 1000);
   if (document.readyState === "complete") start(); else window.addEventListener("load", start, { once: true });
 }
 
@@ -324,7 +335,12 @@ function initialize() {
   elements["example-select"].innerHTML += examples.map((example) => `<option value="${example.id}">${example.name}</option>`).join("");
   panels = createPanelController({
     beforeChange: () => input.cancelInteractions(),
-    onChange: () => { if (workspace.circuitActive) { renderer.updateCanvasView(); scopeView.render(); analysis.renderPhasorLearning(); } },
+    onChange: () => {
+      if (!workspace.circuitActive) return;
+      // Opening the results or waveform panel is a reason to load the result side now.
+      if (panels.isOpen("results") || panels.isOpen("wave")) results.prefetch();
+      renderer.updateCanvasView(); scopeView.render(); analysis.renderPhasorLearning();
+    },
     isActive: () => workspace.circuitActive,
   });
   emLazy = createLazyController({
@@ -369,7 +385,6 @@ function initialize() {
       queueMicrotask(() => { workspace.switching = false; valueSheet.sync(); });
     },
   });
-  initializePhasorPractice();
   setupEvents();
   input.setTool("select");
   analysis.synchronizeIntent();
@@ -385,6 +400,9 @@ function initialize() {
     getHoverReadout: hover.inspect,
     getSweep: () => { const v = analysis.sweepView(); return { running: state.sweep.running, progress: state.sweep.progress, message: state.sweep.message, overlay: v ? { probe: v.overlay.probe.label, labels: v.overlay.plan.values.map((x) => x.label), series: v.merged.series.map((x) => ({ key: x.key, label: x.label, color: x.color, sweepText: x.sweepText, n: x.values.length })) } : null }; },
     getMeasure: () => measureView.inspect(),
+    // The result side (results-loader.js): whether it is in, and a way to wait for it.
+    getResultsLoaded: () => results.loaded,
+    ensureResults: () => results.ensure().then(() => true),
     getCanvasStats: () => ({ ...renderer.stats }),
     forceCanvasRender: () => renderer.renderCanvas(),
     getFlow: () => flow.inspect(),
@@ -402,7 +420,7 @@ function initialize() {
     activateWorkspace: (name) => workspaceTabs.activate(name, false),
   };
   if (Object.hasOwn(lazyWorkspaces, requestedWorkspace)) workspaceTabs.activate(requestedWorkspace, false);
-  scheduleWorkspacePrefetch([emLazy, circuitCourseLazy, signalsLazy]);
+  scheduleBackgroundLoads([emLazy, circuitCourseLazy, signalsLazy]);
   const query = new URLSearchParams(location.search);
   const exampleId = query.get("example");
   const exampleRequested = Boolean(exampleId && examples.some((example) => example.id === exampleId));

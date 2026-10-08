@@ -4,6 +4,10 @@
  *    bar), never because a part merely became selected (placing a part, a long-press pick-up, a diagnostic link): popping up on its own
  *    would cover the lower canvas right after the student placed a part. ✕ hides it until the part is chosen again.
  *    The text field asks for the number pad (inputmode="decimal"); prefixes come from the chips, so no letter keyboard is needed.
+ *    Collapsed (phone): only the value row with ◀ ▶ (no slider, no prefix chips), so the sheet covers less of the canvas. Dragging the
+ *    canvas (pan, pinch, moving a part) or tapping another part collapses it, and it stays collapsed for the next parts until the handle
+ *    on top is tapped or dragged up (dragging it down collapses again). When the chosen part ends up under the sheet, the circuit slides
+ *    up just enough to show it.
  *  - Desktop: the same controls as a compact card at the top of the properties panel (the inspector field below stays the text input).
  * Every gesture is ONE undo step (createValueGesture): a slider drag, a held ◀/▶ (auto-repeat), a chip tap, a typed value.
  * The element is moved, never recreated, so its listeners survive layout switches; renderAll()/renderSelection() call sync().
@@ -18,6 +22,7 @@ const REPEAT_EVERY_MS = 110;
 
 const chipMarkup = ([prefix, label]) => `<button type="button" data-prefix="${prefix}" aria-pressed="false" aria-label="접두사 ${prefix ? label : "없음"}">${label}</button>`;
 const MARKUP = `
+<div class="value-sheet-handle" role="button" tabindex="0" aria-expanded="true" aria-label="값 조절 접기"><i></i></div>
 <div class="value-sheet-head">
   <strong class="value-sheet-name" id="value-sheet-name"></strong>
   <input id="value-sheet-input" class="value-sheet-input" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-label="값"/>
@@ -47,6 +52,7 @@ export function createValueSheet(deps) {
   sheet.innerHTML = MARKUP;
   const $ = (selector) => sheet.querySelector(selector);
   const input = $("#value-sheet-input"), slider = $("#value-sheet-slider"), seriesButton = $('[data-sheet-action="series"]');
+  const handle = $(".value-sheet-handle");
   const gesture = createValueGesture({ mutateGrouped, closeEditGroup });
   let series = "E12";
   let requested = null;   // phone: the part whose sheet was explicitly asked for (openFor); cleared by ✕ or another selection
@@ -54,6 +60,8 @@ export function createValueSheet(deps) {
   let slideBase = null;   // value text when the slider drag began
   let repeat = null;      // auto-repeat timer of a held ◀/▶
   let shownFor = null;
+  let collapsed = false;  // phone: value row + ◀ ▶ only; kept across parts until the handle opens it again
+  let press = null;       // phone: a pointer down on the canvas while the sheet is up ({ id, x, y })
 
   function target() {
     if (!isCircuitUiActive()) return null;
@@ -96,6 +104,9 @@ export function createValueSheet(deps) {
     const show = Boolean(found) && (!phone.matches || requested === found.component.id);
     sheet.hidden = !show;
     sheet.classList.toggle("is-phone", phone.matches);
+    sheet.classList.toggle("is-collapsed", phone.matches && collapsed);
+    handle.setAttribute("aria-expanded", String(!collapsed));
+    handle.setAttribute("aria-label", collapsed ? "값 조절 펼치기 (슬라이더·접두사)" : "값 조절 접기");
     doc.documentElement.classList.toggle("value-sheet-open", show && phone.matches);
     if (!show) {
       if (gesture.open) endGesture();
@@ -134,6 +145,19 @@ export function createValueSheet(deps) {
     return true;
   }
   function endGesture() { gesture.end(); }
+
+  /** Phone: fold the sheet down to its value row, or open it again (then the part it is for must still be visible). */
+  function setCollapsed(next) {
+    if (collapsed === next) return;
+    collapsed = next;
+    if (next && doc.activeElement === slider) slider.blur();
+    sync();
+    if (!next && current && !sheet.hidden && phone.matches) {
+      const id = current.id;
+      win.requestAnimationFrame(() => { measure(); if (current?.id === id) reveal(id); });
+    }
+  }
+  const showing = () => !sheet.hidden && phone.matches;
   /** One-shot edit (chip, typed value, keyboard step): its own undo step. */
   function applyOnce(text) {
     if (!current) return false;
@@ -231,6 +255,43 @@ export function createValueSheet(deps) {
   });
   // Shortcuts (R rotate, Delete ...) must not fire while a sheet control has focus.
   sheet.addEventListener("keydown", (event) => { if (event.target !== input && ["Delete", "Backspace"].includes(event.key)) event.stopPropagation(); });
+  // The handle: a tap toggles, a drag up opens and a drag down folds (Enter / Space toggle from the keyboard).
+  let grab = null;
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    grab = { id: event.pointerId, y: event.clientY };
+    try { handle.setPointerCapture(event.pointerId); } catch { /* synthetic pointer */ }
+  });
+  handle.addEventListener("pointerup", (event) => {
+    if (!grab || grab.id !== event.pointerId) return;
+    const dy = event.clientY - grab.y;
+    grab = null;
+    setCollapsed(dy > 16 ? true : dy < -16 ? false : !collapsed);
+  });
+  handle.addEventListener("pointercancel", () => { grab = null; });
+  handle.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
+    setCollapsed(!collapsed);
+  });
+  // Working on the canvas while the sheet is up (pan, pinch, moving a part) folds it, so more of the circuit is visible.
+  // Window capture listeners: they only watch, and they run before the canvas's own handlers stop the events (canvas-touch.js).
+  const watch = { capture: true, passive: true };
+  win.addEventListener("pointerdown", (event) => {
+    const canvas = doc.getElementById("circuit-canvas");
+    if (!showing() || collapsed || !canvas?.contains(event.target)) { press = null; return; }
+    if (press && press.id !== event.pointerId) { press = null; setCollapsed(true); return; } // a second finger: pinch
+    press = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  }, watch);
+  win.addEventListener("pointermove", (event) => {
+    if (!press || press.id !== event.pointerId) return;
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) < 10) return;
+    press = null;
+    if (showing()) setCollapsed(true);
+  }, watch);
+  for (const type of ["pointerup", "pointercancel"]) win.addEventListener(type, (event) => { if (press?.id === event.pointerId) press = null; }, watch);
   phone.addEventListener?.("change", () => { shownFor = null; sync(); });
   // The phone layout keeps the sheet's height free at the end of the scroller (--value-sheet-h).
   const measure = () => { if (!sheet.hidden && phone.matches) doc.documentElement.style.setProperty("--value-sheet-h", `${Math.ceil(sheet.getBoundingClientRect().height)}px`); };
@@ -239,8 +300,15 @@ export function createValueSheet(deps) {
   return {
     sync,
     /** Show the sheet for this part (an explicit tap on the part or its value), also after the user closed it before. */
-    openFor(id) { requested = id; shownFor = null; sync(); return !sheet.hidden; },
+    openFor(id) {
+      // Tapping another part while the sheet is up folds it (the student is working on the circuit, not on one value).
+      if (showing() && current && current.id !== id) collapsed = true;
+      requested = id; shownFor = null; sync(); return !sheet.hidden;
+    },
     canAdjust: (component) => Boolean(primaryValueField(component, state.settings.analysis)),
-    inspect: () => ({ visible: !sheet.hidden, phone: phone.matches, id: current?.id ?? null, prop: current?.field.prop ?? null, series, value: input.value, sliding: slideBase !== null }),
+    inspect: () => ({
+      visible: !sheet.hidden, phone: phone.matches, collapsed: phone.matches && collapsed, id: current?.id ?? null, prop: current?.field.prop ?? null,
+      series, value: input.value, sliding: slideBase !== null,
+    }),
   };
 }
