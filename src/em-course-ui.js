@@ -63,7 +63,7 @@ export const SHELL = `
       </div>
       <div class="em-card em-course-sweep" id="em-course-sweep" hidden>
         <label for="em-course-sweep-input" id="em-course-sweep-label"></label>
-        <span class="em-number"><input id="em-course-sweep-input" inputmode="decimal" autocomplete="off"><i id="em-course-sweep-unit"></i></span>
+        <span class="em-number"><input id="em-course-sweep-input" inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off"><i id="em-course-sweep-unit"></i></span>
         <p class="em-error" id="em-course-sweep-error" role="alert" hidden></p>
       </div>
       <div class="em-card em-course-answer-card">

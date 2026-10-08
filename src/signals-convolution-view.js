@@ -212,6 +212,27 @@ export function createConvolutionView({ doc, parent, emit }) {
   surface.svg.addEventListener('pointermove', (event) => { if (dragging) move(event); });
   for (const type of ['pointerup', 'pointercancel']) surface.svg.addEventListener(type, () => { dragging = false; });
 
+  // Touch: a finger near the cursor line claims the gesture at once. Elsewhere on the plot the page keeps its vertical scroll, and
+  // the finger still moves t when it was a tap (lifted after little movement) or a sideways drag (the page does not pan sideways,
+  // so those pointer events keep coming); a vertical swipe scrolls and leaves t alone.
+  let free = null;
+  const FREE_SLOP = 10; // px a finger may wander and still count as a tap
+  surface.setFreeTouch((event) => { free = { id: event.pointerId, x: event.clientX, y: event.clientY, sideways: false }; });
+  surface.svg.addEventListener('pointermove', (event) => {
+    if (!free || event.pointerId !== free.id || free.sideways) return;
+    const dx = event.clientX - free.x, dy = event.clientY - free.y;
+    if (Math.abs(dx) > FREE_SLOP && Math.abs(dx) > 1.5 * Math.abs(dy)) {
+      free.sideways = true;
+      dragging = true;
+      surface.svg.setPointerCapture?.(event.pointerId);
+      move(event);
+    } else if (Math.abs(dy) > FREE_SLOP) free = null; // a scroll
+  });
+  surface.svg.addEventListener('pointerup', (event) => {
+    if (free && event.pointerId === free.id && !free.sideways && Math.hypot(event.clientX - free.x, event.clientY - free.y) <= FREE_SLOP) move(event);
+    free = null;
+  });
+  surface.svg.addEventListener('pointercancel', () => { free = null; });
   // Touch: only a finger near the cursor line claims the gesture; elsewhere the page scrolls.
   surface.setGrab((p) => {
     if (!last) return false;

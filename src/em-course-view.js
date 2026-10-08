@@ -56,6 +56,17 @@ function drawOutOfPlane(ctx, x, y, positive, color) {
   else { ctx.beginPath(); ctx.moveTo(x - 3, y - 3); ctx.lineTo(x + 3, y + 3); ctx.moveTo(x + 3, y - 3); ctx.lineTo(x - 3, y + 3); ctx.stroke(); }
 }
 
+// Axis numbers in engineering style: 2300 -> "2.3k", 0.0045 -> "4.5m", 0 -> "0" (two significant digits, like the old
+// 2.3e+3 labels, but readable at a glance).
+const ENG_PREFIXES = [[1e12, 'T'], [1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n'], [1e-12, 'p']];
+export function engText(value) {
+  if (!Number.isFinite(value)) return '—';
+  if (value === 0) return '0';
+  const abs = Math.abs(value), [factor, prefix] = ENG_PREFIXES.find(([f]) => abs >= f * 0.9995) ?? [1e-15, 'f'];
+  const mantissa = Number((value / factor).toPrecision(2));
+  return `${String(mantissa).replace('-', '−')}${prefix}`;
+}
+
 function colorsOf(palette) {
   const css = name => palette[name].css, soft = (name, alpha) => cssRgba(palette[name].rgb, alpha);
   return {
@@ -116,6 +127,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
     delete canvas.dataset.instantUnresolved;
     delete canvas.dataset.envelopeUnresolved;
     const layers = profileLayers(current.profiles, instant);
+    delete canvas.dataset.answerPoint;
     if (!layers.length) {
       ctx.fillStyle = C.muted; fitText(ctx, '표본 해상도 제한 · 곡선을 표시하지 않습니다.', 16, 44);
       canvas.dataset.profileSeries = '0';
@@ -139,8 +151,8 @@ export function createCourseView(canvas, onProbe, getPalette) {
       ctx.fillStyle = C.text;
       fitText(ctx, `${live ? live.label : data.label} (${live ? live.unit : data.unit})`, left, top - 8);
       ctx.fillStyle = C.muted;
-      ctx.fillText(yMax.toExponential(1), 4, top + 5);
-      ctx.fillText(yMin.toExponential(1), 4, bottom);
+      ctx.fillText(engText(yMax), 4, top + 5);
+      ctx.fillText(engText(yMin), 4, bottom);
       ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
       ctx.strokeRect(left, top, right - left, bottom - top);
       ctx.save();
@@ -166,7 +178,23 @@ export function createCourseView(canvas, onProbe, getPalette) {
       const px = mapX(current.point[2]);
       ctx.strokeStyle = C.probe; ctx.setLineDash([4, 3]);
       ctx.beginPath(); ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
+      ctx.setLineDash([]);
       ctx.restore();
+      // The current answer as a point on its own curve (the magnetic circuit's (B, NI)): a ring with a short label.
+      const answer = current.answer;
+      if (answer && !live && data.key === answer.series && Number.isFinite(answer.coordinate) && Number.isFinite(answer.value)) {
+        const ax = mapX(answer.coordinate), ay = mapY(answer.value);
+        if (ax >= left - 1 && ax <= right + 1 && ay >= top - 1 && ay <= bottom + 1) {
+          ctx.strokeStyle = C.gauss; ctx.fillStyle = C.bg; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.arc(ax, ay, 6, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = C.text; ctx.font = `600 12px ${FONT}`;
+          const text = `${answer.label} (${engText(answer.coordinate)} · ${engText(answer.value)})`, width = ctx.measureText(text).width;
+          const tx = Math.min(Math.max(left + 4, ax + 10), right - width - 4), ty = ay - 10 < top + 12 ? ay + 20 : ay - 10;
+          ctx.fillText(text, Math.max(left + 4, tx), ty);
+          ctx.font = `12px ${FONT}`;
+          canvas.dataset.answerPoint = JSON.stringify({ x: ax, y: ay, coordinate: answer.coordinate, value: answer.value });
+        }
+      }
     });
     ctx.fillStyle = C.muted;
     const noEnvelope = layers.some(layer => layer.live && !layer.envelope);
@@ -174,7 +202,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
     const note = noEnvelope ? ' · 진폭 포락선은 표본 상한으로 생략' : withEnvelope ? ' · 파선: 진폭 포락선' : '';
     const axis = current.definition.view?.coordinate || { key: 'z', unit: 'm' };
     const unitScale = axis.scale > 0 ? axis.scale : 1, unitText = axis.unit === '°' ? '°' : ` ${axis.unit}`;
-    fitText(ctx, `${axis.key} ${(xMin / unitScale).toPrecision(3)} … ${(xMax / unitScale).toPrecision(3)}${unitText} · 점선: 측정 위치${note}`, 10, h - 17);
+    fitText(ctx, `${axis.key} ${(xMin / unitScale).toPrecision(3)} … ${(xMax / unitScale).toPrecision(3)}${unitText} · 점선: ${current.probeLabel || '측정 위치'}${note}`, 10, h - 17);
     Object.assign(canvas.dataset, { profileSeries: String(layers.length), profileXMin: String(xMin), profileXMax: String(xMax) });
   }
 

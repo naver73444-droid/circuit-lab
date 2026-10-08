@@ -618,6 +618,9 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .em-chip-advanced[open] { flex-basis: 100%; }
 @media (min-width: 901px) { .em-fold > summary { display: none; } }
 .em-hint { white-space: pre-line; }
+/* EM file saved: a short confirmation over the workspace (em-project-panel.js); the status line itself is often off screen on a phone. */
+.em-toast { position: fixed; left: 16px; right: 16px; bottom: max(18px, env(safe-area-inset-bottom)); z-index: 30; width: fit-content; max-width: 420px; margin: 0 auto; padding: 10px 16px; color: var(--text); background: var(--raised); border: 1px solid var(--accent); border-radius: 12px; box-shadow: 0 6px 18px rgb(0 0 0 / 0.3); font-size: 14px; pointer-events: none; }
+.em-toast[hidden] { display: none; }
 .em-workspace .em-tabs button[aria-pressed="true"], .em-workspace .em-modeswitch button[aria-pressed="true"], .em-workspace .em-ampere-controls button[aria-pressed="true"], .em-workspace .em-chip[aria-pressed="true"], .em-workspace .em-model-buttons button[aria-pressed="true"], .em-workspace .em-course-answer-card .segmented button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--selection); }
 .em-palette button { min-width: 52px; font-weight: 600; }
 

@@ -7,7 +7,7 @@
 // the moving source is evaluated again, the others come from the cache. All colours come from the palette (CSS tokens).
 import { compress, compressedLevels, contourSet, typicalMagnitude } from './em-contour.js';
 import { computePlaneLines, createSuperpositionSampler } from './em-plane-field.js';
-import { fitLabel, placeSensorLabel, planeAxes, planeNormal, scaleBar, sectionRadius } from './em-plane-geometry.js';
+import { ampereHandles, fitLabel, placeSensorLabel, planeAxes, planeNormal, scaleBar, sectionRadius } from './em-plane-geometry.js';
 import { cssRgb, cssRgba } from './em-palette.js';
 import { sourceCenter } from './em-playground-state.js';
 import { strengthText } from './em-source-edit.js';
@@ -278,14 +278,29 @@ function drawCurrentSource(ctx, source, scene, palette, selected) {
 
 // A one-line label kept inside the canvas (scene.view): a left-aligned one flips to the other side of `flipAround` at the right
 // edge. Its box goes to scene.labels, which the sensor's readout keeps clear of.
-function label(ctx, text, x, y, palette, align = 'left', scene = null, flipAround = null) {
+// alternates: other anchor points [x, y] tried in turn when the box would cover a reserved area (the scale bar).
+function label(ctx, text, x, y, palette, align = 'left', scene = null, flipAround = null, alternates = []) {
   ctx.font = `600 12px ${FONT}`; ctx.textAlign = align; ctx.textBaseline = 'middle';
   const width = ctx.measureText(text).width + 4, view = scene?.view;
-  if (view) ({ x, y } = fitLabel({ x, y, width, align, viewWidth: view.width, viewHeight: view.height, flipAround }));
+  if (view) {
+    const fit = ([px, py]) => fitLabel({ x: px, y: py, width, align, viewWidth: view.width, viewHeight: view.height, flipAround });
+    const clear = spot => !(scene.reserved ?? []).some(area => overlaps(boxOf(spot, width, align), area));
+    const spots = [[x, y], ...alternates].map(fit);
+    ({ x, y } = spots.find(clear) ?? liftAbove(spots[0], width, align, scene.reserved));
+  }
   ctx.lineWidth = 3.5; ctx.strokeStyle = cssRgba(palette.bg.rgb, 0.9);
   ctx.strokeText(text, x, y);
   ctx.fillStyle = palette.text.css; ctx.fillText(text, x, y);
-  scene?.labels?.push({ x: align === 'center' ? x - width / 2 : x - 2, y: y - 8, width, height: 16 });
+  const box = boxOf({ x, y }, width, align);
+  scene?.labels?.push(box);
+  return box;
+}
+const boxOf = ({ x, y }, width, align) => ({ x: align === 'center' ? x - width / 2 : x - 2, y: y - 8, width, height: 16 });
+const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+// No clear spot: the first one moved up just above the reserved areas it covers.
+function liftAbove(spot, width, align, reserved = []) {
+  const hits = reserved.filter(area => overlaps(boxOf(spot, width, align), area));
+  return hits.length ? { x: spot.x, y: Math.max(12, Math.min(...hits.map(area => area.y)) - 10) } : spot;
 }
 
 function drawGauss(ctx, scene, palette) {
@@ -306,10 +321,11 @@ function drawGauss(ctx, scene, palette) {
   const hx = cx + pixels * Math.SQRT1_2, hy = cy - pixels * Math.SQRT1_2;
   ctx.fillStyle = palette.gauss.css;
   ctx.beginPath(); ctx.arc(hx, hy, 6, 0, 2 * Math.PI); ctx.fill();
-  if (gauss.label) label(ctx, gauss.label, cx, cy + pixels + 14, palette, 'center', scene);
+  if (gauss.label) label(ctx, gauss.label, cx, cy + pixels + 14, palette, 'center', scene, null, [[cx, cy - pixels - 14]]);
 }
 
-// The Ampere loop: a dashed path (circle or rectangle) with its traversal direction, the sources that link it, and a resize handle.
+// The Ampere loop: a dashed path (circle or rectangle) with its traversal direction, the sources that link it, a move handle ✥ and a
+// size handle ●. Returns the handle positions and the label box (canvas px) for the plane's stats.
 function drawAmpere(ctx, scene, palette) {
   const { ampere, view, plane } = scene, [a, b] = planeAxes(plane);
   const [cx, cy] = view.toCanvas(ampere.center[a], ampere.center[b]);
@@ -331,9 +347,21 @@ function drawAmpere(ctx, scene, palette) {
     const [x, y] = view.toCanvas(...[sourceCenter(source)[a], sourceCenter(source)[b]]);
     ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 23, 0, 2 * Math.PI); ctx.stroke();
   }
-  const [hx, hy] = rect ? [cx + hw, cy - hh] : [cx + r * Math.SQRT1_2, cy - r * Math.SQRT1_2];
-  ctx.beginPath(); ctx.arc(hx, hy, 6, 0, 2 * Math.PI); ctx.fill();
-  if (ampere.label) label(ctx, ampere.label, cx, cy + (rect ? hh : r) + 14, palette, 'center', scene);
+  // Two handles on the path, clear of the centre (a wire the loop was put around sits there): ● changes the size, ✥ moves the loop.
+  const { move, size } = ampereHandles(view, plane, ampere);
+  ctx.beginPath(); ctx.arc(size[0], size[1], 7, 0, 2 * Math.PI); ctx.fill();
+  ctx.beginPath(); ctx.arc(move[0], move[1], 10, 0, 2 * Math.PI); ctx.fill();
+  ctx.strokeStyle = palette.bg.css; ctx.fillStyle = palette.bg.css; ctx.lineWidth = 1.6;
+  for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    ctx.beginPath(); ctx.moveTo(move[0], move[1]); ctx.lineTo(move[0] + ux * 6, move[1] + uy * 6); ctx.stroke();
+    arrowHead(ctx, move[0] + ux * 7.5, move[1] + uy * 7.5, ux, uy, 3.2);
+  }
+  ctx.fillStyle = palette.accent.css;
+  // The sensor's readout box keeps clear of the handles too (it avoids scene.labels).
+  scene.labels?.push({ x: move[0] - 12, y: move[1] - 12, width: 24, height: 24 }, { x: size[0] - 9, y: size[1] - 9, width: 18, height: 18 });
+  const extent = rect ? hh : r;
+  const text = ampere.label ? label(ctx, ampere.label, cx, cy + extent + 14, palette, 'center', scene, null, [[cx, cy - extent - 14], [cx, cy]]) : null;
+  return { move, size, label: text };
 }
 
 // Force on the selected source: an arrow of fixed length (the strength is in the text) from the source, along the in-plane part of F.
@@ -377,6 +405,14 @@ function drawSensor(ctx, scene, palette) {
   ctx.fillStyle = palette.text.css; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillText(sensor.text, box.x + 7, box.y + height / 2 + 0.5, width - 14);
   return { x: box.x, y: box.y, width, height, side: box.side, fontSize: size, sensor: [x, y], view: [view.width, view.height] };
+}
+
+/** The area the scale bar and its text take (canvas px). */
+function scaleBarBox(ctx, view, wavelengths) {
+  const bar = scaleBar(view);
+  ctx.font = `12px ${FONT}`;
+  const text = wavelengths ? `${bar.meters} λ` : bar.label, width = bar.pixels + 8 + ctx.measureText(text).width;
+  return { x: 10, y: view.height - 32, width: width + 10, height: 30 };
 }
 
 function drawScaleBar(ctx, view, palette, wavelengths) {
@@ -482,13 +518,15 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
       const started = performance.now();
       sizeCanvas(canvas, ctx, view.width, view.height, dpr);
       ctx.clearRect(0, 0, view.width, view.height);
-      const overlay = { ...scene, normal: planeNormal(scene.plane), labels: [] };
+      // The scale bar (drawn last, bottom left) is kept clear: an overlay label that would cover it moves (label alternates).
+      stats.scaleBar = scaleBarBox(ctx, view, scene.field.kind === 'wave');
+      const overlay = { ...scene, normal: planeNormal(scene.plane), labels: [], reserved: [stats.scaleBar] };
       const drawOne = scene.field.kind === 'current' ? drawCurrentSource : drawSource;
       for (const source of scene.sources) {
         if (source.visible !== false) drawOne(ctx, source, overlay, palette, source.id === scene.selectedId);
       }
       if (scene.gauss) drawGauss(ctx, overlay, palette);
-      if (scene.ampere) drawAmpere(ctx, overlay, palette);
+      stats.ampere = scene.ampere ? drawAmpere(ctx, overlay, palette) : null;
       if (scene.force) drawForce(ctx, overlay, palette);
       // Where the sensor's readout box landed (canvas px): the phone checks require it to stay inside the canvas.
       stats.sensorLabel = scene.sensor ? drawSensor(ctx, overlay, palette) : null;

@@ -6,14 +6,17 @@ import { evaluateComplexExpression } from './circuit-course-complex-expr.js';
 import { solveThreePhase, pfFromLineData, twoWattmeter } from './circuit-course-threephase.js';
 import { combineLoads, LOAD_KINDS, MAX_LOADS } from './circuit-course-loads.js';
 import { maxPowerTransfer } from './circuit-course-maxpower.js';
-import { fmt, polarShort, short, zText, capacitanceText } from './circuit-course-format.js';
+import { fmt, fmt4, polarShort, short, zText, capacitanceText } from './circuit-course-format.js';
 import { num, amp, choice, textField, angleField, heading, putPolar, metric } from './circuit-course-tool-common.js';
 
 const z = (re, im) => ({ re, im });
 const polarZ = (m, deg) => ({ re: m * Math.cos(deg * Math.PI / 180), im: m * Math.sin(deg * Math.PI / 180) });
 const natureText = S => (Math.abs(S.im) <= 1e-9 * Math.max(magnitude(S), 1e-300) ? '역률 1' : S.im > 0 ? '지상(lagging) · Q>0 유도성' : '진상(leading) · Q<0 용량성');
 const pfText = S => { const m = magnitude(S); return m === 0 ? '미정' : short(Math.abs(S.re) / m) + (Math.abs(S.im) <= 1e-9 * m ? '' : S.im > 0 ? ' lagging' : ' leading'); };
-const pqRow = (label, S) => [label, fmt(S.re), fmt(S.im), fmt(magnitude(S)), pfText(S)];
+const pqRow = (label, S, f = fmt, pf = pfText) => [label, f(S.re), f(S.im), f(magnitude(S)), pf(S)];
+// The three-phase tool prints every number with four significant digits and thousands separators (fmt4).
+const pfText4 = S => { const m = magnitude(S); return m === 0 ? '미정' : fmt4(Math.abs(S.re) / m) + (Math.abs(S.im) <= 1e-9 * m ? '' : S.im > 0 ? ' lagging' : ' leading'); };
+const pqRow4 = (label, S) => pqRow(label, S, fmt4, pfText4);
 const triangleOf = (S, title) => ({ title, p: { pWatts: S.re, qVars: S.im, apparentVA: magnitude(S) } });
 const capText = F => capacitanceText(F, short);
 const zField = (key, label, r, x, extra = {}) => [num(key + 'R', label + ' 저항 R', 'Ω', r, 0, 1e9, extra), num(key + 'X', label + ' 리액턴스 X', 'Ω', x, -1e9, 1e9, extra)];
@@ -45,7 +48,7 @@ const isCircuit = v => v.mode === 'circuit', isInverse = v => v.mode === 'invers
 const unbalanced = v => isCircuit(v) && v.balanced === 'no';
 const delta = v => v.loadConnection === 'delta';
 export const THREE_PHASE_TOOL = {
-  id: 'three-phase-ext', title: '9 · 3상 확장 (전원·선로·부하)', tab: 'Ch.12',
+  id: 'three-phase-ext', title: '9 · 3상 확장 (전원·선로·부하)', tab: 'Ch.12', numberFormat: fmt4,
   lead: '전원 Y/Δ, 선로 임피던스, 부하 Y/Δ(불평형 가능), 중성선을 고르면 선전류·상전류·전력 분배가 바로 바뀝니다. 아래 "VL·IL·P → 역률"은 모터 같은 역문제입니다.',
   fields: [
     choice('mode', '풀이 종류', 'circuit', [['circuit', '회로 해석'], ['inverse', 'VL·IL·P → 역률 (역문제)']]),
@@ -113,8 +116,8 @@ export const THREE_PHASE_TOOL = {
       if (r.status !== 'valid') return r;
       const S = z(r.pWatts, r.qVars);
       return { status: 'valid', values: { S: r.apparentVA, pf: r.pf, thetaDeg: r.thetaDeg, Q: r.qVars },
-        read: 'S=√3·VL·IL=' + fmt(r.apparentVA) + ' VA → pf=P/S=' + short(r.pf) + ' (' + (r.nature === 'lagging' ? 'lagging' : 'leading') + '), θ=' + short(r.thetaDeg) + '°',
-        metrics: [metric('|S| = √3 VL IL', fmt(r.apparentVA), 'VA'), metric('pf = P/|S|', short(r.pf) + (r.nature === 'lagging' ? ' lagging' : ' leading')), metric('θ (역률각 = 부하 Z 각)', short(r.thetaDeg), '°'), metric('Q', fmt(r.qVars),
+        read: 'S=√3·VL·IL=' + fmt4(r.apparentVA) + ' VA → pf=P/S=' + fmt4(r.pf) + ' (' + (r.nature === 'lagging' ? 'lagging' : 'leading') + '), θ=' + fmt4(r.thetaDeg) + '°',
+        metrics: [metric('|S| = √3 VL IL', fmt4(r.apparentVA), 'VA'), metric('pf = P/|S|', fmt4(r.pf) + (r.nature === 'lagging' ? ' lagging' : ' leading')), metric('θ (역률각 = 부하 Z 각)', fmt4(r.thetaDeg), '°'), metric('Q', fmt4(r.qVars),
           'var')],
         triangles: [triangleOf(S, '3상 전력삼각형')], phasors: [] };
     }
@@ -129,8 +132,8 @@ export const THREE_PHASE_TOOL = {
     putPolar(values, 'IN', IN, k);
     if (d) ['AB', 'BC', 'CA'].forEach((n, i) => putPolar(values, 'I' + n, r.loadCurrents[i], k));
     for (const [key, S] of [['Ssrc', r.power.source], ['Sline', r.power.line], ['Sload', r.power.load]]) { values[key + 'Re'] = S.re; values[key + 'Im'] = S.im; }
-    const angleOf = w => (magnitude(w) === 0 ? '—' : short(Math.atan2(w.im, w.re) * 180 / Math.PI) + '°');
-    const polarK = w => (magnitude(w) === 0 ? '0' : short(magnitude(w) * k) + '∠' + angleOf(w));
+    const angleOf = w => (magnitude(w) === 0 ? '—' : fmt4(Math.atan2(w.im, w.re) * 180 / Math.PI) + '°');
+    const polarK = w => (magnitude(w) === 0 ? '0' : fmt4(magnitude(w) * k) + '∠' + angleOf(w));
     const rows = [...['a', 'b', 'c'].map((n, i) => ['I' + n + ' (선전류)', polarK(r.lineCurrents[i])])];
     if (d) rows.push(...['AB', 'BC', 'CA'].map((n, i) => ['I' + n + ' (Δ 상전류)', polarK(r.loadCurrents[i])]));
     rows.push(['In = −(Ia+Ib+Ic)', polarK(IN)]);
@@ -139,18 +142,18 @@ export const THREE_PHASE_TOOL = {
     const phasors = [...r.sourceVoltages.map((w, i) => ({ label: ['Van', 'Vbn', 'Vcn'][i], unit: 'V', z: w })), ...r.loadVoltages.map((w, i) => ({ label: 'V' + phaseNames[i], unit: 'V', z: w })),
       ...r.lineCurrents.map((w, i) => ({ label: ['Ia', 'Ib', 'Ic'][i], unit: 'A', z: w })), ...(d ? r.loadCurrents.map((w, i) => ({ label: 'I' + phaseNames[i], unit: 'A', z: w })) : []),
       ...(magnitude(IN) > 0 ? [{ label: 'In', unit: 'A', z: IN }] : [])];
-    const powerRows = [pqRow('전원 (공급)', r.power.source), pqRow('선로 Zℓ', r.power.line), pqRow('부하', r.power.load)];
-    if (r.neutral === 'impedance') powerRows.push(pqRow('중성선 Zn', r.power.neutral));
+    const powerRows = [pqRow4('전원 (공급)', r.power.source), pqRow4('선로 Zℓ', r.power.line), pqRow4('부하', r.power.load)];
+    if (r.neutral === 'impedance') powerRows.push(pqRow4('중성선 Zn', r.power.neutral));
     const two = v.balanced === 'yes' && v.wattmeter === 'two' ? twoWattmeter(r, za) : null;
     if (two) { values.W1 = two.W1; values.W2 = two.W2; values.Wsum = two.total; values.Wq = two.reactive; }
     const note = r.balanced ? '평형: In=0 이라 단상 등가(a상)만 풀면 b, c는 ∓120° 이동입니다.' : r.neutral === 'none' ? '불평형 3선식: Ia+Ib+Ic=0 (메시 해석과 대조 완료).' : '불평형: 중성선 전류 In=−(Ia+Ib+Ic)≠0 입니다.';
-    const wText = two ? ' · 2전력계법: W1=' + fmt(two.W1) + ' W, W2=' + fmt(two.W2) + ' W (W1+W2=' + fmt(two.total) + ' W,'
-      + ' √3(W2−W1)=' + fmt(two.reactive) + ' var)'
-      + (two.negative ? ' · θ=' + short(two.thetaDeg) + '°, |θ|>60° (역률<0.5)라 한 계기(' + two.negative + ')가 음수입니다.' : '') : '';
+    const wText = two ? ' · 2전력계법: W1=' + fmt4(two.W1) + ' W, W2=' + fmt4(two.W2) + ' W (W1+W2=' + fmt4(two.total) + ' W,'
+      + ' √3(W2−W1)=' + fmt4(two.reactive) + ' var)'
+      + (two.negative ? ' · θ=' + fmt4(two.thetaDeg) + '°, |θ|>60° (역률<0.5)라 한 계기(' + two.negative + ')가 음수입니다.' : '') : '';
     return { status: 'valid', values, balanced: r.balanced, checks: two ? [...r.checks, ...two.checks] : r.checks, phasors, triangles: [triangleOf(r.power.load, '부하 복소전력 S=P+jQ')],
       read: 'Ia=' + polarK(r.lineCurrents[0]) + ' A, Ib=' + polarK(r.lineCurrents[1]) + ' A, Ic=' + polarK(r.lineCurrents[2]) + ' A · In=' + polarK(IN) + ' A · ' + note + wText,
-      metrics: [metric('|Ia|', short(magnitude(r.lineCurrents[0]) * k), 'A'), metric('부하 P', fmt(r.power.load.re), 'W'), metric('부하 Q', fmt(r.power.load.im), 'var'), metric('부하 pf', pfText(r.power.load)),
-        ...(two ? [metric('W1 (' + two.W1Line + '선 · cos(θ+30°))', fmt(two.W1), 'W'), metric('W2 (' + two.W2Line + '선 · cos(θ−30°))', fmt(two.W2), 'W')] : [])],
+      metrics: [metric('|Ia|', fmt4(magnitude(r.lineCurrents[0]) * k), 'A'), metric('부하 P', fmt4(r.power.load.re), 'W'), metric('부하 Q', fmt4(r.power.load.im), 'var'), metric('부하 pf', pfText4(r.power.load)),
+        ...(two ? [metric('W1 (' + two.W1Line + '선 · cos(θ+30°))', fmt4(two.W1), 'W'), metric('W2 (' + two.W2Line + '선 · cos(θ−30°))', fmt4(two.W2), 'W')] : [])],
       tables: [{ title: '전류 · 전압 (' + (k > 1 ? 'peak' : 'rms') + ')', headers: ['양', '크기∠위상 (A 또는 V)'], rows: [...rows, ...loadV] },
         { title: '복소전력 분배 (S전원 = S선로 + S부하' + (r.neutral === 'impedance' ? ' + S중성선' : '') + ')', headers: ['구분', 'P (W)', 'Q (var)', '|S| (VA)', 'pf'], rows: powerRows }],
       notes: [note, natureText(r.power.load) + ' (부하 기준)', ...(two ? ['2전력계법 규약: 교재 §12.10 (Alexander & Sadiku; 강의 슬라이드에는 없음) — W1=VL·IL·cos(θ+30°), W2=VL·IL·cos(θ−30°), P=W1+W2, Q=√3(W2−W1).', '2전력계법: 계기는 a·c 선, 전압코일 공통은 b선(부하 단자 선간전압). 계기 a=Re(Vab·Ia*), 계기 c=Re(Vcb·Ic*).'

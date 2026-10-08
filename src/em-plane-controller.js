@@ -8,7 +8,7 @@ import * as currentEdit from './em-current-edit.js';
 import { currentCenter } from './em-current-state.js';
 import { createPlaneRenderer } from './em-plane-render.js';
 import {
-  createPlaneView, hitAmpere, hitGauss, hitSource, planeAxes, planeNormal, pointOnPlane, zoomAbout,
+  createPlaneView, hitAmpere, hitAmpereHandle, hitGauss, hitSource, planeAxes, planeNormal, pointOnPlane, zoomAbout,
 } from './em-plane-geometry.js';
 import { createPointChargeEvaluator } from './em-playground-physics.js';
 import { sphereFlux } from './em-playground-calculus.js';
@@ -21,7 +21,8 @@ import { perfMeasure } from './em-perf-marks.js';
 const SENSOR_GRAB = 16;
 // A fingertip is far less precise than a mouse: touches grab the sensor, a source handle and a Gauss / Ampere ring from
 // further away (px). The mouse keeps the tight radii above and in em-plane-geometry.js.
-const TOUCH_GRAB = { sensor: 28, source: 32, edge: 20 };
+const TOUCH_GRAB = { sensor: 28, source: 32, edge: 20, handle: 26 };
+const HANDLE_GRAB = 12; // mouse reach of the Ampere loop's ✥ / ● handles
 const KEY_STEP = 0.05;
 // A burst of wheel turns / resizes renders at draft quality; one converged render follows this long after the last event.
 const VIEW_SETTLE_MS = 150;
@@ -235,6 +236,18 @@ export function createPlaneController({
     event.preventDefault();
     canvas.focus({ preventScroll: true });
     canvas.setPointerCapture?.(event.pointerId);
+    // The Ampere loop's handles come before the sources: the loop is put around a wire, so its inside is often the wire itself.
+    const handle = mode.kind === 'current' && lab.chips.ampere && lab.ampere
+      ? hitAmpereHandle(view, plane, lab.ampere, x, y, touch ? TOUCH_GRAB.handle : HANDLE_GRAB) : null;
+    if (handle && !(sensorDistance <= sensorGrab && sensorDistance < handle.distance)) {
+      const grab = pointOnPlane(view, plane, mode.fixed(), x, y), before = lab.ampere;
+      startGesture({
+        type: handle.part === 'move' ? 'ampere-move' : 'ampere-resize', part: lab.ampere.shape === 'rect' ? 'corner' : 'edge', pointerId: event.pointerId, touch,
+        offset: lab.ampere.center.map((v, i) => v - grab[i]), restore: () => { lab.ampere = before; },
+      });
+      onChange();
+      return;
+    }
     if (hit && !(sensorDistance <= sensorGrab && sensorDistance <= hit.distance)) {
       ed.select(hit.source.id);
       if (!ed.beginDrag(hit.source.id, plane, hit.handle, hit.position)) { onChange(); return; }

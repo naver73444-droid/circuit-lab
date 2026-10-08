@@ -126,7 +126,10 @@ export function createSeriesView({ doc, parent, emit }) {
     const half = (yHi - yLo) / 2;
     phasorPane.setDomain(-half, half, yLo, yHi);
     phasorPane.drawAxes({ xTicks: [], yTicks: [0], showY: false });
-    phasorPane.setTitle('회전 벡터 (90° 돌려 그림: 위쪽이 실수축)', 'start', true);
+    // On a phone the phasor pane is a small centred square: its title is centred over the full width instead of being cut to it.
+    const middle = phasorPane.box.x + phasorPane.box.w / 2;
+    if (stacked) phasorPane.setTitle('회전 벡터 (90° 돌려 그림: 위쪽이 실수축)', 'middle', true, 2 * Math.min(middle, width - middle) - 8);
+    else phasorPane.setTitle('회전 벡터 (90° 돌려 그림: 위쪽이 실수축)', 'start', true);
     for (let i = 0; i < MAX_HARMONICS; i++) {
       const center = points[i + 1];
       const term = points[i + 2];

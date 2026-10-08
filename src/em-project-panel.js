@@ -1,5 +1,5 @@
 // Save / open the sandbox as an EM file (separate from circuit files) and load a learning example.
-import { EM_PROJECT_FORMAT, EM_PROJECT_VERSION, makeExampleProject, parseEMProject, serializeEMProject } from './em-playground-project.js';
+import { EM_PROJECT_FORMAT, EM_PROJECT_VERSION, makeExampleProject, normalizeEMProject, parseEMProject, serializeEMProject } from './em-playground-project.js';
 
 // `magnetic` (optional) is the magnetic mode of the workspace: read() gives { field, sources, selectedId, ampere, chips } and
 // write({ sources, selectedId, ampere, chips }) replaces it (clearing its undo history). Without it only the electric part is saved.
@@ -7,6 +7,23 @@ export function createProjectPanel({ root, editor, store, calculus, magnetic = n
   const $ = selector => root.querySelector(selector), pg = editor.state;
   let generation = 0;
   const status = text => { $('#em-d-status').textContent = text; };
+  // A short confirmation over the workspace (the status line under the file buttons is often off screen on a phone).
+  let toastTimer = 0;
+  function toast(text) {
+    let node = root.querySelector('.em-toast');
+    if (!node) {
+      node = document.createElement('p');
+      node.className = 'em-toast';
+      node.setAttribute('role', 'status');
+      node.dataset.emToast = '';
+      root.append(node);
+    }
+    node.textContent = text;
+    node.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { node.hidden = true; }, 2200);
+  }
+  signal?.addEventListener('abort', () => clearTimeout(toastTimer), { once: true });
 
   // Fields of a file that this workspace has no control for (the saved "before" comparison, the vector mode and the legend)
   // are kept as loaded and written back unchanged, so opening a file and saving it again loses nothing.
@@ -52,6 +69,7 @@ export function createProjectPanel({ root, editor, store, calculus, magnetic = n
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
       status(`저장했습니다 · ${new TextEncoder().encode(source).byteLength} bytes`);
+      toast('EM 파일을 저장했습니다 (circuit-lab-em-playground.json)');
     } catch (error) { status(`저장 오류: ${error.message}`); }
   }, { signal });
 
@@ -83,5 +101,9 @@ export function createProjectPanel({ root, editor, store, calculus, magnetic = n
     /** 초기화: the fields that came from a loaded file go back to their defaults together with the world. */
     resetCarried() { carried = freshCarried(); },
     inspectCarried: () => structuredClone(carried),
+    /** The whole workspace as a file object (same schema as a saved file), for the tab memory. */
+    snapshot,
+    /** Puts a stored file object back (checked like an opened file; throws on anything invalid and then changes nothing). */
+    restore(value) { apply(normalizeEMProject(value)); },
   };
 }

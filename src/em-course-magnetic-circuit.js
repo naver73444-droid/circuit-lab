@@ -172,7 +172,17 @@ const gapCore = defineLecture({
   description: '환상 코어(S = 6 cm², 평균 지름 0.3 m, 공극 2 mm): B = 1 T에 필요한 NI는 약 1780 A·turn. 반대로 NI = 2000에서 B는 μ를 가정·갱신하는 반복으로 구합니다.',
   answers: ['NI','B'], coordinateScalars: ['probeB'],
   parameters: gapParameters, probeDefault: [0, 0, 1],
-  view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('B', 'T', '공극(=코어) 자속밀도') },
+  // One B on the graph: in the 목표 B → NI direction the graph's B is the target itself (dragging it changes 목표 B and the answer
+  // NI); with N·I given, the dashed line is a free 관측 B and the answer (B, NI) is the highlighted point.
+  view: {
+    kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('B', 'T', '공극(=코어) 자속밀도'),
+    link: { param: 'targetB', when: { key: 'mode', equals: 0 } },
+    probeLabel: p => (p.mode === 0 ? '목표 B (끌면 목표 B와 답 NI가 함께 바뀜)' : '관측 B'),
+    answerPoint: (p, result) => {
+      const value = key => result.scalars?.find(item => item.key === key)?.value;
+      return { series: 'NI', coordinate: value('B'), value: value('NI'), label: p.mode === 0 ? '답: 목표 B의 NI' : '답: 주어진 NI의 B' };
+    },
+  },
   validate: p => tableError(p),
   compute: gapCompute,
   profile: (p, count) => {

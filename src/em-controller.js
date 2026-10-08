@@ -17,7 +17,9 @@ import { createProjectPanel } from './em-project-panel.js';
 import { EM_MAGNETIC_CHIPS } from './em-playground-project.js';
 import { createPalette, watchReducedMotion } from './em-palette.js';
 import { freeSpot } from './em-source-edit.js';
-import { planeNormal } from './em-plane-geometry.js';
+import { planeNormal, SPAN_RANGE } from './em-plane-geometry.js';
+import { clampGauss } from './em-gauss.js';
+import { createWorkspaceSession, storedNumber, storedObject } from './workspace-session.js';
 import { siText } from './em-format.js';
 import { perfMeasure } from './em-perf-marks.js';
 
@@ -289,6 +291,7 @@ export function createEMController(root) {
 
   function render() {
     if (destroyed || !s.active) return;
+    session.save();
     const started = performance.now();
     syncChrome();
     const chromeDone = perfMeasure('em:chrome', started);
@@ -516,6 +519,7 @@ export function createEMController(root) {
     $('#em-lab').hidden = value;
     if (value) { suspend(); store.setActive(false); requestCourse(); }
     else { course?.deactivate(); store.setActive(true); resume(); }
+    session.save();
   }
   function activateCourseIfNeeded() { if (!destroyed && courseActive && workspaceActive && course) course.activate(); }
   function showCourseStatus(failed) {
@@ -546,7 +550,7 @@ export function createEMController(root) {
       if (destroyed) return;
       courseStatus?.remove();
       courseStatus = null;
-      course = module.createEMCourseController($('#em-course-root'), { onClose: () => switchCourse(false) });
+      course = module.createEMCourseController($('#em-course-root'), { onClose: () => switchCourse(false), initial: storedCourse, onChange: () => session.save() });
       coursePending = null;
       activateCourseIfNeeded();
     }).catch(() => {
@@ -561,7 +565,41 @@ export function createEMController(root) {
   resizeWatcher.observe($('#em-canvas'));
   events.signal.addEventListener('abort', () => resizeWatcher.disconnect(), { once: true });
 
+  // ---- tab memory (reload, back / forward, remount) ---------------------------------------------------------------
+  // The sandbox (both fields: sources, sensor, Ampere loop, chips) goes through the EM file format (em-playground-project.js),
+  // so a stored state is checked exactly like an opened file. The view, the built-in scene and the course come along; the course
+  // part waits here until the course module is loaded (it keeps its own experiment and inputs).
+  let storedCourse = null;
+  const session = createWorkspaceSession('em', () => ({
+    version: 1, file: project.snapshot(), scene: lab.scene, tab: lab.tab, view: lab.view, chips: lab.chips,
+    gauss: lab.gauss, courseActive, course: course ? course.snapshot() : storedCourse,
+  }));
+  function restoreSession(saved) {
+    const data = storedObject(saved);
+    if (!data || data.version !== 1) return;
+    try { project.restore(data.file); } catch { /* an unreadable stored world: the default sandbox stays */ }
+    const chips = storedObject(data.chips);
+    if (chips) for (const name of Object.keys(lab.chips)) if (typeof chips[name] === 'boolean' && name !== 'hfield') lab.chips[name] = chips[name];
+    const view = storedObject(data.view), offset = Array.isArray(view?.offset) ? view.offset : [];
+    if (view && storedNumber(view.span, 0) >= SPAN_RANGE[0] && view.span <= SPAN_RANGE[1] && offset.length === 2 && offset.every(Number.isFinite)) {
+      lab.view = { span: view.span, offset: offset.map(value => Math.max(-20, Math.min(20, value))) };
+    }
+    const gauss = storedObject(data.gauss);
+    if (gauss && Array.isArray(gauss.center) && gauss.center.length === 3 && gauss.center.every(Number.isFinite) && Number.isFinite(gauss.radius)) {
+      lab.gauss = clampGauss({ center: gauss.center, radius: gauss.radius });
+    } else if (lab.chips.gauss) plane.placeGauss();
+    if (lab.chips.ampere && !lab.ampere && lab.field === 'magnetic') plane.placeAmpere();
+    if (data.scene !== 'playground' && Object.hasOwn(DEFAULT_SCENES, data.scene)) setScene(data.scene);
+    if (data.tab === '3d' || data.tab === 'plane') lab.tab = data.tab;
+    storedCourse = storedObject(data.course);
+    if (data.courseActive === true) {
+      courseActive = true;
+      $('#em-course-root').hidden = false;
+      $('#em-lab').hidden = true;
+    }
+  }
   scenesPanel.show(null);
+  restoreSession(session.initial);
   return {
     activate() {
       workspaceActive = true;
@@ -570,6 +608,7 @@ export function createEMController(root) {
       render();
     },
     deactivate() {
+      session.flush();
       workspaceActive = false;
       course?.deactivate();
       suspend();
@@ -586,6 +625,7 @@ export function createEMController(root) {
     },
     destroy() {
       if (destroyed) return;
+      session.dispose();
       destroyed = true;
       course?.destroy();
       suspend();

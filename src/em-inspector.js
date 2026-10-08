@@ -6,6 +6,10 @@ import { escapeHtml } from './safe-dom.js';
 import * as chargeModel from './em-source-edit.js';
 
 const show = value => String(Number(Number(value).toPrecision(6)));
+// Phone keyboard: iOS's decimal pad has no minus sign, so every signed field (q, λ, I, K, coordinates, angles) gets the text
+// keyboard; only a loop radius (always positive) keeps the decimal pad.
+const TEXT_KEYS = 'inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false"';
+export const keyboardFor = field => (field.id === 'radius' ? 'inputmode="decimal"' : TEXT_KEYS);
 
 const CHARGE_NOTE = '전하를 누르면 여기서 세기와 위치를 바꿀 수 있습니다.';
 
@@ -26,9 +30,9 @@ export function createInspector({ host, editor, request, getPlane, signal, annou
       <input aria-label="${escapeHtml(strength.label)} 슬라이더" data-em-field="strength-slider"
         max="1" min="-1" step="0.002" type="range" value="0">
       <span class="em-number"><input aria-label="${escapeHtml(strength.label)} (${strength.unit})"
-        data-em-field="strength" inputmode="decimal"><i>${strength.unit}</i></span></label>`;
+        data-em-field="strength" ${keyboardFor(strength)}><i>${strength.unit}</i></span></label>`;
     const others = rest.map(field => `<label>${escapeHtml(field.label)}
-      <span class="em-number"><input data-em-field="${field.id}" inputmode="decimal"><i>${field.unit}</i></span></label>`).join('');
+      <span class="em-number"><input data-em-field="${field.id}" ${keyboardFor(field)}><i>${field.unit}</i></span></label>`).join('');
     const extra = model.sourceActions?.(source, plane) ?? [];
     const extras = extra.map(item => `<button data-em-act="${escapeHtml(item.id)}" type="button">${escapeHtml(item.label)}</button>`).join('');
     const sense = model.senseText ? `<p class="em-note" data-em-sense></p>` : '';

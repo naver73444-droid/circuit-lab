@@ -4,7 +4,7 @@
  * (complex impedances, textbook 9.7), DOM in y-delta-tool-view.js. The two modes keep their own state; switching only changes which one is shown.
  */
 import { DIRECTIONS, SLIDER_STEPS, attempt, createYDeltaToolState, evaluateTool, resistanceToSlider, sliderToResistance, toggleDirection, withText, withValue } from "./y-delta-tool-model.js";
-import { COMPLEX_EXAMPLES, attemptComplex, createComplexState, evaluateComplexTool, impedanceDraft, parseImpedanceInput, toggleComplexDirection, withComplexText } from "./y-delta-complex-model.js";
+import { COMPLEX_EXAMPLES, attemptComplex, createComplexState, evaluateComplexTool, impedanceDraft, parseImpedanceInput, toggleComplexDirection, withComplexText, withComplexValue } from "./y-delta-complex-model.js";
 import { createYDeltaToolView } from "./y-delta-tool-view.js";
 import { resistanceCircuitText, resistanceText } from "./y-delta-model.js";
 
@@ -154,7 +154,29 @@ export function createYDeltaTool(host) {
   host.addEventListener("click", onClick);
   showAll();
 
+  /** Stored copy of both networks (tab memory); restore() rebuilds each through the same checks as typed values. */
+  function snapshot() { return { mode, resistor: state, complex: complexState }; }
+  function rebuild(saved, create, put, check) {
+    if (!saved || typeof saved !== "object" || !Object.hasOwn(DIRECTIONS, saved.direction)) return null;
+    try {
+      let next = create(saved.direction);
+      for (const key of DIRECTIONS[saved.direction].inputs) next = put(next, key, saved.values?.[key]);
+      return check(next).ok ? next : null;
+    } catch { return null; }
+  }
+  function restore(saved) {
+    if (!saved || typeof saved !== "object") return;
+    state = rebuild(saved.resistor, createYDeltaToolState, withValue, attempt) ?? state;
+    const complexValue = (current, key, value) => withComplexValue(current, key, { re: value?.re, im: value?.im });
+    complexState = rebuild(saved.complex, createComplexState, complexValue, attemptComplex) ?? complexState;
+    if (saved.mode === "complex" || saved.mode === "resistor") mode = saved.mode;
+    invalid.clear();
+    showAll();
+  }
+
   return {
+    snapshot,
+    restore,
     inspect() {
       if (destroyed) return { destroyed: true };
       if (isComplex()) {
