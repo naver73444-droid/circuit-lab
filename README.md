@@ -173,6 +173,8 @@ npm run test:all       # test + test:browser
 npm run test:summary   # npm test와 같은 범위, 요약 출력 + 원시 TAP를 .verification/ 에 보관 (engine|ui-model|all, --out <폴더>)
 ```
 
+`src`의 import를 바꾸면 `node scripts/gen-modulepreload.mjs`로 `index.html`의 modulepreload 목록과 `src/module-preload-map.js`(작업공간별 미리 받기 목록)를 다시 만드십시오(`npm run check`가 어긋나면 오류로 알림). 폰 로딩 시간은 `node scripts/measure-load.mjs [--target pages] [--revalidate]`(Slow/Fast 4G·CPU 4배·390×844)로 잽니다.
+
 브라우저 스모크는 `node server.mjs 0`과 임시 프로필의 헤드리스 Edge를 직접 띄웁니다(npm 패키지 없음, Node 22의 전역 `WebSocket` 사용). Edge가 없으면 건너뛰지 않고 실패하며 `EDGE_PATH`로 경로를 지정합니다. `CIRCUIT_LAB_ROOT`로 다른 체크아웃을 시험할 수 있습니다. 구조는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)의 "시험 구조"를 보십시오.
 
 ## 브라우저·환경

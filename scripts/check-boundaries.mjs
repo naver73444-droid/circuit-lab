@@ -1,4 +1,5 @@
 import { readFile, readdir, access } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root=fileURLToPath(new URL('..',import.meta.url));
@@ -27,5 +28,10 @@ function visit(file,chain=[]){
  active.add(file);for(const next of graph.get(file)??[])visit(next,[...chain,file]);active.delete(file);visited.add(file);
 }
 for(const file of files)visit(file);
+// The generated modulepreload lists (index.html head, src/module-preload-map.js) must follow the import graph.
+if(existsSync(resolve(root,'index.html'))&&existsSync(resolve(root,'src','app.js'))){
+ const {checkPreloads}=await import('./gen-modulepreload.mjs');
+ try{errors.push(...checkPreloads(root));}catch(error){errors.push(`modulepreload: ${error.message}`);}
+}
 console.log(JSON.stringify({checker:'lightweight static pattern review, not a parser or correctness proof',files:files.length,errors,warnings},null,2));
 if(errors.length)process.exitCode=1;

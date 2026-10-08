@@ -3,10 +3,13 @@
 // while loading, and offers a retry button if the import fails.
 // Browsers remember a failed module fetch for the life of the page, so a retry
 // calls load('?retry=N') and the loader must append that suffix to the URL.
-export function createLazyController({ host, load, create }) {
+// `modules` (paths relative to src/, see module-preload-map.js) are preloaded all
+// at once before the import, so the browser does not walk the import graph level by level.
+export function createLazyController({ host, load, create, modules = [] }) {
   let modulePromise = null, building = null, controller = null, statusNode = null, failures = 0;
   function loadModule() {
     if (!modulePromise) {
+      preloadModules(modules);
       const promise = Promise.resolve().then(() => load(failures ? '?retry=' + failures : ''));
       modulePromise = promise;
       promise.catch(() => { if (modulePromise === promise) { modulePromise = null; failures += 1; } });
@@ -58,10 +61,26 @@ export function createLazyController({ host, load, create }) {
   }
   return {
     get controller() { return controller; },
+    /** Network only: request the modules without running them. */
+    preload() { preloadModules(modules); },
     prefetch() { loadModule().catch(() => {}); },
     ensure,
     whenReady,
   };
+}
+
+const preloaded = new Set();
+/** Adds one <link rel="modulepreload"> per module (once each); browsers without modulepreload just ignore them. */
+export function preloadModules(files, doc = globalThis.document) {
+  if (!doc?.head) return;
+  for (const file of files) {
+    const href = new URL(file, import.meta.url).href;
+    if (preloaded.has(href)) continue;
+    preloaded.add(href);
+    const link = doc.createElement('link');
+    link.rel = 'modulepreload'; link.href = href;
+    doc.head.append(link);
+  }
 }
 
 /** Top-level workspaces; each non-circuit one owns a panel with id "<name>-workspace". */
