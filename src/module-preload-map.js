@@ -22,6 +22,7 @@ export const WORKSPACE_MODULES = {
     "em-source-edit.js",
     "em-plane-geometry.js",
     "em-format.js",
+    "em-perf-marks.js",
     "em-physics.js",
     "em-playground-physics.js",
     "em-plane-field.js",
