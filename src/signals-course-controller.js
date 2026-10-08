@@ -29,6 +29,7 @@ import { createSamplingView } from './signals-sampling-view.js';
 import { createOpsView } from './signals-ops-view.js';
 import { createLtiView } from './signals-lti-view.js';
 import { createFreqView } from './signals-freq-view.js';
+import { createWorkspaceSession, storedNumber, storedObject } from './workspace-session.js';
 
 // id -> [lesson (pure model), createView]; the order of SIGNALS_LESSONS is the tab order.
 export const SIGNALS_REGISTRY = {
@@ -81,6 +82,7 @@ export function createSignalsCourseController(host) {
   let playTimer = 0;
   let layoutWidth = 0;
   let resizer = null;
+  let session = null; // tab memory (workspace-session.js), created once the state helpers exist
   let lastPatch = null; // the latest change from a view, the keyboard or a slider (what a touch bubble names)
   const ui = {};
 
@@ -104,7 +106,57 @@ export function createSignalsCourseController(host) {
   for (const { id } of SIGNALS_LESSONS) states.set(id, makeState(id));
   const current = () => states.get(lessonId);
 
-  const cursorSpec = (state = current()) => lessonOf().cursor?.(state.family, state.params, state.extra) ?? null;
+  // ---------------------------------------------------------------- tab memory (reload, back / forward, remount)
+  // Every lesson keeps its example, slider values, observation time and typed convolution input. Stored values are checked
+  // against the lesson's own controls (range, integer, choice) before use; anything else falls back to the default.
+  function snapshot() {
+    const lessons = {};
+    for (const [id, state] of states) {
+      lessons[id] = { family: state.family, params: state.params, saved: state.saved, cursor: state.cursor, drafts: state.extra.drafts, playing: state.playing };
+    }
+    return { version: 1, lessonId, lastReference, lessons };
+  }
+  function storedParams(lesson, family, stored) {
+    const params = defaultsOf(lesson, family), raw = storedObject(stored);
+    if (raw) {
+      for (const spec of lesson.controls(family, params)) {
+        const value = raw[spec.key];
+        if (typeof value === 'number' && Number.isFinite(value)) params[spec.key] = clamp(spec.integer ? Math.round(value) : value, spec.min, spec.max);
+      }
+    }
+    const normalized = lesson.normalize?.(family, params);
+    if (normalized) Object.assign(params, normalized.params);
+    return params;
+  }
+  function restore(saved) {
+    const data = storedObject(saved);
+    if (!data || data.version !== 1) return;
+    const known = (lesson, family) => (lesson.families ? lesson.families.some((f) => f.value === family) : family === lesson.initialFamily);
+    for (const [id, state] of states) {
+      const stored = storedObject(storedObject(data.lessons)?.[id]);
+      if (!stored) continue;
+      const lesson = lessonOf(id);
+      if (known(lesson, stored.family)) state.family = stored.family;
+      state.params = storedParams(lesson, state.family, stored.params);
+      for (const [family, entry] of Object.entries(storedObject(stored.saved) ?? {})) {
+        if (family === state.family || !known(lesson, family) || !storedObject(entry)) continue;
+        state.saved[family] = { params: storedParams(lesson, family, entry.params), cursor: storedNumber(entry.cursor, 0) };
+      }
+      const drafts = storedObject(stored.drafts);
+      if (drafts) {
+        for (const key of Object.keys(state.extra.drafts)) if (typeof drafts[key] === 'string' && drafts[key].length <= 400) state.extra.drafts[key] = drafts[key];
+      }
+      state.cursor = storedNumber(stored.cursor, state.cursor);
+      if (stored.playing === false) state.playing = false;
+      // A typed convolution input is parsed (and its cursor checked) when the lesson is shown.
+      if (id === 'convolution' && isCustomFamily(state.family)) state.extra.lastCustomFamily = state.family; // keeps the stored cursor
+      else clampCursor(state, id);
+    }
+    if (typeof data.lessonId === 'string' && Object.hasOwn(REGISTRY, data.lessonId)) lessonId = data.lessonId;
+    if (SIGNALS_REFERENCE.lessons.includes(data.lastReference)) lastReference = data.lastReference;
+  }
+
+  const cursorSpec = (state = current(), id = lessonId) => lessonOf(id).cursor?.(state.family, state.params, state.extra) ?? null;
 
   // The one-line hint under the plot, plus the note about a value that had to be moved (a = 0).
   const readText = (state) => {
@@ -112,8 +164,8 @@ export function createSignalsCourseController(host) {
     return state.note ? `${text} (${state.note})` : text;
   };
 
-  function clampCursor(state) {
-    const spec = cursorSpec(state);
+  function clampCursor(state, id = lessonId) {
+    const spec = cursorSpec(state, id);
     if (!spec) return;
     const value = clamp(state.cursor, spec.min, spec.max);
     state.cursor = spec.discrete ? Math.round(value) : value;
@@ -334,6 +386,7 @@ export function createSignalsCourseController(host) {
     ui.formulaSource = null;
     ui.status.textContent = state.extra.error;
     autoPlay();
+    session?.save();
   }
 
   function setFamily(family) {
@@ -442,12 +495,13 @@ export function createSignalsCourseController(host) {
   // `user`: the learner took over (drag, key, slider, end reached), so remember that playback is over.
   function stopPlayback(user = false) {
     if (playTimer) { win.cancelAnimationFrame(playTimer); playTimer = 0; }
-    if (user) current().playing = false;
+    if (user) { current().playing = false; session?.save(); }
     if (ui.scrub) syncControls();
   }
 
   // ---------------------------------------------------------------- painting
   function schedule() {
+    session?.save();
     if (frame || !active || destroyed) return;
     frame = win.requestAnimationFrame(() => { frame = 0; paint(); });
   }
@@ -559,6 +613,9 @@ export function createSignalsCourseController(host) {
     else if (ui.scrub) syncControls();
   };
 
+  session = createWorkspaceSession('signals', snapshot, { win });
+  restore(session.initial);
+
   host.addEventListener('input', onInput);
   host.addEventListener('change', onChange);
   host.addEventListener('click', onClick);
@@ -591,6 +648,7 @@ export function createSignalsCourseController(host) {
     deactivate() {
       if (destroyed) return;
       stopPlayback();
+      session?.flush();
       if (frame) { win.cancelAnimationFrame(frame); frame = 0; }
       active = false;
       host.hidden = true;
@@ -625,6 +683,7 @@ export function createSignalsCourseController(host) {
     destroy() {
       if (destroyed) return;
       stopPlayback();
+      session?.dispose();
       if (frame) win.cancelAnimationFrame(frame);
       resizer?.disconnect();
       active = false;

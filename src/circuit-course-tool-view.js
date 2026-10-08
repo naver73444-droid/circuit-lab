@@ -1,7 +1,7 @@
 // DOM for one live course tool. The form is built once and only its values/visibility are updated afterwards, so focus and a dragged slider
 // survive every input; the result area is redrawn each time. Colors come from the course stylesheet tokens.
 import { escapeHtml as esc } from './safe-dom.js';
-import { phasorGraphs, waves, triangle, table, verificationTable, examplesFold, examplesSummary, FOLD_OPEN_MAX } from './circuit-course-view.js';
+import { phasorGraphs, waves, triangle, table, verificationTable, examplesFold, examplesSummary, FOLD_OPEN_MAX, keyboardOf, revealOnPhone } from './circuit-course-view.js';
 import { fmt } from './circuit-course-format.js';
 import { toolFigure } from './circuit-course-figures.js';
 import { isShown, labelOf, unitOf, sliderOf, toDisplay, draftText } from './circuit-course-tool-common.js';
@@ -24,7 +24,7 @@ function lineChart(curve) {
 }
 
 export function createCourseToolView(host, def) {
-  const doc = host.ownerDocument;
+  const doc = host.ownerDocument, num = def.numberFormat ?? fmt; // a tool may print its own numbers in one style (three-phase: fmt4)
   let lastPreset = null;
   const inputOf = key => host.querySelector('[data-cc-key="' + key + '"]');
   const presets = def.presets.map((p, i) => '<button type="button" data-cc-preset="' + i + '" aria-pressed="false">' + esc(p.label) + '</button>').join('');
@@ -35,7 +35,9 @@ export function createCourseToolView(host, def) {
       + '" data-cc-choice="' + esc(k) + '" aria-pressed="false">' + esc(t) + '</button>').join('') + '</div>';
     const control = f.kind === 'select'
       ? '<select data-cc-key="' + f.key + '">' + f.choices.map(([k, t]) => '<option value="' + esc(k) + '">' + esc(t) + '</option>').join('') + '</select>'
-      : '<input type="text" data-cc-key="' + f.key + '" autocomplete="off" spellcheck="false"' + (f.kind === 'number' ? ' inputmode="decimal"' : '') + '>' + (f.kind === 'number' && f.slider ? '<input type="range" data-cc-slider="'
+      : '<input type="text" data-cc-key="' + f.key + '" autocomplete="off" '
+        + (f.kind === 'number' ? keyboardOf(f) : 'autocapitalize="off" autocorrect="off" spellcheck="false"') + '>'
+        + (f.kind === 'number' && f.slider ? '<input type="range" data-cc-slider="'
         + f.key + '" step="any">' : '');
     return '<label data-cc-field="' + f.key + '" class="cc-field-row"><span data-cc-label></span>' + control + '<small class="cc-tool-error" role="status" data-cc-error="' + f.key + '"></small></label>';
   };
@@ -87,6 +89,8 @@ export function createCourseToolView(host, def) {
       if (hadFocus) fold.querySelector('summary').focus({ preventScroll: true });
     },
     status(message, kind = 'valid') { statusEl.textContent = message; statusEl.dataset.kind = kind; },
+    /** Phone only: the result area comes up after a choice or a finished entry (it starts with the reading line and the key numbers). */
+    revealResults() { revealOnPhone(statusEl.parentElement); },
     /** result: valid tool result; verification: rows for an active lecture preset or null; basis: 'peak' | 'rms'. */
     showResult(result, verification, basis) {
       let html = result.read ? '<p class="cc-tool-read" data-cc-read>' + esc(result.read) + '</p>' : '';
@@ -97,8 +101,8 @@ export function createCourseToolView(host, def) {
       html += (result.tables ?? []).map(t => '<section class="circuit-course-card"><h3>' + esc(t.title) + '</h3>' + table(t.headers, t.rows) + '</section>').join('');
       html += '<div class="circuit-course-graphs">' + (result.phasors?.length ? phasorGraphs(result.phasors, basis) : '') + (result.triangles ?? []).map(t => triangle(t.p, t.title)).join('')
         + (result.curves ?? []).map(lineChart).join('') + (result.traces?.length ? waves(result.traces, result.frequencyHz) : '') + '</div>';
-      if (result.checks?.length) html += '<section class="circuit-course-card"><h3>독립 검산</h3>' + table(['검사', '값', '기대', '허용', '결과'], result.checks.map(c => [c.label, fmt(c.actual) + ' ' + (c.unit ?? ''), fmt(c.expected) + ' '
-        + (c.unit ?? ''), fmt(c.tol ?? c.tolerance), c.pass ? 'PASS' : 'FAIL'])) + '</section>';
+      if (result.checks?.length) html += '<section class="circuit-course-card"><h3>독립 검산</h3>' + table(['검사', '값', '기대', '허용', '결과'], result.checks.map(c => [c.label, num(c.actual) + ' ' + (c.unit ?? ''), num(c.expected) + ' '
+        + (c.unit ?? ''), num(c.tol ?? c.tolerance), c.pass ? 'PASS' : 'FAIL'])) + '</section>';
       if (result.notes?.length) html += '<section class="circuit-course-card"><ul>' + result.notes.map(n => '<li>' + esc(n) + '</li>').join('') + '</ul></section>';
       results.innerHTML = html;
     },

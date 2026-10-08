@@ -10,6 +10,7 @@ import { createCourseTool } from './circuit-course-tool-controller.js';
 import { parseCourseNumber } from './circuit-course-format.js';
 import { basisFactor } from './circuit-course-complex.js';
 import { dataFields, isShown, labelOf } from './circuit-course-tool-common.js';
+import { createWorkspaceSession } from './workspace-session.js';
 export { parseCourseNumber };
 const draftNumber = n => String(Number(n.toPrecision(10)));
 // Numeric experiments follow the course-wide amplitude toggle; the free problem keeps its own given-voltage basis.
@@ -76,7 +77,7 @@ export function createCircuitCourseController(host) {
     render();
   }
   /** live: a typed value is applied at once; if it cannot be used the last valid result stays on screen and the reason goes to the status line. */
-  function apply(live = false) {
+  function apply(live = false, { quiet = false } = {}) {
     const state = current(), params = displayParams();
     state.validationFailed = false;
     const fail = reason => {
@@ -102,7 +103,8 @@ export function createCircuitCourseController(host) {
       if (state.result.solution) state.result.solution.inputOrigin = state.origin;
       state.params = params; state.dirty = false;
       view.showResult(state.result, id, state.params, verification());
-      if (!live && state.result.status === 'valid' && state.result.symbolic) view.revealAnswer();
+      // 문제 풀기 (numeric or symbolic) and a symbolic example bring their answer card into view.
+      if (!live && !quiet && state.result.status === 'valid' && (state.result.symbolic || id === 'problem')) view.revealAnswer();
     } catch (e) {
       state.validationFailed = true;
       if (live) { view.status(e.message, 'error'); return; }
@@ -126,6 +128,8 @@ export function createCircuitCourseController(host) {
     if (live) {
       if (target.tagName === 'SELECT') render();
       apply(true);
+      // A choice is a finished change: on a phone the result that just changed comes into view (typing never scrolls).
+      if (target.tagName === 'SELECT' && !current().validationFailed) view.revealResults();
     } else { state.dirty = true; view.dirty(); if (target.tagName === 'SELECT') render(); }
   }
   /** Chapter or item chosen: show that item's screen (a chapter opens on the item last used in it) and remember the choice. */
@@ -193,14 +197,55 @@ export function createCircuitCourseController(host) {
     const labels = dataFields(def).filter(f => isShown(f, after.values) && differs(before.snapshot.values?.[f.key], after.values[f.key])).map(f => labelOf(f, after.values));
     view.statusNote(exampleChangeNote({ basisBefore: before.snapshot.basis, basisAfter: after.basis, labels }), toolId);
   };
-  function onSubmit(event) { if (event.target.matches('[data-circuit-course-form]')) { event.preventDefault(); apply(id !== 'problem'); } }
+  function onSubmit(event) {
+    if (!event.target.matches('[data-circuit-course-form]')) return;
+    event.preventDefault();
+    apply(id !== 'problem');
+    if (id !== 'problem' && !current().validationFailed) view.revealResults(); // Enter / 이동 on the phone keyboard ends the entry
+  }
   const onChange = event => { if (event.target.tagName === 'SELECT') onInput(event); };
   host.addEventListener('input', onInput); host.addEventListener('change', onChange); host.addEventListener('click', onClick); host.addEventListener('submit', onSubmit);
   host.addEventListener('click', onPresetCapture, true); host.addEventListener('click', onPresetNote);
+  // ---- tab memory (reload, back / forward, remount): the amplitude basis, every experiment's typed inputs (and whether the
+  // free problem was solved), each course tool's values and the Y–Δ networks. The chapter and item are kept by NAV_STORAGE_KEY.
+  function snapshot() {
+    const experiments = {};
+    for (const [key, state] of states) experiments[key] = { drafts: state.drafts, solved: key === 'problem' && !state.dirty && !state.validationFailed && state.result.status === 'valid', lastExample: state.lastExample };
+    return { version: 1, basis, experiments, tools: Object.fromEntries([...courseTools].map(([key, t]) => [key, t.snapshot()])), yDelta: yDelta.snapshot() };
+  }
+  function restore(saved) {
+    if (!saved || typeof saved !== 'object' || saved.version !== 1) return;
+    if (saved.basis === 'peak' || saved.basis === 'rms') switchBasis(saved.basis);
+    const shown = id;
+    for (const experiment of EXPERIMENTS) {
+      const stored = saved.experiments?.[experiment.id];
+      if (!stored || typeof stored !== 'object' || !stored.drafts || typeof stored.drafts !== 'object') continue;
+      const state = newState(experiment);
+      for (const p of experiment.parameters) {
+        const text = stored.drafts[p.key];
+        if (typeof text !== 'string' || text.length > 4000) continue;
+        if (p.choices && !p.choices.some(([key]) => key === text)) continue;
+        state.drafts[p.key] = text;
+      }
+      if (followsBasis(experiment)) state.drafts.basis = basis;
+      if (typeof stored.lastExample === 'string') state.lastExample = stored.lastExample.slice(0, 200);
+      states.set(experiment.id, state);
+      id = experiment.id;
+      if (experiment.id === 'problem') { state.dirty = true; if (stored.solved === true) apply(false, { quiet: true }); }
+      else apply(true);
+      if (state.validationFailed) states.set(experiment.id, newState(experiment)); // stored text the course no longer accepts
+    }
+    id = shown;
+    for (const [key, t] of courseTools) t.restore(saved.tools?.[key]);
+    yDelta.restore(saved.yDelta);
+  }
+  const session = createWorkspaceSession('circuit-course', snapshot);
+  restore(session.initial);
+  for (const type of ['input', 'change', 'click']) host.addEventListener(type, session.save);
   host.hidden = true; host.inert = true; render();
   return {
     activate() { if (destroyed) return; active = true; host.hidden = false; host.inert = false; },
-    deactivate() { if (destroyed) return; active = false; host.hidden = true; host.inert = true; },
+    deactivate() { if (destroyed) return; session.flush(); active = false; host.hidden = true; host.inert = true; },
     inspect() {
       if (destroyed) return { active: false, destroyed: true, experimentId: id };
       const state = current();
@@ -211,9 +256,11 @@ export function createCircuitCourseController(host) {
         result: JSON.parse(JSON.stringify(state.result, (key, value) => typeof value === 'function' ? undefined : value)) };
     },
     destroy() {
-      if (destroyed) return; this.deactivate(); yDelta.destroy(); for (const t of courseTools.values()) t.destroy();
+      if (destroyed) return; this.deactivate(); session.dispose(); yDelta.destroy(); for (const t of courseTools.values()) t.destroy();
       host.removeEventListener('input', onInput); host.removeEventListener('change', onChange); host.removeEventListener('click', onClick); host.removeEventListener('submit', onSubmit);
-      host.removeEventListener('click', onPresetCapture, true); host.removeEventListener('click', onPresetNote); view.clear(); destroyed = true; states.clear();
+      host.removeEventListener('click', onPresetCapture, true); host.removeEventListener('click', onPresetNote);
+      for (const type of ['input', 'change', 'click']) host.removeEventListener(type, session.save);
+      view.clear(); destroyed = true; states.clear();
     }
   };
 }

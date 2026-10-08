@@ -28,9 +28,16 @@ const MODEL_KIND = {
 };
 // Views that read the probe as a sweep coordinate (profile graph, parametric curve): no vector picker, no arrow grid.
 const isSweepView = def => ['profile', 'xy-curve'].includes(def.view?.kind);
+// The input a sweep graph's coordinate stands for (view.link: { param, when }) while its condition holds; null otherwise.
+const linkOf = (def, params) => {
+  const link = def.view?.link;
+  return link && (!link.when || params[link.when.key] === link.when.equals) ? link.param : null;
+};
 const option = (value, text) => Object.assign(document.createElement('option'), { value, textContent: text });
 
-export function createEMCourseController(root, { onClose } = {}) {
+// initial: what the tab memory stored (snapshot() of an earlier build), restored after checking; onChange: something the learner
+// changed (the workspace then saves the tab memory a little later).
+export function createEMCourseController(root, { onClose, initial = null, onChange = null } = {}) {
   const events = new AbortController(), listen = { signal: events.signal }, records = new Map();
   const $ = selector => root.querySelector(selector);
   let active = false, selectedId = rememberedId() || getExperiment(FIRST_EXPERIMENT)?.id || EXPERIMENTS[0]?.id;
@@ -63,7 +70,8 @@ export function createEMCourseController(root, { onClose } = {}) {
 
   function record() {
     if (!records.has(selectedId)) {
-      const def = definition(), params = defaults(def), point = [...(def.probeDefault || [1, 0, 0])];
+      const def = definition(), params = defaults(def), link = linkOf(def, params);
+      const point = link ? [0, 0, params[link]] : [...(def.probeDefault || [1, 0, 0])];
       const coaxLike = def.id.startsWith('coax-current') || def.view?.kind === 'azimuthal';
       records.set(selectedId, {
         params, point, result: evaluate(def, params, point), profiles: profiles(def, params),
@@ -76,13 +84,20 @@ export function createEMCourseController(root, { onClose } = {}) {
     return records.get(selectedId);
   }
 
-  const view = createCourseView($('#em-course-canvas'), point => {
-    if (!active) return;
-    const data = record();
+  const view = createCourseView($('#em-course-canvas'), point => { if (active) probeTo(point); }, getPalette);
+  /** A new observation point. Where the graph's coordinate is an input (view.link), the point moves that input instead. */
+  function probeTo(point) {
+    const def = definition(), data = record(), link = linkOf(def, data.params);
+    if (link) {
+      const parameter = def.parameters.find(p => p.key === link);
+      const value = Math.min(parameter.max ?? Infinity, Math.max(parameter.min ?? -Infinity, point[2]));
+      if (setParam(link, value)) syncParameterStrip($('#em-course-parameters'), def, data.params);
+      return;
+    }
     data.point = point;
-    data.result = evaluate(definition(), data.params, point);
+    data.result = evaluate(def, data.params, point);
     renderNumeric();
-  }, getPalette);
+  }
   const radialView = createRadialProfileView($('#em-course-radial-canvas'), radius => {
     if (!active) return;
     const data = record(), old = Math.hypot(data.point[0], data.point[1]), angle = old ? Math.atan2(data.point[1], data.point[0]) : 0;
@@ -220,6 +235,7 @@ export function createEMCourseController(root, { onClose } = {}) {
     view.update({
       definition: def, params: data.params, point: data.point, result: data.result, vectorKey: data.vectorKey, viewScale: data.viewScale,
       profiles: data.profiles, display: data.display, timeText: clockText,
+      answer: def.view?.answerPoint?.(data.params, data.result) ?? null, probeLabel: def.view?.probeLabel?.(data.params) ?? '',
       instantProfile: clock && def.view?.kind === 'profile' ? domain => instantProfiles(def, data.params, domain) : null,
     });
     $('#em-course-canvas-box').classList.toggle('symbolic-only', flags.symbolicOnly);
@@ -323,9 +339,7 @@ export function createEMCourseController(root, { onClose } = {}) {
     }
     input.removeAttribute('aria-invalid');
     error.hidden = true;
-    data.point = [0, 0, value];
-    data.result = evaluate(def, data.params, data.point);
-    renderNumeric();
+    probeTo([0, 0, value]);
   }, listen);
   // leaving the field with an unusable value restores the current coordinate
   $('#em-course-sweep-input').addEventListener('change', () => { $('#em-course-sweep-input').blur(); renderNumeric(); }, listen);
@@ -363,11 +377,13 @@ export function createEMCourseController(root, { onClose } = {}) {
     // The clock's range depends on the other parameters (frequency, omega, rail geometry): bring the stored time into the
     // new range first, so the result, the curve and the cursor are all computed for the time that is displayed.
     const def = definition(), data = record(), params = normalizeTime(def, { ...data.params, [key]: value });
-    const result = evaluate(def, params, data.point);
+    // A linked graph coordinate follows its input (the magnetic circuit's 목표 B is the graph's B).
+    const link = linkOf(def, params), point = link ? [0, 0, params[link]] : data.point;
+    const result = evaluate(def, params, point);
     if (result.status === 'invalid') { data.error = result.reason || '모델 입력이 올바르지 않습니다.'; renderNumeric(); return false; }
     let nextProfiles;
     try { nextProfiles = profiles(def, params); } catch (error) { data.error = error.message; renderNumeric(); return false; }
-    Object.assign(data, { params, result, profiles: nextProfiles, error: '' });
+    Object.assign(data, { params, result, profiles: nextProfiles, error: '', point });
     if (!data.viewScaleManual) data.viewScale = fittedViewScale(def, params);
     if (!light) {
       const sync = inductionAfterNumeric(def.id, params, data.symbolicOptions, data.illustrationMemory);
@@ -635,8 +651,59 @@ export function createEMCourseController(root, { onClose } = {}) {
   traceWatcher.observe($('#em-course-trace'));
   events.signal.addEventListener('abort', () => traceWatcher.disconnect(), { once: true });
 
+  // ---- tab memory -----------------------------------------------------------------------------------------------------
+  // Per experiment: its inputs, the observation point, the structural (symbolic) choices and which answer is shown. A stored
+  // record is used only when the experiment still evaluates with it; a value out of a parameter's range or an unknown choice
+  // drops that record (the experiment opens on its defaults).
+  const KEPT = ['params', 'point', 'symbolicOptions', 'answerMode', 'requestedKey', 'requestedLabel', 'vectorKey', 'display', 'viewScale', 'viewScaleManual'];
+  function snapshot() {
+    const stored = {};
+    for (const [id, data] of records) stored[id] = Object.fromEntries(KEPT.map(key => [key, data[key]]));
+    return { version: 1, selectedId, records: stored };
+  }
+  function restoreRecord(id, raw) {
+    const def = getExperiment(id);
+    if (!def || !raw || typeof raw !== 'object') return;
+    const params = defaults(def);
+    for (const parameter of def.parameters || []) {
+      const value = raw.params?.[parameter.key];
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+      if ((parameter.min !== undefined && value < parameter.min) || (parameter.max !== undefined && value > parameter.max)) return;
+      params[parameter.key] = value;
+    }
+    const point = Array.isArray(raw.point) && raw.point.length === 3 && raw.point.every(Number.isFinite) ? [...raw.point] : null;
+    const saved = selectedId;
+    selectedId = id; // record() builds the defaults of the current experiment
+    try {
+      const data = record(), next = normalizeTime(def, params), result = evaluate(def, next, point ?? data.point);
+      if (result.status === 'invalid') { records.delete(id); return; }
+      Object.assign(data, { params: next, result, profiles: profiles(def, next), viewScale: fittedViewScale(def, next) });
+      if (point) data.point = point;
+      for (const control of def.symbolicControls || []) {
+        const value = raw.symbolicOptions?.[control.key];
+        if (control.choices?.some(choice => choice.value === value)) data.symbolicOptions[control.key] = value;
+      }
+      if (['numeric', 'symbolic'].includes(raw.answerMode)) data.answerMode = raw.answerMode;
+      if (typeof raw.requestedKey === 'string' && raw.requestedKey.length < 80) { data.requestedKey = raw.requestedKey; data.requestedLabel = String(raw.requestedLabel ?? '').slice(0, 120); }
+      if (typeof raw.vectorKey === 'string' && raw.vectorKey.length < 40) data.vectorKey = raw.vectorKey;
+      const display = raw.display && typeof raw.display === 'object' ? raw.display : {};
+      for (const key of ['vectors', 'lines', 'normalized']) if (typeof display[key] === 'boolean') data.display[key] = display[key];
+      if (Number.isFinite(display.density) && display.density >= 2 && display.density <= 16) data.display.density = display.density;
+      if (raw.viewScaleManual === true && Number.isFinite(raw.viewScale) && raw.viewScale >= 0.01 && raw.viewScale <= 100) {
+        data.viewScale = raw.viewScale; data.viewScaleManual = true;
+      }
+    } catch { records.delete(id); } finally { selectedId = saved; }
+  }
+  if (initial && initial.version === 1 && initial.records && typeof initial.records === 'object') {
+    for (const id of Object.keys(initial.records)) restoreRecord(id, initial.records[id]);
+    if (typeof initial.selectedId === 'string' && getExperiment(initial.selectedId)) selectedId = initial.selectedId;
+  }
+  // Any input, choice, button or drag on the course is a change worth remembering (the save itself is debounced).
+  if (onChange) for (const type of ['input', 'change', 'click', 'pointerup', 'keyup']) root.addEventListener(type, () => onChange(), listen);
+
   buildDefinition();
   return {
+    snapshot,
     activate() { active = true; view.activate(); radialView.activate(); renderNumeric(); },
     deactivate() { active = false; stopPlayback(); view.deactivate(); radialView.deactivate(); },
     inspect() {

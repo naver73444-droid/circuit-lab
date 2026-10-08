@@ -11,6 +11,12 @@ export function createCalculusPanel({ root, editor, isSandbox, getPalette, signa
   const $ = selector => root.querySelector(selector), pg = editor.state;
   const canvas = $('#em-c-visual'), result = $('#em-c-result'), details = root.querySelector('#em-advanced');
   let timer = null, lastKey = null, display = null, message = '';
+  // Phone keyboard: α and the loop normal are signed (text keyboard with a minus sign); R and h stay on the decimal pad.
+  for (const id of ['em-c-alpha', 'em-c-normal-x', 'em-c-normal-y', 'em-c-normal-z']) {
+    const input = $('#' + id);
+    if (!input) continue;
+    Object.entries({ inputmode: 'text', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' }).forEach(([name, value]) => input.setAttribute(name, value));
+  }
 
   function settings() {
     return {

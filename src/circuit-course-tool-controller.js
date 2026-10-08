@@ -59,6 +59,8 @@ export function createCourseTool(host, def, env) {
     else update(key, target.value);
     if (f.kind === 'select' && !Object.keys(errors).length) makeDrafts();
     render();
+    // A choice is a finished change: on a phone the result that just changed comes into view (typing and sliders never scroll).
+    if (f.kind === 'select' && !Object.keys(errors).length) view.revealResults();
   }
   /** A segment button (a select drawn as buttons): same path as picking that option in a select; the current option does nothing. */
   function choose(key, value) {
@@ -66,6 +68,7 @@ export function createCourseTool(host, def, env) {
     update(key, value);
     if (!Object.keys(errors).length) makeDrafts();
     render();
+    if (!Object.keys(errors).length) view.revealResults();
   }
   function onClick(event) {
     const segment = event.target.closest?.('[data-cc-segment]');
@@ -82,7 +85,8 @@ export function createCourseTool(host, def, env) {
     result = evaluateTool(def, values, basis); active = index;
     render(); view.foldPresets();
   }
-  const onSubmit = event => event.preventDefault();
+  // Enter / 이동 on the phone keyboard ends an entry: the result comes into view.
+  const onSubmit = event => { event.preventDefault(); if (!Object.keys(errors).length) view.revealResults(); };
   // Browsers fire input for a select too; some automation only fires change. Handling both is harmless (same value twice).
   const onChange = event => { if (event.target.tagName === 'SELECT') onInput(event); };
   host.addEventListener('input', onInput); host.addEventListener('change', onChange); host.addEventListener('click', onClick); host.addEventListener('submit', onSubmit);
@@ -92,6 +96,23 @@ export function createCourseTool(host, def, env) {
     /** The course-wide amplitude toggle changed: numbers are rewritten in the new basis (values themselves are RMS and stay). */
     setBasis(next) { if (destroyed || next === basis) return; basis = next; errors = {}; evalErrors = {}; makeDrafts(); result = evaluateTool(def, values, basis); render(); },
     applyPreset,
+    /** Tab memory: the values in use (internal RMS) and the example last applied. */
+    snapshot() { return { values: { ...values }, active }; },
+    /** Stored values go through the same field checks and evaluation as typed ones; anything unusable keeps the defaults. */
+    restore(saved) {
+      if (destroyed || !saved || typeof saved !== 'object' || !saved.values || typeof saved.values !== 'object') return;
+      const candidate = initialValues(def);
+      for (const f of fields.values()) {
+        const value = saved.values[f.key];
+        if (value === undefined) continue;
+        try { candidate[f.key] = validateField(f, value); } catch { return; }
+      }
+      const next = evaluateTool(def, candidate, basis);
+      if (next.status !== 'valid') return;
+      values = candidate; result = next; errors = {}; evalErrors = {};
+      active = Number.isInteger(saved.active) && def.presets[saved.active] ? saved.active : -1;
+      makeDrafts(); render();
+    },
     inspect() {
       if (destroyed) return { destroyed: true };
       const numbers = {};

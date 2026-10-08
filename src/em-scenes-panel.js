@@ -20,6 +20,9 @@ const directionName = vector => {
 // Field descriptors per model: id, label (with unit), how to read it from the model, and how to turn the raw
 // inputs back into model fields.
 const number = (id, label, read) => ({ id, label, type: 'number', read });
+// Phone keyboard: signed fields (q, x/y/z, I, phase) need the minus sign the iOS decimal pad lacks; positive-only ones keep it.
+const POSITIVE = new Set(['separation', 'radius', 'amplitude', 'frequency']);
+const TEXT_KEYS = 'inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false"';
 const direction = (id, label, read) => ({ id, label, type: 'direction', read });
 const SCENES = {
   charge: {
@@ -101,7 +104,7 @@ export function createScenesPanel({ host, store, onApplied, onError, signal }) {
       const value = field.read(model);
       const control = field.type === 'direction'
         ? `<select data-em-model="${field.id}">${directionOptions(value)}</select>`
-        : `<input data-em-model="${field.id}" inputmode="decimal" value="${escapeHtml(String(Number(value.toPrecision(6))))}">`;
+        : `<input data-em-model="${field.id}" ${POSITIVE.has(field.id) ? 'inputmode="decimal"' : TEXT_KEYS} value="${escapeHtml(String(Number(value.toPrecision(6))))}">`;
       return `<label>${escapeHtml(field.label)}${control}</label>`;
     }).join('');
   }

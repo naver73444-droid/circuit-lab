@@ -31,10 +31,13 @@ export function createSurface(doc, parent, { label, keys = null, className = '' 
   }, parent);
   svgEl(doc, 'title', {}, svg, label);
   if (keys) svgEl(doc, 'desc', { id }, svg, keys);
-  let grab = null;
+  let grab = null, free = null;
   const surface = {
     svg, width: 0, height: 0,
     setGrab(fn) { grab = fn; },
+    // fn(event): told about a touch that starts outside the grab regions (the page may still scroll with it). A view uses it to
+    // tell a tap or a sideways drag (which the page does not scroll: touch-action pan-y) from a vertical scroll.
+    setFreeTouch(fn) { free = fn; },
     resize(width, height) {
       surface.width = width;
       surface.height = height;
@@ -54,7 +57,7 @@ export function createSurface(doc, parent, { label, keys = null, className = '' 
   // A finger that lands outside the draggable regions is scrolling the page: the views never see that pointerdown, so a
   // scroll that happens to start on the plot does not move a value. Registered before any view listener, so it runs first.
   svg.addEventListener('pointerdown', (event) => {
-    if (event.pointerType === 'touch' && grab && !grab(surface.pointer(event))) event.stopImmediatePropagation();
+    if (event.pointerType === 'touch' && grab && !grab(surface.pointer(event))) { free?.(event); event.stopImmediatePropagation(); }
   });
   return surface;
 }
@@ -89,11 +92,13 @@ export function createPane(doc, svg, { frame = true } = {}) {
   // above=true puts the title in the margin over the frame instead of inside it.
   // A title wider than the pane is cut with an ellipsis (measured in the browser, re-measured only when text or width change).
   let fitted = '';
-  pane.setTitle = (text, align = 'start', above = false) => {
-    const key = `${text}|${r1(pane.box.w)}`;
+  // room: the width the title may use (default the pane's own; a centred pane above free margin may pass more, align 'middle').
+  pane.setTitle = (text, align = 'start', above = false, room = null) => {
+    const span = room ?? pane.box.w;
+    const key = `${text}|${r1(span)}`;
     if (key !== fitted) {
       title.textContent = text;
-      const max = pane.box.w - 12;
+      const max = span - 12;
       const measure = () => title.getComputedTextLength?.() ?? 0;
       const full = measure();
       if (full > max && max > 40) {
@@ -108,7 +113,7 @@ export function createPane(doc, svg, { frame = true } = {}) {
       }
       fitted = full > 0 || !title.getComputedTextLength ? key : '';
     }
-    title.setAttribute('x', r1(align === 'end' ? pane.box.x + pane.box.w - 6 : pane.box.x + 6));
+    title.setAttribute('x', r1(align === 'end' ? pane.box.x + pane.box.w - 6 : align === 'middle' ? pane.box.x + pane.box.w / 2 : pane.box.x + 6));
     title.setAttribute('y', r1(above ? pane.box.y - 7 : pane.box.y + 14));
     title.setAttribute('text-anchor', align);
   };

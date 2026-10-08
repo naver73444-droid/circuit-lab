@@ -3,7 +3,7 @@ import { appendCourseMath } from './course-math-view.js';
 import { magnitude, waveSample } from './circuit-course-model.js';
 import { EXPERIMENTS, REFERENCES } from './circuit-course-registry.js';
 import { escapeHtml as esc } from './safe-dom.js';
-import { formatNumber, fmt, zText, polarText, capacitanceText } from './circuit-course-format.js';
+import { formatNumber, fmt, fmt4, zText, polarText, polarText4, capacitanceText } from './circuit-course-format.js';
 import { basisFactor } from './circuit-course-complex.js';
 import { TOOLS } from './circuit-course-tools.js';
 import { CHAPTERS } from './circuit-course-nav.js';
@@ -31,12 +31,15 @@ const style = [
 '.circuit-course button[aria-pressed=true],.circuit-course button[aria-current=true]{background:var(--selection);border-color:var(--accent)}',
 '.circuit-course button:focus-visible,.circuit-course input:focus-visible,.circuit-course select:focus-visible{outline:3px solid var(--accent);outline-offset:3px}',
 '.circuit-course h2,.circuit-course h3,.circuit-course p{margin:0 0 10px}.circuit-course h2{font-size:24px}.circuit-course h3{font-size:18px}',
-'.circuit-course .circuit-course-primary-answers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.circuit-course .circuit-course-primary-answers>h3,.circuit-course .circuit-course-primary-answers>p{grid-column:1/-1}.circuit-course .circuit-course-primary-answers .course-symbolic-answer{margin:0}@media(max-width:760px){.circuit-course .circuit-course-primary-answers{grid-template-columns:minmax(0,1fr)}.circuit-course[data-circuit-course-presentation=symbolic] .circuit-course-layout>main{order:-1}}',
+'.circuit-course .circuit-course-primary-answers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.circuit-course .circuit-course-primary-answers>h3,.circuit-course .circuit-course-primary-answers>p{grid-column:1/-1}.circuit-course .circuit-course-primary-answers .course-symbolic-answer{margin:0}@media(max-width:760px){.circuit-course .circuit-course-primary-answers{grid-template-columns:minmax(0,1fr)}}',
+// A result brought into view on a phone (revealOnPhone) stops a little under the top edge.
+'.circuit-course [data-circuit-course-results],.circuit-course [data-cc-results],.circuit-course [data-circuit-course-answers]{scroll-margin-top:8px}',
 // Two-level navigation: a chapter row, then the tab row of the current chapter (the other chapters' rows stay hidden in the DOM). On a phone each row is one line of equal columns.
   '.circuit-course .circuit-course-nav{display:grid;gap:8px;margin:16px 0}.circuit-course .circuit-course-chapters,.circuit-course .circuit-course-tabs{display:flex;flex-wrap:wrap;gap:8px}',
   '.circuit-course .circuit-course-chapters button{font-weight:bold}.circuit-course .circuit-course-tab-short{display:none}',
   // Lecture examples are folded (open by default only for a few); the summary tells the count and the last one applied.
-  '.circuit-course .circuit-course-examples{border:1px solid var(--line);border-radius:8px;padding:0 10px;margin-top:12px}.circuit-course .circuit-course-examples>summary{min-height:44px;padding:9px 0;overflow-wrap:anywhere}',
+  '.circuit-course .circuit-course-examples{border:1px solid var(--line);border-radius:8px;padding:0 10px;margin:12px 0}',
+  '.circuit-course .circuit-course-examples>summary{min-height:44px;padding:9px 0;overflow-wrap:anywhere;font-size:16px;font-weight:bold}',
   '.circuit-course .circuit-course-examples .circuit-course-actions,.circuit-course .circuit-course-examples .cc-tool-presets{margin:0 0 10px}',
 '.circuit-course .circuit-course-layout{display:grid;grid-template-columns:minmax(250px,320px) minmax(0,1fr);gap:18px}',
 '.circuit-course .circuit-course-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px;min-width:0}',
@@ -164,6 +167,28 @@ function worksheet(solution) {
       + '</p><p>결과: ' + esc(s.result) + '</p></li>').join('') + '</ol></details><details><summary>풀이 가정 · 범위</summary><ul>' + solution.notes.map(s => '<li>' + esc(s) + '</li>').join('') + '</ul></details></section>';
 }
 
+/**
+ * Phone keyboard of a typed number. iOS's decimal pad has no minus sign, no letters and no °, so a field that takes a sign
+ * (min < 0: imaginary parts, angles, Q), a unit or a prefix (quantity fields: kΩ, mV, deg/rad, kvar) gets the text keyboard;
+ * a plain positive number (f, |V|, R, L, C, PF) keeps the decimal pad.
+ */
+export const keyboardOf = p => (p.quantity || p.min < 0 ? TEXT_KEYBOARD : 'inputmode="decimal"');
+export const TEXT_KEYBOARD = 'inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false"';
+
+/**
+ * Brings a result element into view on a phone (≤ 760 px) when its top is not already in the upper part of the screen, smoothly
+ * unless the reader asked for reduced motion. always: also on a wide screen (the 문제 풀기 answer card); instant: jump, no animation
+ * (a button press that opens its answer, so the next press does not land on a page that is still moving).
+ */
+export function revealOnPhone(element, { always = false, instant = false } = {}) {
+  const win = element?.ownerDocument?.defaultView;
+  if (!win || typeof element.scrollIntoView !== 'function' || (!always && !win.matchMedia?.('(max-width: 760px)').matches)) return false;
+  const top = element.getBoundingClientRect().top;
+  if (top >= 0 && top <= win.innerHeight * 0.5) return false;
+  element.scrollIntoView({ block: 'start', behavior: instant || win.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  return true;
+}
+
 export function problemSymbolHint(params,key) {
   if(params.solutionMode!=='numeric')return '';
   const renamed=(field,standard,format=value=>value)=>{const value=params[field];return typeof value==='string'&&value&&value!==standard?format(value):'';};
@@ -213,7 +238,7 @@ function navHtml() {
 
 export function createCircuitCourseView(host) {
   host.classList.add('circuit-course');
-  host.innerHTML = '<style>' + style + '</style><header><h2>교류 · 3상 회로 실험실</h2><p>균형 정현파 정상상태에서 페이저, 복소 임피던스, 무효전력과 역률을 직접 바꿔 보세요.</p><div class="circuit-course-basis" role="group" aria-label="진폭 표시 기준"><span>진폭 표시 기준 (내부 계산은 RMS)</span><button type="button" data-circuit-course-basis="peak" aria-pressed="false">peak (최댓값)</button><button type="button" data-circuit-course-basis="rms" aria-pressed="true">RMS (실효값)</button></div></header>' + navHtml() + '<div class="circuit-course-layout"><aside><section class="circuit-course-card"><h3 data-circuit-course-title></h3><p data-circuit-course-description></p><form class="circuit-course-form" data-circuit-course-form novalidate></form><div class="circuit-course-actions"><button type="button" data-circuit-course-apply class="circuit-course-apply">입력 적용 · 계산</button><button type="button" data-circuit-course-reset>이 실험 초기화</button></div><div data-circuit-course-examples></div><p class="circuit-course-note" data-circuit-course-live-note>숫자를 바꾼 뒤 적용하세요. 잘못된 입력은 계산하지 않습니다.</p></section><section class="circuit-course-card" data-circuit-course-theory></section></aside><main><div class="circuit-course-status" role="status" aria-live="polite" data-circuit-course-status></div><div data-circuit-course-results></div></main></div>' + TOOL_TABS.map(t => '<section class="circuit-course-tool" data-circuit-course-tool-panel="' + esc(t.id) + '" hidden></section>').join('');
+  host.innerHTML = '<style>' + style + '</style><header><h2>교류 · 3상 회로 실험실</h2><p>균형 정현파 정상상태에서 페이저, 복소 임피던스, 무효전력과 역률을 직접 바꿔 보세요.</p><div class="circuit-course-basis" role="group" aria-label="진폭 표시 기준"><span>진폭 표시 기준 (내부 계산은 RMS)</span><button type="button" data-circuit-course-basis="peak" aria-pressed="false">peak (최댓값)</button><button type="button" data-circuit-course-basis="rms" aria-pressed="true">RMS (실효값)</button></div></header>' + navHtml() + '<div class="circuit-course-layout"><aside><section class="circuit-course-card"><h3 data-circuit-course-title></h3><p data-circuit-course-description></p><div data-circuit-course-examples></div><form class="circuit-course-form" data-circuit-course-form novalidate></form><div class="circuit-course-actions"><button type="button" data-circuit-course-apply class="circuit-course-apply">입력 적용 · 계산</button><button type="button" data-circuit-course-reset>이 실험 초기화</button></div><p class="circuit-course-note" data-circuit-course-live-note>숫자를 바꾼 뒤 적용하세요. 잘못된 입력은 계산하지 않습니다.</p></section><section class="circuit-course-card" data-circuit-course-theory></section></aside><main><div class="circuit-course-status" role="status" aria-live="polite" data-circuit-course-status></div><div data-circuit-course-results></div></main></div>' + TOOL_TABS.map(t => '<section class="circuit-course-tool" data-circuit-course-tool-panel="' + esc(t.id) + '" hidden></section>').join('');
   let settingsOpen = false;
   const foldOpen = new Map(); // experiment id → the user's open/closed choice for its example list (absent: the default rule)
   const onToggle = event => {
@@ -253,7 +278,7 @@ export function createCircuitCourseView(host) {
         + '"><span class="circuit-course-note">단일 기호 이름 · 예: R1, V_s, ω</span>' : p.text ? '<textarea maxlength="' + p.maxLength + '" data-circuit-course-key="' + esc(p.key) + '" placeholder="문제의 글을 적어도 수치 조건은 아래에 직접 입력해야 합니다.">'
           + esc(value) + '</textarea>' : p.choices
         ? '<select data-circuit-course-key="' + esc(p.key) + '">' + p.choices.map(([k, text]) => '<option value="' + esc(k) + '"' + (value === k ? ' selected' : '') + '>' + esc(text) + '</option>').join('') + '</select>'
-        : '<input type="text" inputmode="decimal" autocomplete="off" data-circuit-course-key="' + esc(p.key) + '" value="' + esc(value) + '" aria-label="' + esc(label) + '" placeholder="' + (p.quantity ? '예: 숫자 또는 숫자+단위' : '')
+        : '<input type="text" ' + keyboardOf(p) + ' autocomplete="off" data-circuit-course-key="' + esc(p.key) + '" value="' + esc(value) + '" aria-label="' + esc(label) + '" placeholder="' + (p.quantity ? '예: 숫자 또는 숫자+단위' : '')
           + '"><span class="circuit-course-note">' + (p.quantity ? '단위 생략: ' + esc(p.unit.replace('uF','µF').replace('ohm','Ω')) + ' · ' : '') + esc(fmt(p.min / p.displayScale * kScale)) + ' ~ '
             + esc(fmt(p.max / p.displayScale * kScale)) + '</span>') + '</label>';
     };
@@ -340,10 +365,11 @@ export function createCircuitCourseView(host) {
       html += table(['소자', 'Z (Ω)', '분기 V (V' + tag + ')', '분기 I (A' + tag + ')', 'P (W)', 'Q (var)'], result.branches.map(b => [b.kind, zText(b.Z), pt(b.V), pt(b.I), fmt(b.power.pWatts), fmt(b.power.qVars)]));
     }
     if (id === 'three-phase') {
-      html += symbolMap + circuit(result) + '<p>|V상|=' + esc(fmt(result.loadVoltageRms * k)) + ' V' + esc(tag) + ' · |I상|=' + esc(fmt(result.loadCurrentRms * k)) + ' A' + esc(tag) + ' · |I선|=' + esc(fmt(result.lineCurrentRms * k))
+      const pt4 = z => polarText4(scaleZ(z)); // one style: four significant digits, thousands separators
+      html += symbolMap + circuit(result) + '<p>|V상|=' + esc(fmt4(result.loadVoltageRms * k)) + ' V' + esc(tag) + ' · |I상|=' + esc(fmt4(result.loadCurrentRms * k)) + ' A' + esc(tag) + ' · |I선|=' + esc(fmt4(result.lineCurrentRms * k))
         + ' A' + esc(tag) + '</p>';
       html += table(['부하 상', '부하 V상 (V' + tag + ')', '부하 I상 (A' + tag + ')', '선 전류 (A' + tag + ')'], result.loadVoltages.map((v, i) => [result.connection === 'Y' ? ['VAN · IA', 'VBN · IB', 'VCN · IC'][i] : ['VAB · IAB', 'VBC · IBC',
-        'VCA · ICA'][i], pt(v), pt(result.loadCurrents[i]), ['Ia', 'Ib', 'Ic'][i] + '=' + pt(result.lineCurrents[i])]));
+        'VCA · ICA'][i], pt4(v), pt4(result.loadCurrents[i]), ['Ia', 'Ib', 'Ic'][i] + '=' + pt4(result.lineCurrents[i])]));
       html += '<p class="circuit-course-note">Δ Iab: a→b, Ibc: b→c, Ica: c→a. Ia=Iab−Ica. 같은 Z를 Y→Δ로 바꾸면 부하 전압과 총 전력이 달라집니다.</p>';
     }
     if (id === 'correction') {
@@ -365,5 +391,8 @@ export function createCircuitCourseView(host) {
   }
   function showBasis(basis) { host.querySelectorAll('[data-circuit-course-basis]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.circuitCourseBasis === basis))); }
   return { showForm, showResult, showTool, showChapter, foldExamples, toolPanel, status, statusNote, dirty, projection, showBasis,
-    revealInput(key) { const input=host.querySelector('[data-circuit-course-key="'+key+'"]');const folded=input?.closest?.('[data-circuit-course-display-settings]');if(folded){folded.open=true;settingsOpen=true;}input?.scrollIntoView?.({block:'center'});input?.focus?.({preventScroll:true}); }, revealAnswer() { q('answers')?.scrollIntoView?.({block:'start'}); }, clear() { host.removeEventListener('toggle', onToggle, true);host.replaceChildren(); host.classList.remove('circuit-course'); } };
+    revealInput(key) { const input=host.querySelector('[data-circuit-course-key="'+key+'"]');const folded=input?.closest?.('[data-circuit-course-display-settings]');if(folded){folded.open=true;settingsOpen=true;}input?.scrollIntoView?.({block:'center'});input?.focus?.({preventScroll:true}); }, revealAnswer() { const answers=q('answers'); if(answers) revealOnPhone(answers,{always:true,instant:true}); },
+    /** Phone only: after a choice or a finished entry, bring the changed results up if they are below the first part of the screen. */
+    revealResults() { const results=q('results'); if(results&&!results.hidden) revealOnPhone(results.parentElement); },
+    clear() { host.removeEventListener('toggle', onToggle, true);host.replaceChildren(); host.classList.remove('circuit-course'); } };
 }

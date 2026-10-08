@@ -132,6 +132,25 @@ export function hitAmpere(view, plane, ampere, x, y, edgePx = 11) {
   return distance < ring ? 'inside' : null;
 }
 
+/**
+ * Canvas positions of the Ampere loop's two handles, both on the path and away from its centre (where the wire the loop was put
+ * around sits): move ✥ at the upper-left, size ● at the upper-right (the rectangle's top corners).
+ */
+export function ampereHandles(view, plane, ampere) {
+  const axes = AXES[plane], [cx, cy] = view.toCanvas(ampere.center[axes[0]], ampere.center[axes[1]]);
+  const [dx, dy] = ampere.shape === 'rect' ? [ampere.halfWidth * view.scale, ampere.halfHeight * view.scale]
+    : [ampere.radius * view.scale * Math.SQRT1_2, ampere.radius * view.scale * Math.SQRT1_2];
+  return { move: [cx - dx, cy - dy], size: [cx + dx, cy - dy] };
+}
+
+/** The handle under a pointer within radiusPx: { part: 'move' | 'size', distance }, the nearer one when both are in reach; else null. */
+export function hitAmpereHandle(view, plane, ampere, x, y, radiusPx = 12) {
+  const { move, size } = ampereHandles(view, plane, ampere);
+  const toMove = Math.hypot(x - move[0], y - move[1]), toSize = Math.hypot(x - size[0], y - size[1]);
+  if (Math.min(toMove, toSize) > radiusPx) return null;
+  return toMove <= toSize ? { part: 'move', distance: toMove } : { part: 'size', distance: toSize };
+}
+
 /** A round-number scale bar of about `targetPx` pixels: { meters, pixels, label }. */
 export function scaleBar(view, targetPx = 96) {
   const raw = targetPx / view.scale, power = 10 ** Math.floor(Math.log10(raw));
