@@ -6,8 +6,8 @@
 //   loop     circular current loop:   { current (A), position (centre), radius, normal }   closed-form elliptic integrals
 //   sheet    infinite current sheet:  { K (A/m), position, normal, direction }    B = (mu0 K / 2) k x a_N  (a_N points at the field point)
 // A positive current / K flows along +direction (wire, sheet) or counter-clockwise about +normal (loop) or start -> end (segment).
-import { EXCLUSION_METERS, MU0, add3, cross3, dot3, loopCurrentField, norm3, scale3, sub3 } from './em-physics.js';
-import { PointChargeInputError, validatePoint } from './em-playground-physics.js';
+import { EXCLUSION_METERS, MU0, add3, createLoopSampler, cross3, dot3, loopCurrentField, norm3, scale3, sub3 } from './em-physics.js';
+import { PointChargeInputError, inModelRange, validatePoint } from './em-playground-physics.js';
 
 export const MAX_CURRENT_SOURCES = 16;
 export const MAX_CURRENT = 100; // A
@@ -133,6 +133,76 @@ export function createCurrentEvaluator(sources, { skipId = null } = {}) {
   };
 }
 
+// ---- allocation-free sampling for pictures (same arithmetic, same order as the functions above: bit-identical) ----------
+
+function wirePart({ position: [px, py, pz], direction: [ux, uy, uz], current }) {
+  return (x, y, z, out) => {
+    const d0 = x - px, d1 = y - py, d2 = z - pz, axial = d0 * ux + d1 * uy + d2 * uz;
+    const r0 = d0 - ux * axial, r1 = d1 - uy * axial, r2 = d2 - uz * axial, rho = Math.hypot(r0, r1, r2);
+    if (rho <= EXCLUSION_METERS) return false;
+    const k = MU0 * current / (2 * Math.PI * rho * rho);
+    out[0] = (uy * r2 - uz * r1) * k; out[1] = (uz * r0 - ux * r2) * k; out[2] = (ux * r1 - uy * r0) * k;
+    return true;
+  };
+}
+
+function segmentPart({ start, end, current }) {
+  const axis = sub3(end, start), length = norm3(axis), [u0, u1, u2] = scale3(axis, 1 / length), [sx, sy, sz] = start;
+  return (x, y, z, out) => {
+    const d0 = x - sx, d1 = y - sy, d2 = z - sz, t = d0 * u0 + d1 * u1 + d2 * u2;
+    const r0 = d0 - u0 * t, r1 = d1 - u1 * t, r2 = d2 - u2 * t, rho = Math.hypot(r0, r1, r2);
+    if (Math.hypot(rho, Math.max(0, -t, t - length)) <= EXCLUSION_METERS) return false;
+    if (!(rho > 1e-12)) { out[0] = 0; out[1] = 0; out[2] = 0; return true; }
+    const magnitude = MU0 * current / (4 * Math.PI * rho)
+      * ((length - t) / Math.hypot(rho, length - t) + t / Math.hypot(rho, t));
+    const k = magnitude / rho;
+    out[0] = (u1 * r2 - u2 * r1) * k; out[1] = (u2 * r0 - u0 * r2) * k; out[2] = (u0 * r1 - u1 * r0) * k;
+    return true;
+  };
+}
+
+function sheetPart({ position: [px, py, pz], normal: [n0, n1, n2], direction: [k0, k1, k2], K }) {
+  const size = MU0 * K / 2;
+  return (x, y, z, out) => {
+    const h = (x - px) * n0 + (y - py) * n1 + (z - pz) * n2;
+    if (Math.abs(h) <= EXCLUSION_METERS) return false;
+    const sign = Math.sign(h), a0 = n0 * sign, a1 = n1 * sign, a2 = n2 * sign;
+    out[0] = (k1 * a2 - k2 * a1) * size; out[1] = (k2 * a0 - k0 * a2) * size; out[2] = (k0 * a1 - k1 * a0) * size;
+    return true;
+  };
+}
+
+function loopPart(source) {
+  try {
+    return createLoopSampler({ current: source.current, center: source.position, radius: source.radius, normal: source.normal });
+  } catch { return () => false; } // a loop the model refuses has no field anywhere (loopField throws for every point)
+}
+
+const PART_OF = { wire: wirePart, segment: segmentPart, sheet: sheetPart, loop: loopPart };
+
+/**
+ * One entry per active source in source order: { key, at(x, y, z, out) } where `at` writes that source's B (out[0..2], tesla)
+ * and returns false inside its exclusion zone. `key` changes whenever the source does. `sources` must be validated.
+ */
+export function currentParts(sources) {
+  return sources.filter(isActive).map(source => ({ key: JSON.stringify(source), at: PART_OF[source.type](source) }));
+}
+
+/** (x, y, z, out) => boolean: total B into out[0..2] and |B| into out[3]; same numbers as createCurrentPlaneField's evaluate. */
+export function createCurrentSampler(sources, parts = currentParts(sources)) {
+  const ats = parts.map(part => part.at), one = new Float64Array(4);
+  return (x, y, z, out) => {
+    if (!inModelRange(x, y, z)) return false;
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (const at of ats) {
+      if (!at(x, y, z, one)) return false;
+      b0 += one[0]; b1 += one[1]; b2 += one[2];
+    }
+    out[0] = b0; out[1] = b1; out[2] = b2; out[3] = Math.hypot(b0, b1, b2);
+    return true;
+  };
+}
+
 /** Total B (T) at a point, or null where a model exclusion zone makes it undefined. */
 export function currentFieldAt(sources, point, options) {
   const result = createCurrentEvaluator(sources, options)(point);
@@ -169,9 +239,12 @@ export function screenSense(source, viewNormalVector) {
 
 /** Plane-view field object (same shape as the sandbox / scene fields of em-plane-field): kind 'current', vector = B in tesla. */
 export function createCurrentPlaneField(sources) {
-  const evaluator = createCurrentEvaluator(sources);
+  const evaluator = createCurrentEvaluator(sources), parts = currentParts(sources);
   return {
     kind: 'current', electric: false, unit: 1, scalarName: '|B|', magnetic: true,
+    // Fast paths for the picture (em-plane-field): the same numbers without per-point arrays, and one part per source so the
+    // colour grid can keep the contributions of the sources that did not move. The scalar of the sum is |sum of B|.
+    sample: createCurrentSampler(sources, parts), parts, inRange: inModelRange, scalarOfSum: 'magnitude',
     evaluate(point) {
       let result;
       try { result = evaluator(validatePoint(point, '측정점')); } catch { return { status: 'excluded', vector: null, scalar: NaN }; }

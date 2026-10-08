@@ -6,9 +6,11 @@ import { traceStreamline } from './em-fieldlines.js';
 import { isActive, planeBasis, sheetLineDirection, wireHit } from './em-current-field.js';
 import { dot3 } from './em-physics.js';
 
+// Draft (while a source is dragged): fewer rings, shorter traces and longer steps (r / perTurn along a ring of radius r, about
+// 2 pi perTurn points per ring, and never under `stride` m). The final picture keeps the fine stepping.
 const QUALITY = {
-  draft: { rings: 7, maxSteps: 150 },
-  final: { rings: 11, maxSteps: 420 },
+  draft: { rings: 5, maxSteps: 120, perTurn: 6, stride: 0.02 },
+  final: { rings: 11, maxSteps: 420, perTurn: 14, stride: 0.01 },
 };
 const FIRST_RING = 0.1;
 const RING_RATIO = 1.5;
@@ -71,7 +73,14 @@ export function currentSeeds(sources, plane, fixed, reach, rings) {
   return seeds.filter(seed => seed.r <= reach);
 }
 
-const nearAny = (point, lines, tolerance) => lines.some(line => line.some(p => Math.hypot(p[0] - point[0], p[1] - point[1]) < tolerance));
+// Is `point` closer than `tolerance` to a point of a kept line? A line whose bounding box is further away than that along an
+// axis cannot be (|du| <= hypot(du, dv)), so it is skipped without looking at its points; the answer is the same.
+const nearAny = (point, lines, tolerance) => lines.some(({ points, box: [uMin, uMax, vMin, vMax] }) => {
+  if (uMin - point[0] > tolerance || point[0] - uMax > tolerance || vMin - point[1] > tolerance || point[1] - vMax > tolerance) return false;
+  return points.some(p => Math.hypot(p[0] - point[0], p[1] - point[1]) < tolerance);
+});
+const boxOf = points => points.reduce(([uMin, uMax, vMin, vMax], [u, v]) => [Math.min(uMin, u), Math.max(uMax, u), Math.min(vMin, v), Math.max(vMax, v)],
+  [Infinity, -Infinity, Infinity, -Infinity]);
 
 /**
  * Lines of the field `vectorOf(point3) => vector | null` through the seeds of `sources`.
@@ -94,7 +103,7 @@ export function traceCurrentLines(sources, vectorOf, { plane, fixed, bounds, qua
     const [u, v] = seed.point;
     if (u < box.min[0] || u > box.max[0] || v < box.min[1] || v > box.max[1]) continue;
     if (nearAny(seed.point, kept, SEED_TOLERANCE * seed.r)) continue;
-    const step = { min: 0.004, max: Math.min(0.2, Math.max(0.01, seed.r / 14)), fraction: 0.3 };
+    const step = { min: 0.004, max: Math.min(0.2, Math.max(options.stride, seed.r / options.perTurn)), fraction: 0.3 };
     const trace = direction => traceStreamline({ field: field2, seed: seed.point, direction, bounds: box, stops, maxSteps: options.maxSteps, step });
     const forward = trace(1);
     let points = forward.points, end = forward.end;
@@ -105,7 +114,7 @@ export function traceCurrentLines(sources, vectorOf, { plane, fixed, bounds, qua
       if (back.end.reason === 'closed') end = back.end;
     }
     if (points.length < 4) continue;
-    kept.push(points);
+    kept.push({ points, box: boxOf(points) });
     lines.push({ points: points.map(toPlane), end, sourceId: 'current', sign: 1 });
   }
   return lines;
