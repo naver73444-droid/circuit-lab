@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const root = await realpath(fileURLToPath(new URL(".", import.meta.url)));
 const port = Number(process.argv[2] ?? 4173);
 if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Port must be an integer from 0 to 65535.");
-const mime = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8" };
+const mime = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png" };
 const headers = {
   "Cache-Control": "no-store",
   "X-Content-Type-Options": "nosniff",
@@ -28,7 +28,7 @@ const server = http.createServer(async (request, response) => {
     const pathname = decodeURIComponent(new URL(request.url, "http://127.0.0.1").pathname);
     const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
     // Serve only runtime assets; no .git, private config, reports, test fixtures, or exports.
-    if (!["index.html", "styles.css"].includes(relative) && !/^src\/[A-Za-z0-9_-]+\.js$/.test(relative)) return reply(404, "찾을 수 없습니다.");
+    if (!["index.html", "styles.css", "manifest.webmanifest"].includes(relative) && !/^src\/[A-Za-z0-9_-]+\.js$/.test(relative) && !/^icons\/[A-Za-z0-9_-]+\.(?:svg|png)$/.test(relative)) return reply(404, "찾을 수 없습니다.");
     const path = await realpath(resolve(root, relative));
     if (!path.startsWith(root + sep)) return reply(404, "찾을 수 없습니다.");
     const data = await readFile(path);
