@@ -2,7 +2,7 @@ import { coupledInductorParameters, parseValue } from "./circuit-engine.js";
 import { classifyNumericInput } from "./circuit-edit.js";
 import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
-import { controlReferenceModel, controlledSourceInputModel, passiveSliderModel } from "./ui-model.js";
+import { controlReferenceModel, controlledSourceInputModel } from "./ui-model.js";
 import { bindSweep, sweepMarkup } from "./sweep-panel.js";
 import { describeSelection, selectedItems, setSingleSelection } from "./selection-model.js";
 import { yDeltaCommandState } from "./y-delta-circuit.js";
@@ -158,19 +158,12 @@ export function createInspector(deps) {
     return true;
   }
 
-  function sliderRangeFor(type, value) {
-    return passiveSliderModel(type, value);
-  }
-
-  function field(label, key, value, help = "", options = null, slider = null, active = false) {
+  // Quick adjustment (◀ ▶ standard values, log slider, prefix chips) lives in the value sheet/card (value-sheet.js), outside this re-rendered markup.
+  function field(label, key, value, help = "", options = null, _unused = null, active = false) {
     const control = options
       ? `<select data-prop="${key}" aria-label="${escapeHtml(label)}">${options.map(([optionValue, optionLabel]) => `<option value="${optionValue}"${value === optionValue ? " selected" : ""}>${optionLabel}</option>`).join("")}</select>`
       : `<input data-prop="${key}" aria-label="${escapeHtml(label)}" value="${escapeHtml(value)}" autocomplete="off" />`;
-    const combined = slider
-      ? `<div class="field-slider"><input type="range" data-prop-slider="${key}" min="${slider.min}" max="${slider.max}" step="0.05" value="${slider.value}" aria-label="${label} 빠른 조절"/>${control}</div>`
-      : control;
-    const outside = slider?.outside ? `<span class="field-help range-note">슬라이더 범위 밖의 값입니다.</span>` : "";
-    return `<div class="field${active ? " active-field" : ""}"><label>${label}</label>${combined}${help ? `<span class="field-help">${help}</span>` : ""}${outside}</div>`;
+    return `<div class="field${active ? " active-field" : ""}"><label>${label}</label>${control}${help ? `<span class="field-help">${help}</span>` : ""}</div>`;
   }
 
   /** Fields of a COUPLED_L part: L1, L2, the chosen one of k / M (the other is shown derived), dot placement, initial currents. */
@@ -295,7 +288,7 @@ export function createInspector(deps) {
     if (connection && connection.status !== "referenced") html += `<div class="connection-detail status-${connection.status}"><strong>${connection.badge} ${connection.label}</strong><span>${connection.short}</span></div>`;
     if (["R", "C", "L"].includes(component.type)) {
       const labels = { R: "저항 (Ω)", C: "커패시턴스 (F)", L: "인덕턴스 (H)" };
-      html += field(labels[component.type], "value", p.value, "", null, sliderRangeFor(component.type, p.value));
+      html += field(labels[component.type], "value", p.value);
     }
     if (["C", "L"].includes(component.type)) {
       const icHelp = component.type === "C"
@@ -348,20 +341,6 @@ export function createInspector(deps) {
     elements["inspector-content"].innerHTML = html;
     applyInputDrafts(elements["inspector-content"], "prop", component);
     bindSweep(elements["inspector-content"], { component, state, run: runSweep, clear: clearSweep });
-    elements["inspector-content"].querySelectorAll("[data-prop-slider]").forEach((slider) => {
-      slider.addEventListener("input", () => {
-        const input = elements["inspector-content"].querySelector(`[data-prop="${slider.dataset.propSlider}"]`);
-        input.value = engineering(10 ** Number(slider.value)).replace(" ", "");
-        input.classList.add("input-editing");
-        inputDrafts.set("prop", component.id, slider.dataset.propSlider, input.value, component.props[slider.dataset.propSlider]);
-        setStatus("입력 중", "running");
-        markInputDirty();
-      });
-      slider.addEventListener("change", () => {
-        const input = elements["inspector-content"].querySelector(`[data-prop="${slider.dataset.propSlider}"]`);
-        input.dispatchEvent(new Event("change"));
-      });
-    });
     elements["inspector-content"].querySelectorAll("[data-prop]").forEach((control) => {
       const commitControl = () => {
         if (!isCircuitUiActive()) return;

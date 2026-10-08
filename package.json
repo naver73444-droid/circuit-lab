@@ -8,7 +8,8 @@
     "start": "node server.mjs",
     "test": "node --test \"tests/engine/**/*.test.mjs\" \"tests/ui-model/**/*.test.mjs\" \"tests/tooling/**/*.test.mjs\"",
     "test:browser": "node --test tests/browser/smoke.test.mjs",
-    "test:all": "npm test && npm run test:browser",
+    "test:mobile": "node --test tests/browser/mobile-editor.test.mjs",
+    "test:all": "npm test && npm run test:browser && npm run test:mobile",
     "test:summary": "node scripts/test-budget.mjs",
     "check": "node scripts/check-boundaries.mjs"
   }
