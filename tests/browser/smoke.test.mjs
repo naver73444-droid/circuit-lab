@@ -3750,6 +3750,50 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal(await pressed(), "peak", "a peak-basis example flips the toggle");
   });
 
+  test("circuit course '내 문제': Ch.12–13 types (coupled coils, ideal transformer, three-phase with a line) switch to the numeric method and reproduce the textbook answers", async () => {
+    await openCircuitCourse();
+    await ccGo("experiment", "problem");
+    const answers = async () => (await ccState()).result.solution.answers;
+    const pick = async (kind) => { await select(`${CC_HOST} [data-circuit-course-key="problemKind"]`, kind); await until(`${L}.getCircuitCourseState().drafts.problemKind === "${kind}"`, `type ${kind}`); };
+    const near = (actual, expected, tol, what) => assert.ok(Math.abs(actual - expected) <= tol, `${what}: ${actual} vs ${expected}`);
+    // The default method is symbolic; choosing a Ch.12–13 type has only a numeric solution, so the method flips with it (no "unsupported" page).
+    assert.equal((await ccState()).drafts.solutionMode, "symbolic");
+    await pick("coupled");
+    assert.equal((await ccState()).drafts.solutionMode, "numeric", "the method switches to numeric with the chapter type");
+    await ccExample("교재 예제 13.1");
+    await click(`${CC_HOST} [data-circuit-course-apply]`);
+    let state = await ccState();
+    assert.equal(state.result.status, "valid");
+    const [i1, i2] = await answers();
+    near(i1.value, 13.01, 0.01, "|I1|"); near(i2.value, 2.91, 0.01, "|I2|");
+    near(Math.atan2(i1.complex.im, i1.complex.re) * 180 / Math.PI, -49.39, 0.02, "∠I1"); near(Math.atan2(i2.complex.im, i2.complex.re) * 180 / Math.PI, 14.04, 0.02, "∠I2");
+    const text = await ev(`document.querySelector("${CC_HOST} [data-circuit-course-results]").textContent`);
+    assert.ok(text.includes("메시 방정식 두 줄") && text.includes("−jωM") && text.includes("반사 임피던스"), "the worked steps show the mesh equations with the dot convention");
+    // A bad entry is refused with the reason and nothing is invented: M above sqrt(L1 L2).
+    await typeInto(`${CC_HOST} [data-circuit-course-key="mInd"]`, "7 H");
+    await click(`${CC_HOST} [data-circuit-course-apply]`);
+    state = await ccState();
+    assert.equal(state.result.status, "invalid", "M beyond sqrt(L1 L2) is rejected");
+
+    await pick("transformer");
+    await ccExample("교재 예제 13.8");
+    await click(`${CC_HOST} [data-circuit-course-apply]`);
+    state = await ccState();
+    assert.equal(state.result.status, "valid");
+    const [t1, t2] = await answers();
+    near(t1.value, 11.09, 0.01, "|I1|"); near(Math.atan2(t1.complex.im, t1.complex.re) * 180 / Math.PI, 33.69, 0.02, "∠I1");
+    near(t2.value, 5.545, 0.01, "|I2|"); near(Math.atan2(t2.complex.im, t2.complex.re) * 180 / Math.PI, -146.31, 0.02, "∠I2");
+
+    await pick("threeline");
+    await ccExample("교재 예제 12.3");
+    await click(`${CC_HOST} [data-circuit-course-apply]`);
+    state = await ccState();
+    assert.equal(state.result.status, "valid");
+    const [ab] = await answers();
+    near(ab.value, 19.36, 0.02, "|I_AB|"); near(Math.atan2(ab.complex.im, ab.complex.re) * 180 / Math.PI, 13.43, 0.02, "∠I_AB");
+    assert.ok(state.result.checks.every((check) => check.pass), "every check passes");
+  });
+
   test("circuit course: experiments 1–5 apply as you type (no apply button), a bad entry keeps the last result and says why, '내 문제' keeps its button", async () => {
     await openCircuitCourse();
     const applyShown = () => ev(`(() => { const button = document.querySelector("${CC_HOST} [data-circuit-course-apply]"); return !button.hidden && button.offsetParent !== null; })()`);
@@ -3881,8 +3925,14 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.equal((await ccState()).lastExample.startsWith("예제 12.3"), true);
     assert.equal(await ccOverflow(), true, "no horizontal overflow after the example");
     await ccGo("experiment", "problem");
-    assert.equal(await ev(`document.querySelector('${fold}').open`), true, "a short list (2 examples) is open from the start");
-    assert.match(await foldText(), /^예제 2개$/);
+    assert.equal(await ev(`document.querySelector('${fold}').open`), false, "the 내 문제 list (5 examples: 2 invented + 3 textbook Ch.12–13) is long, so it starts folded");
+    assert.match(await foldText(), /^예제 5개$/);
+    // A short list (2 examples) is open from the start: the max-power tool.
+    const toolFold = `${ccPanel("max-power")} [data-circuit-course-examples-fold]`;
+    await ccGo("tool", "max-power");
+    assert.equal(await ev(`document.querySelector('${toolFold}').open`), true, "a short list (2 examples) is open from the start");
+    assert.match(await ev(`document.querySelector('${toolFold} > summary').textContent`), /^예제 2개$/);
+    await ccGo("tool", "loads"); // restore the Ch.11 tab the later "remembered" assertions expect
     // A real tap on the summary opens a folded list.
     await ccGo("experiment", "impedance");
     await click(`${fold} > summary`);

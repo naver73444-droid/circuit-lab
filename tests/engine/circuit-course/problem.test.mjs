@@ -74,5 +74,7 @@ test('unsupported topology/goal, zero frequency and invalid component values nev
   }
 });
 test('advertised problems are explicitly fictional and have correct fixed independent outcomes',()=>{
-  for(const e of PROBLEM_EXPERIMENT.examples){assert.ok(e.label.includes('가상'));const r=valid({...initialParameters(PROBLEM_EXPERIMENT),...e.values});assert.ok(r.solution.statement.includes('가상'));assert.ok(r.checks.every(c=>c.pass));}
+  for(const e of PROBLEM_EXPERIMENT.examples){const r=valid({...initialParameters(PROBLEM_EXPERIMENT),...e.values});assert.ok(r.checks.every(c=>c.pass));
+    // the invented check problems say so; the Ch.12–13 examples are textbook numbers and say that (their answers are fixed in problem-chapters.test.mjs)
+    if(e.label.includes('가상')){assert.ok(r.solution.statement.includes('가상'));}else{assert.ok(e.label.includes('교재 예제')&&r.solution.statement.includes('교재 예제'));}}
 });

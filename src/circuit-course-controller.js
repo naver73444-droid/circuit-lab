@@ -1,6 +1,7 @@
 import { preserveCourseFocus } from './course-focus.js';
 import { EXPERIMENTS, getExperiment, initialParameters, evaluateExperiment, verifyExample, draftsOf, exampleDrafts, convertCoordinateDrafts, exampleChangeNote, changedParameterLabels } from './circuit-course-registry.js';
 import { parseProblemQuantity } from './circuit-course-problem.js';
+import { CHAPTER_KINDS } from './circuit-course-problem-chapters.js';
 import { createCircuitCourseView, FOLD_OPEN_MAX } from './circuit-course-view.js';
 import { NAV_STORAGE_KEY, currentItem, initialNav, parseNav, selectChapter, selectItem, serializeNav } from './circuit-course-nav.js';
 import { createYDeltaTool } from './y-delta-tool-controller.js';
@@ -119,6 +120,8 @@ export function createCircuitCourseController(host) {
     if (!key) return;
     const state = current(), live = id !== 'problem';
     state.drafts[key] = target.value; state.validationFailed = false;
+    // The Ch.12–13 problem types have only a numeric worked solution: choosing one switches the method so the symbolic page does not complain.
+    if (id === 'problem' && key === 'problemKind' && CHAPTER_KINDS.includes(target.value)) state.drafts.solutionMode = 'numeric';
     if (id === 'phasor-wave' && key === 'coordinate') state.drafts = convertCoordinateDrafts(state.drafts, target.value); state.origin = 'manual-conditions'; state.activeExample = -1;
     if (live) {
       if (target.tagName === 'SELECT') render();

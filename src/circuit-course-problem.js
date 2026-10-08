@@ -1,6 +1,7 @@
 import { polar, rmsPhasor, magnitude, rectangularPolar, phaseDifference, add, sub, impedanceNetwork, balancedThreePhase, correction, sampledPowerCheck, waveSample } from './circuit-course-model.js';
 import { solveSymbolicProblem } from './circuit-course-problem-symbolic.js';
 import { COUPLING_TOOL_GUIDE } from './circuit-course-format.js';
+import { CHAPTER_KINDS, solveChapterProblem } from './circuit-course-problem-chapters.js';
 const UNIT_MAP = {
   resistance: { ohm: 1, kohm: 1e3, Mohm: 1e6, mohm: 1e-3 },
   inductance: { H: 1, mH: 1e-3, uH: 1e-6 },
@@ -62,6 +63,11 @@ function desiredAnswers(goal, result, kind) {
 }
 export function solveCourseProblem(p) {
   try {
+    // Ch.12–13 homework types (coupled coils, ideal transformer, three-phase with a line impedance) are numeric-only worked solutions.
+    if (CHAPTER_KINDS.includes(p.problemKind)) {
+      if (p.solutionMode === 'symbolic') return { status: 'unsupported', reason: '이 문제 유형은 문자식 풀이가 없습니다. "풀이 방식"을 숫자 대입으로 바꾸세요.' };
+      return solveChapterProblem(p);
+    }
     if (p.solutionMode === 'symbolic') return solveSymbolicProblem(p);
     choices(p.problemKind, ['single', 'three', 'correction'], '문제 유형');
     choices(p.basis, ['rms', 'peak'], '진폭 기준');
@@ -160,47 +166,77 @@ const select = (key, label, initial, choices, showIf) => ({ key, label, initial,
 const quantity = (key, label, kind, unit, min, max, showIf, displayScale = 1) => ({ key, label, quantity: kind, unit, initial: null, min, max, displayScale, showIf });
 const num = (key, label, initial, min, max, showIf) => ({ key, label, initial, min, max, unit: '', displayScale: 1, showIf });
 const single = p => p.problemKind === 'single', three = p => p.problemKind === 'three', compensation = p => p.problemKind === 'correction';
+const coupledKind = p => p.problemKind === 'coupled', transformerKind = p => p.problemKind === 'transformer', threeLineKind = p => p.problemKind === 'threeline';
+const magneticKind = p => coupledKind(p) || transformerKind(p);
 export const PROBLEM_EXPERIMENT = {
   id: 'problem', title: '내 문제 · 문자식 → 풀이', initialNoSolve: false,
   description: '먼저 기호 조건과 구할 값을 골라 문자식 답·유도를 보세요. 숫자는 시각화 보조입니다. 메모·사진·임의 수식 자동 풀이는 지원하지 않습니다.',
   parameters: [
     select('solutionMode','풀이 방식','symbolic',[['symbolic','문자식 답·유도 (기본)'],['numeric','숫자 대입·그래프 (보조)']]),
-    select('problemKind', '문제 유형', 'single', [['single', '단상 · 직렬/병렬 RLC'], ['three', '균형 abc 3상 · Y/Δ'], ['correction', '단상/균형 3상 · 역률보상']]),
+    select('problemKind', '문제 유형', 'single', [['single', '단상 · 직렬/병렬 RLC'], ['three', '균형 abc 3상 · Y/Δ'], ['correction', '단상/균형 3상 · 역률보상'], ['threeline', 'Ch.12 균형 3상 + 선로 Zℓ (Y–Y, Y–Δ, 상순서)'], ['coupled', 'Ch.13 결합 코일 2루프'], ['transformer', 'Ch.13 이상 변압기']]),
     { key: 'problemText', label: '문제 메모 (선택 · 자동 해석하지 않음)', text: true, initial: '', maxLength: 4000 },
     select('singleGoal', '구할 값', 'current', [['current', '전원 복소전류 I'], ['impedance', '등가 Z와 Y'], ['branch', '소자별 전압·전류'], ['power', 'P/Q/|S|'], ['pf', '역률·위상차']], single),
-    select('threeGoal', '구할 값', 'line-current', [['line-current', '선전류 Ia/Ib/Ic'], ['phase-current', '부하 상전류'], ['phase-voltage', '부하 상전압'], ['power', '총 P/Q/|S|'], ['pf', '역률·위상차']], three),
+    select('threeGoal', '구할 값', 'line-current', [['line-current', '선전류 Ia/Ib/Ic'], ['phase-current', '부하 상전류'], ['phase-voltage', '부하 상전압'], ['power', '총 P/Q/|S|'], ['pf', '역률·위상차']], p => three(p) || threeLineKind(p)),
+    select('coupledGoal', '구할 값', 'currents', [['currents', '메시 전류 I1, I2'], ['zin', 'Z22 · 반사 임피던스 · Zin'], ['power', '전원·Z1·부하 전력']], coupledKind),
+    select('xfmrGoal', '구할 값', 'zin', [['zin', '반사 Z_r=ZL/n² · Zin'], ['currents', '전류 I1, I2'], ['v2', '전압 V1, V2'], ['power', '전원·부하 전력']], transformerKind),
     select('correctionGoal', '구할 값', 'capacitance', [['capacitance', '각 보상 커패시터 C'], ['source-current', '보상 전후 공급전류'], ['power', '보상 후 P/Q/|S|'], ['pf', '보상 후 역률']], compensation),
     select('basis', '주어진 전압 진폭 기준', 'rms', [['rms', 'RMS 실효값'], ['peak', 'peak 최댓값']]),
     select('voltageKnown', '주어진 3상 전압', 'line', [['line', '선간 Vab'], ['phase', '부하 상전압 (Y: Van, Δ: Vab)']], three),
     quantity('voltage', '주어진 전압 크기 (V/mV/kV)', 'voltage', 'V', 1e-12, 1e6),
-    { ...quantity('frequencyHz', 'f 또는 ω (Hz/kHz/rad/s) · 3상 Z 문제는 선택', 'frequency', 'Hz', 1e-9, 1e6), optionalIf: three },
+    { ...quantity('frequencyHz', 'f 또는 ω (Hz/kHz/rad/s) · 3상 Z 문제는 선택', 'frequency', 'Hz', 1e-9, 1e6, p => !transformerKind(p)), optionalIf: p => three(p) || threeLineKind(p) },
     { ...quantity('sourceAngle', '주어진 전압 기준 위상 (°/deg/rad) · 기준 없으면 0', 'angle', 'deg', -36000, 36000, p => !compensation(p)), initial: 0 },
     select('topology', 'RLC 연결', 'series', [['series', '직렬'], ['parallel', '병렬']], single),
     select('elements', '실제 있는 소자', 'RL', ['R', 'L', 'C', 'RL', 'RC', 'LC', 'RLC'].map(v => [v, v]), single),
-    select('connection', '3상 부하 / C뱅크 결선', 'Y', [['Y', 'Y'], ['delta', 'Δ']], p => three(p) || (compensation(p) && p.phases === '3')),
-    quantity('r', 'R 또는 상 임피던스 실수부 (Ω/kΩ)', 'resistance', 'ohm', 0, 1e9, p => three(p) || (single(p) && p.elements.includes('R'))),
+    select('connection', '3상 부하 / C뱅크 결선', 'Y', [['Y', 'Y'], ['delta', 'Δ']], p => three(p) || threeLineKind(p) || (compensation(p) && p.phases === '3')),
+    quantity('r', 'R 또는 상 임피던스 실수부 (Ω/kΩ)', 'resistance', 'ohm', 0, 1e9, p => three(p) || threeLineKind(p) || (single(p) && p.elements.includes('R'))),
     quantity('l', 'L (기본 mH · H/uH도 가능)', 'inductance', 'mH', 1e-15, 1e6, p => single(p) && p.elements.includes('L'), 1e-3),
     quantity('c', 'C (기본 µF · nF/F도 가능)', 'capacitance', 'uF', 1e-15, 1e3, p => single(p) && p.elements.includes('C'), 1e-6),
-    quantity('x', '상 임피던스 허수부 X (Ω/kΩ · 용량성 −)', 'resistance', 'ohm', -1e9, 1e9, three),
+    quantity('x', '상 임피던스 허수부 X (Ω/kΩ · 용량성 −)', 'resistance', 'ohm', -1e9, 1e9, p => three(p) || threeLineKind(p)),
     select('phases', '보상 문제의 상수', '1', [['1', '단상'], ['3', '균형 3상']], compensation),
     quantity('pWatts', '보상 전 총 P (W/kW)', 'power', 'W', 1e-12, 1e9, compensation),
     quantity('qVars', '보상 전 총 Q (var/kvar · 지상 +)', 'reactive', 'var', -1e9, 1e9, compensation),
-    { ...num('targetPF', '목표 지상 PF (0~1)', null, .001, 1, compensation) }
+    { ...num('targetPF', '목표 지상 PF (0~1)', null, .001, 1, compensation) },
+    // Ch.12–13 homework types (numeric worked solutions, circuit-course-problem-chapters.js)
+    select('sequence', '상순서', 'abc', [['abc', 'abc (정상순)'], ['acb', 'acb (역상순)']], threeLineKind),
+    select('sourceConnection', '전원 결선', 'Y', [['Y', 'Y 전원'], ['delta', 'Δ 전원']], threeLineKind),
+    select('sourceVoltageKind', '주어진 전압 종류', 'line', [['line', '선간 전압'], ['phase', '전원 상(코일) 전압 (Y: Van, Δ: Vab)']], threeLineKind),
+    select('reference', '위상 기준 페이저', 'Van', [['Van', '주어진 위상 = ∠Van'], ['Vab', '주어진 위상 = ∠Vab']], threeLineKind),
+    { ...quantity('lineR', '선로 Zℓ 실수부 (Ω · 선로가 없으면 비움)', 'resistance', 'ohm', 0, 1e9, threeLineKind), optionalIf: threeLineKind },
+    { ...quantity('lineX', '선로 Zℓ 허수부 (Ω · 유도성 +)', 'resistance', 'ohm', -1e9, 1e9, threeLineKind), optionalIf: threeLineKind },
+    quantity('z1R', '1차 직렬 Z1 실수부 (Ω/kΩ · 없으면 0)', 'resistance', 'ohm', 0, 1e9, magneticKind),
+    quantity('z1X', '1차 직렬 Z1 허수부 (Ω · 용량성 −)', 'resistance', 'ohm', -1e9, 1e9, magneticKind),
+    quantity('zlR', '2차 부하 ZL 실수부 (Ω/kΩ)', 'resistance', 'ohm', 0, 1e9, magneticKind),
+    quantity('zlX', '2차 부하 ZL 허수부 (Ω · 용량성 −)', 'resistance', 'ohm', -1e9, 1e9, magneticKind),
+    quantity('l1', '코일 1 L1 (기본 H · mH/uH도 가능)', 'inductance', 'H', 1e-15, 1e6, coupledKind),
+    quantity('l2', '코일 2 L2 (기본 H · mH/uH도 가능)', 'inductance', 'H', 1e-15, 1e6, coupledKind),
+    select('couplingMode', '결합 입력', 'M', [['M', '상호 인덕턴스 M'], ['k', '결합계수 k=M/√(L1L2)']], coupledKind),
+    quantity('mInd', '상호 인덕턴스 M (기본 H)', 'inductance', 'H', 0, 1e6, p => coupledKind(p) && p.couplingMode === 'M'),
+    num('kCoupling', '결합계수 k (0~1)', null, 0, 1, p => coupledKind(p) && p.couplingMode === 'k'),
+    select('dots', '점 위치', 'same', [['same', '같은 쪽 (양쪽 코일 위)'], ['opposite', '반대쪽 (위/아래)']], magneticKind),
+    num('turnsRatio', '권수비 n=N2/N1 (>0)', null, 1e-9, 1e9, transformerKind),
+    select('i2Direction', 'I2 기준 방향', 'out', [['out', '2차 + 단자에서 부하로 나감'], ['in', '2차 + 단자로 들어옴']], transformerKind)
   ],
-  assumptions: ['지원: 주어진 전압으로 구동하는 단상 직렬/병렬 R/L/C, 균형 abc 3상 수동 동일 부하, 병렬 커패시터 보상.',
+  assumptions: ['지원: 주어진 전압으로 구동하는 단상 직렬/병렬 R/L/C, 균형 abc 3상 수동 동일 부하, 병렬 커패시터 보상. 숫자 풀이만 있는 Ch.12–13 유형: 균형 3상 + 선로 Zℓ(Y–Y, Y–Δ, Δ 전원, abc/acb), 결합 코일 2루프, 이상 변압기.',
     '임의 연결 회로, 불평형, 중성선 이동, 고조파, 과도응답은 이 문제풀이 모드에서 지원하지 않습니다.',
-    '자기결합·변압기 문제는 여기서 풀지 않습니다. ' + COUPLING_TOOL_GUIDE,
+    '선형(실제) 변압기는 결합 코일 유형으로 풉니다. 단권·3상 변압기 결선·T/π 등가는 여기서 풀지 않습니다. ' + COUPLING_TOOL_GUIDE,
     '사진/PDF 자동 인식·OCR·수식 자동 해석은 미지원입니다. 문제의 수치 조건을 직접 입력하세요.',
     '주어진 위상이 없으면 입력한 0°를 기준으로 삼습니다. 3상은 주어진 Vab/부하 상전압의 위상을 뜻합니다.',
     '빈 필수 조건은 오류로 표시합니다. 3상에 Z가 직접 주어지면 주파수 없이 페이저 답을 구하고 파형을 생략합니다.'],
   formulas: ['① 주어진 조건·단위 확인 → ② RMS 환산 → ③ 복소 회로 대입 → ④ 구할 값 표시', '계산과정과 그래프는 같은 적용 입력을 사용합니다.', '새 숫자를 넣었으면 문제 풀기를 눌러야 답이 갱신됩니다.'],
   examples: [
     { label: '가상 검산문제 · RL', values: { solutionMode:'numeric', problemKind: 'single', problemText: '가상 검산문제: 100 V RMS, 50 Hz, R=3 Ω, L=12.7324 mH 직렬. I를 구하라.', basis: 'rms', singleGoal: 'current', voltage: 100, frequencyHz: 50, sourceAngle: 0, topology: 'series', elements: 'RL', r: 3, l: 4 / (100 * Math.PI) } },
-    { label: '가상 검산문제 · 3상', values: { solutionMode:'numeric', problemKind: 'three', problemText: '가상 검산문제: abc, Vab=400∠30° V RMS, Y 상 Z=8+j6 Ω. 선전류를 구하라.', basis: 'rms', voltageKnown: 'line', voltage: 400, frequencyHz: 50, sourceAngle: 30, connection: 'Y', r: 8, x: 6, threeGoal: 'line-current' } }
+    { label: '가상 검산문제 · 3상', values: { solutionMode:'numeric', problemKind: 'three', problemText: '가상 검산문제: abc, Vab=400∠30° V RMS, Y 상 Z=8+j6 Ω. 선전류를 구하라.', basis: 'rms', voltageKnown: 'line', voltage: 400, frequencyHz: 50, sourceAngle: 30, connection: 'Y', r: 8, x: 6, threeGoal: 'line-current' } },
+    // Textbook numbers (Alexander & Sadiku 7e): the answers are fixed by tests against the book's results.
+    { label: '교재 예제 13.1 · 결합 코일 (12 V, −j4, j5·j6·j3, 12 Ω)', values: { solutionMode: 'numeric', problemKind: 'coupled', problemText: '교재 예제 13.1: 12∠0° V rms, Z1=−j4 Ω, L1=5, L2=6, M=3 H (ω=1 rad/s), 점 같은 쪽, ZL=12 Ω. I1, I2를 구하라.', basis: 'rms', voltage: 12, sourceAngle: 0,
+      frequencyHz: 1 / (2 * Math.PI), z1R: 0, z1X: -4, zlR: 12, zlX: 0, l1: 5, l2: 6, couplingMode: 'M', mInd: 3, dots: 'same', coupledGoal: 'currents' } },
+    { label: '교재 예제 13.8 · 이상 변압기 (120 V, 4−j6, 1:2, 20 Ω)', values: { solutionMode: 'numeric', problemKind: 'transformer', problemText: '교재 예제 13.8: 120∠0° V rms, Z1=4−j6 Ω, 이상 변압기 1:2 (점 반대), ZL=20 Ω. I1, I2, Vo, 부하 전력을 구하라.', basis: 'rms', voltage: 120, sourceAngle: 0,
+      z1R: 4, z1X: -6, zlR: 20, zlX: 0, turnsRatio: 2, dots: 'opposite', i2Direction: 'out', xfmrGoal: 'currents' } },
+    { label: '교재 예제 12.3 · Y 전원 − Δ 부하 (Van=100∠10°, 8+j4 Ω)', values: { solutionMode: 'numeric', problemKind: 'threeline', problemText: '교재 예제 12.3: abc, Y 전원 Van=100∠10° V rms, Δ 부하 Z=8+j4 Ω, 선로 없음. 상전류와 선전류를 구하라.', basis: 'rms', voltage: 100, sourceAngle: 10, sequence: 'abc',
+      sourceConnection: 'Y', sourceVoltageKind: 'phase', reference: 'Van', connection: 'delta', r: 8, x: 4, lineR: 0, lineX: 0, threeGoal: 'phase-current' } }
   ], evaluate: solveCourseProblem
 };
 
-const numericProblemKeys = new Set(['voltage','frequencyHz','sourceAngle','r','l','c','x','pWatts','qVars','targetPF']);
+const numericProblemKeys = new Set(['voltage','frequencyHz','sourceAngle','r','l','c','x','pWatts','qVars','targetPF','lineR','lineX','z1R','z1X','zlR','zlX','l1','l2','mInd','kCoupling','turnsRatio']);
 for (const d of PROBLEM_EXPERIMENT.parameters) if (numericProblemKeys.has(d.key)) { const condition=d.showIf; d.showIf=p=>p.solutionMode==='numeric'&&(!condition||condition(p)); }
 const symbolicField=(key,label,initial,showIf)=>({key,label,text:true,initial,maxLength:24,showIf:p=>p.solutionMode==='symbolic'&&(!showIf||showIf(p)),singleLine:true});
 PROBLEM_EXPERIMENT.parameters.push(
