@@ -26,6 +26,13 @@ const PALETTE = [
   ["COUPLED_L", "K", "결합 인덕터", false], ["XFMR_IDEAL", "1:n", "이상 변압기", false],
 ];
 
+/**
+ * A freshly placed source stands upright with its "+" end on top, like the textbook drawings: a voltage source turned 90° puts pin 1 (+)
+ * up, a current source turned 270° points its arrow (pin 1 → pin 2) up. Lying flat with + on the left made students wire it backwards.
+ * Only new parts: saved circuits and examples keep their stored rotation.
+ */
+export const NEW_PART_ROTATION = Object.freeze({ V: 90, I: 270 });
+
 /** A current probe on a coupled inductor / ideal transformer measures the winding on the pressed side (left half: 1, right half: 2). */
 function currentProbeWinding(component, point) {
   return component && point && isMagneticPart(component) ? magneticWindingAt(component, point) : 1;
@@ -138,7 +145,7 @@ export function createEditorInput(deps) {
     "current-probe": "I 프로브 — 부품을 누르면 기준 방향 전류가 추가됩니다.",
   };
   // Touch screens get finger wording for the select tool (tap / long press / two fingers instead of click / Shift).
-  const TOUCH_SELECT_HINT = "탭: 선택·값 조절 · 길게 눌러 끌기: 이동 · 빈 곳 끌기: 화면 이동 · 두 손가락: 확대";
+  const TOUCH_SELECT_HINT = "탭: 선택·값 조절 · 핀에서 끌기·핀 두 번 탭: 배선 · 길게 눌러 끌기: 이동 · 빈 곳 끌기: 화면 이동 · 두 손가락: 확대";
   const coarsePointer = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
   function restoreToolHint() {
     const hint = state.tool === "select" && coarsePointer() ? TOUCH_SELECT_HINT : TOOL_HINTS[state.tool];
@@ -177,7 +184,7 @@ export function createEditorInput(deps) {
     const id = nextId(type);
     const index = Number(id.match(/\d+/)?.[0] ?? 1);
     mutate(() => {
-      state.circuit.components.push({ id, type, ...snapPoint(point), rotation: 0, props: componentDefaults(type, index) });
+      state.circuit.components.push({ id, type, ...snapPoint(point), rotation: NEW_PART_ROTATION[type] ?? 0, props: componentDefaults(type, index) });
       setSingleSelection(state, { kind: "component", id });
       state.title = state.title === "새 회로" ? "사용자 회로" : state.title;
       state.subtitle = "편집한 연결과 값으로 계산됩니다";
@@ -673,7 +680,16 @@ export function createEditorInput(deps) {
     }
     if (drag.moved) {
       state.ignoreClickUntil = performance.now() + 180;
-      if (drag.kind === "pan") return true;
+      if (drag.kind === "pan") {
+        if (drag.mode === "scroll") startMomentum(drag);
+        else if (!drag.mode && drag.lastClient) {
+          // A short vertical swipe that ended before it was judged: it was a pan after all.
+          state.canvasView.x = drag.originView.x - (drag.lastClient.x - drag.startClient.x) / drag.screenScale;
+          state.canvasView.y = drag.originView.y - (drag.lastClient.y - drag.startClient.y) / drag.screenScale;
+          updateCanvasView();
+        }
+        return true;
+      }
       // Dropped back exactly where it started: no history entry, no stale result.
       if (snapshot() === drag.before) renderAll();
       else commitMove(drag.before);
@@ -704,13 +720,8 @@ export function createEditorInput(deps) {
       applySelection();
       return;
     }
+    if (drag.kind === "pan") { panOrScroll(drag, event); return; }
     elements["circuit-canvas"].classList.add("dragging");
-    if (drag.kind === "pan") {
-      state.canvasView.x = drag.originView.x - (event.clientX - drag.startClient.x) / drag.screenScale;
-      state.canvasView.y = drag.originView.y - (event.clientY - drag.startClient.y) / drag.screenScale;
-      updateCanvasView();
-      return;
-    }
     const point = svgPoint(event);
     if (!point) return;
     const item = drag.kind === "junction" ? (state.circuit.junctions ?? []).find(j => j.id === drag.id) : state.circuit.components.find(c => c.id === drag.id);
@@ -789,6 +800,8 @@ export function createEditorInput(deps) {
   // Pin / junction capture radius in screen px: a fingertip is far less precise than a mouse pointer.
   const PIN_PICK_PX = { mouse: 22, touch: 32 };
   const JUNCTION_PICK_PX = { mouse: 20, touch: 28 };
+  // Select tool, touch: a pin wins over its part within 40 % of the pin-to-centre distance on screen (at least 10 px, at most 18 px).
+  const PIN_SELECT_TOUCH_PX = { min: 10, max: 18 };
 
   function pickTouchTarget(point, { touch = true } = {}) {
     const svg = elements["circuit-canvas"], matrix = svg.getScreenCTM();
@@ -804,6 +817,18 @@ export function createEditorInput(deps) {
     if (!endpointMode && state.tool === "select" && remove) return {kind:"delete",id:remove.dataset.deleteComponent};
     if (!endpointMode && state.tool === "select" && label) return {kind:"value",id:label.closest("[data-id]")?.dataset.id};
     if (!endpointMode && state.tool === "select" && badge) return { kind: "properties", id: badge.dataset.showConnection };
+    if (!endpointMode && state.tool === "select" && touch) {
+      // A finger on a pin dot (the select tool's pin disc, see canvas-renderer syncHitSizes) means wiring: a drag from it draws a wire,
+      // a tap starts the tap-tap wire. The disc stays well inside the part, so its middle still selects the part.
+      const radius = Math.max(PIN_SELECT_TOUCH_PX.min, Math.min(PIN_SELECT_TOUCH_PX.max, 40 * Math.abs(matrix.a) * 0.4));
+      let pinHit = null, pinDistance = radius;
+      for (const c of state.circuit.components) for (let pin = 0; pin < pinCount(c.type); pin++) {
+        const world = pinPosition(c, pin); if (!world) continue;
+        const p = screen(world), d = Math.hypot(point.x - p.x, point.y - p.y);
+        if (d < pinDistance) { pinDistance = d; pinHit = { kind: "pin", id: c.id, pin }; }
+      }
+      if (pinHit) return pinHit;
+    }
     if (!endpointMode) {
       let best = null, bestDistance = 23;
       for (const c of state.circuit.components) {
@@ -847,8 +872,18 @@ export function createEditorInput(deps) {
       view: () => ({...state.canvasView}),
       setView: view => { state.canvasView = view; updateCanvasView(); },
       begin: (event, target) => {
-        // Wire tool: one finger dragging from a pin draws a wire (a tap on the pin still starts the click-click wire).
-        if (state.tool === "wire" && target?.kind === "pin" && !state.pendingPin && !state.port.mode) {
+        // A finger landing while the page still scrolls (a fling that began outside the canvas) or right after it keeps scrolling the
+        // page: the circuit must not be dragged along by a thumb that only wanted to stop or continue the scroll.
+        const pageWasMoving = momentum !== null || performance.now() - lastPageScrollAt < PAGE_SCROLL_RECENT_MS;
+        stopMomentum();
+        const scroller = state.tool === "select" && !state.pendingPin && !state.port.mode ? pageScroller() : null;
+        const screenScale = svg.getScreenCTM()?.a;
+        if (scroller && pageWasMoving && screenScale > 0) {
+          beginCanvasPointer(event, { kind: "pan", mode: "scroll", scroller, screenScale, originView: { ...state.canvasView }, moved: false, samples: [] });
+          return;
+        }
+        // Wire or select tool: one finger dragging from a pin draws a wire (a tap on the pin still starts the tap-tap wire).
+        if (["wire", "select"].includes(state.tool) && target?.kind === "pin" && !state.pendingPin && !state.port.mode) {
           beginCanvasPointer(event, { kind: "wire", target: { componentId: target.id, pin: target.pin }, started: false, moved: false }, { capture: false });
           return;
         }
@@ -863,9 +898,9 @@ export function createEditorInput(deps) {
           const payload = { kind: target.kind, id: item.id, start: point, origin: { x: item.x, y: item.y }, before: snapshot(), moved: false, group, wasMulti: multi, lift: touchLift() };
           if (beginCanvasPointer(event, payload) && multi) state.selected = { kind: target.kind, id: target.id };
         } else if (["background","component","junction","wire"].includes(target.kind)) {
-          // First swipe navigates. Only an already selected object can be dragged.
-          const scale = svg.getScreenCTM()?.a;
-          if(scale>0)beginCanvasPointer(event,{kind:"pan",screenScale:scale,originView:{...state.canvasView},moved:false});
+          // First swipe navigates. Only an already selected object can be dragged. In the select tool a quick, long vertical flick on a
+          // scrollable page scrolls the page instead (decided in panOrScroll); the pan tool always pans.
+          if (screenScale > 0) beginCanvasPointer(event, { kind: "pan", screenScale, originView: { ...state.canvasView }, moved: false, mode: scroller ? null : "pan", scroller, startedAt: performance.now(), samples: [] });
         }
       },
       // Long press on a part (or junction) that is not selected yet: select it and pick it up, so it follows the same finger.
@@ -885,36 +920,127 @@ export function createEditorInput(deps) {
       move: updateCanvasPointer,
       finish: finishCanvasPointer,
       tap: (event, target) => {
-        const point = svgPoint(event); if(!target || !point || state.tool === "pan")return;
-        hover.showTouch(target, event.clientX, event.clientY);
-        if(target.kind === "delete") { if(state.selected?.kind === "component" && state.selected.id === target.id) deleteSelection(); return; }
-        if(target.kind === "properties") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); armSelectionBar(); showInspector(); return; }
-        // A value label: the phone value sheet when the part has one, the properties panel otherwise.
-        if(target.kind === "value") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); armSelectionBar(); if(!openValueSheet(target.id)) showInspector(); return; }
-        if(target.kind === "pin") { handlePinClick(target.id,target.pin); return; }
-        if(target.kind === "junction") {
-          if(state.tool === "voltage-probe") addVoltageProbeEndpoint({junctionId:target.id});
-          else if(state.port.mode || state.tool === "wire" || state.pendingPin) handleEndpointClick({junctionId:target.id});
-          else { setSingleSelection(state,{kind:"junction",id:target.id});renderSelection();armSelectionBar(); }
-          return;
-        }
-        if(target.kind === "component") {
-          if(state.tool === "current-probe")addCurrentProbe(target.id, currentProbeWinding(state.circuit.components.find(c=>c.id===target.id), point));
-          else {setSingleSelection(state,{kind:"component",id:target.id});openValueSheet(target.id);renderSelection();armSelectionBar();}
-          return;
-        }
-        if(target.kind === "wire") {
-          const wire=state.circuit.wires.find(w=>w.id===target.id); if(!wire)return;
-          if(state.pendingPin)createJunctionAndConnect(wire.id,point);
-          else if(state.tool === "voltage-probe")addVoltageProbeEndpoint(wire.a.componentId !== undefined ? wire.a : wire.b,wire.id);
-          else if(state.tool === "select"){setSingleSelection(state,{kind:"wire",id:wire.id});renderSelection();armSelectionBar();}
-          return;
-        }
-        if(state.pendingPin)addPendingWaypoint(point);
-        else if(state.tool.startsWith("place:"))placeComponent({clientX:event.clientX,clientY:event.clientY,target:svg.querySelector(".canvas-bg")});
-        else if(state.tool === "select"){clearSelection(state);renderSelection();}
+        if (!target || state.tool === "pan") return;
+        touchTap(event, target);
+        // The readout bubble is placed after the selection bar (both wait for the next frame; the bar's frame was asked for first), so it
+        // can keep clear of the bar. No bubble while a wire is being drawn: the finger is busy wiring.
+        const { clientX, clientY } = event;
+        if (!state.pendingPin) requestAnimationFrame(() => hover.showTouch(target, clientX, clientY));
       },
     });
+    function touchTap(event, target) {
+      const point = svgPoint(event); if(!point)return;
+      if(target.kind === "delete") { if(state.selected?.kind === "component" && state.selected.id === target.id) deleteSelection(); return; }
+      if(target.kind === "properties") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); armSelectionBar(); showInspector(); return; }
+      // A value label: the phone value sheet when the part has one, the properties panel otherwise.
+      if(target.kind === "value") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); armSelectionBar(); if(!openValueSheet(target.id)) showInspector(); return; }
+      if(target.kind === "pin") { handlePinClick(target.id,target.pin); return; }
+      if(target.kind === "junction") {
+        if(state.tool === "voltage-probe") addVoltageProbeEndpoint({junctionId:target.id});
+        else if(state.port.mode || state.tool === "wire" || state.pendingPin) handleEndpointClick({junctionId:target.id});
+        else { setSingleSelection(state,{kind:"junction",id:target.id});renderSelection();armSelectionBar(); }
+        return;
+      }
+      if(target.kind === "component") {
+        if(state.tool === "current-probe")addCurrentProbe(target.id, currentProbeWinding(state.circuit.components.find(c=>c.id===target.id), point));
+        else {setSingleSelection(state,{kind:"component",id:target.id});openValueSheet(target.id);renderSelection();armSelectionBar();}
+        return;
+      }
+      if(target.kind === "wire") {
+        const wire=state.circuit.wires.find(w=>w.id===target.id); if(!wire)return;
+        if(state.pendingPin)createJunctionAndConnect(wire.id,point);
+        else if(state.tool === "voltage-probe")addVoltageProbeEndpoint(wire.a.componentId !== undefined ? wire.a : wire.b,wire.id);
+        else if(state.tool === "select"){setSingleSelection(state,{kind:"wire",id:wire.id});renderSelection();armSelectionBar();}
+        return;
+      }
+      if(state.pendingPin)addPendingWaypoint(point);
+      else if(state.tool.startsWith("place:"))placeComponent({clientX:event.clientX,clientY:event.clientY,target:svg.querySelector(".canvas-bg")});
+      else if(state.tool === "select"){clearSelection(state);renderSelection();}
+    }
+  }
+
+  // ---- phone: page scroll versus canvas pan (one finger, select tool)
+
+  /** A finger that lands within this long after the page scrolled continues the scroll (a fling stopped or carried on by the next swipe). */
+  const PAGE_SCROLL_RECENT_MS = 400;
+  /** A one-finger vertical swipe is judged once it has travelled this far: quick enough, it scrolls the page; otherwise it pans. */
+  const SCROLL_DECIDE_PX = 40;
+  const SCROLL_FLICK_PX_PER_MS = 1;
+  let lastPageScrollAt = -Infinity;
+  let momentum = null;
+
+  /** The element that scrolls the page around the canvas (the phone workbench), or null when nothing around it can scroll. */
+  function pageScroller() {
+    for (let node = elements["circuit-canvas"].parentElement; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+      const overflow = getComputedStyle(node).overflowY;
+      if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight + 1) return node;
+    }
+    const root = document.scrollingElement;
+    return root && root.scrollHeight > root.clientHeight + 1 ? root : null;
+  }
+  const canScroll = (scroller, fingerDy) => fingerDy > 0 ? scroller.scrollTop > 0.5 : scroller.scrollTop < scroller.scrollHeight - scroller.clientHeight - 0.5;
+
+  function notePageScroll(event) {
+    const target = event.target;
+    if (target === document || target === document.documentElement || target === document.scrollingElement || (target?.contains?.(elements["circuit-canvas"]) ?? false)) lastPageScrollAt = performance.now();
+  }
+
+  function stopMomentum() {
+    if (!momentum) return;
+    cancelAnimationFrame(momentum.frame);
+    momentum = null;
+  }
+
+  /** After a scroll swipe the page glides on and slows down, like a native fling. */
+  function startMomentum(drag) {
+    const samples = drag.samples ?? [];
+    const first = samples[0], last = samples.at(-1);
+    if (!first || !last || last.t - first.t < 8) return;
+    let velocity = (last.y - first.y) / (last.t - first.t); // finger px per ms; the page moves the other way
+    if (Math.abs(velocity) < 0.15) return;
+    const scroller = drag.scroller;
+    let previous = performance.now();
+    const step = (now) => {
+      const dt = Math.min(48, Math.max(1, now - previous));
+      previous = now;
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before - velocity * dt;
+      velocity *= Math.pow(0.95, dt / 16);
+      if (Math.abs(velocity) < 0.02 || Math.abs(scroller.scrollTop - before) < 0.01) { momentum = null; return; }
+      momentum.frame = requestAnimationFrame(step);
+    };
+    momentum = { frame: requestAnimationFrame(step) };
+  }
+
+  /**
+   * One-finger move of a "pan" session: pans the circuit, or scrolls the page (mode "scroll"). Undecided sessions (select tool on a
+   * scrollable page) pan at once when the swipe goes sideways, and hold a vertical swipe until it has travelled SCROLL_DECIDE_PX: fast
+   * enough (a flick) it scrolls the page if the page can go that way, slower it pans the circuit — the full distance, no lost travel.
+   */
+  function panOrScroll(drag, event) {
+    const dx = event.clientX - drag.startClient.x, dy = event.clientY - drag.startClient.y;
+    const now = performance.now();
+    drag.lastClient = { x: event.clientX, y: event.clientY };
+    if (drag.samples) { drag.samples.push({ t: now, y: event.clientY }); while (drag.samples.length > 2 && now - drag.samples[0].t > 90) drag.samples.shift(); }
+    if (!drag.mode) {
+      if (!drag.scroller || Math.abs(dx) >= Math.abs(dy)) drag.mode = "pan";
+      else {
+        const travel = Math.hypot(dx, dy);
+        if (travel < SCROLL_DECIDE_PX) return;
+        const flick = Math.abs(dy) >= 2 * Math.abs(dx) && travel / Math.max(1, now - drag.startedAt) >= SCROLL_FLICK_PX_PER_MS;
+        drag.mode = flick && canScroll(drag.scroller, dy) ? "scroll" : "pan";
+        if (drag.mode === "scroll") drag.originScroll = drag.scroller.scrollTop;
+      }
+    }
+    if (drag.mode === "scroll") {
+      drag.originScroll ??= drag.scroller.scrollTop;
+      drag.scroller.scrollTop = drag.originScroll - dy;
+      return;
+    }
+    elements["circuit-canvas"].classList.add("dragging");
+    state.canvasView.x = drag.originView.x - dx / drag.screenScale;
+    state.canvasView.y = drag.originView.y - dy / drag.screenScale;
+    updateCanvasView();
   }
 
   // ---- interaction cancel (workspace switch, project reset, panel change)
@@ -926,6 +1052,7 @@ export function createEditorInput(deps) {
   }
 
   function cancelInteractions() {
+    stopMomentum();
     canvasTouch?.cancel();
     cancelPointerSessions();
   }
@@ -1122,6 +1249,8 @@ export function createEditorInput(deps) {
     // Releasing an arrow ends the nudge group, so a held key is ONE undo step however long the OS key-repeat delay is.
     window.addEventListener("keyup", (event) => { if (event.key in ARROW_KEYS) closeEditGroup("nudge"); });
     setupCanvasTouch();
+    // Scroll events do not bubble; a capturing listener on the document still sees the workbench's (and the document's) scrolls.
+    document.addEventListener("scroll", notePageScroll, { capture: true, passive: true });
     for (const kind of ["copy", "cut", "paste"]) document.addEventListener(kind, (event) => nativeClipboardEvent(event, kind));
   }
 

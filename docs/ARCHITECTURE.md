@@ -81,7 +81,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 
 공유 `state` 하나를 모듈별 슬라이스(`createEditorState`/`createInputState`/`createRunState`)가 나눠 소유합니다. 핵심 카운터는 `state.generation`(회로·설정이 바뀔 때마다 +1)과 `state.runSerial`(실행·취소마다 +1)입니다.
 
-1. 편집: 입력 모듈 → `session.mutate(change)` → 이력 저장, `change()`, `generation++`, `analysis.markStale()`(진행 중인 Worker 작업 취소·`runSerial++`·결과 stale), `renderAll()`, `analysis.scheduleAutoRun()`(250 ms 타이머, 입력 중·미연결이면 대기), `projectIO.noteCommitted()`(자동저장 0.8 s 디바운스).
+1. 편집: 입력 모듈 → `session.mutate(change)` → 이력 저장, `change()`, `generation++`, `analysis.markStale()`(진행 중인 Worker 작업 취소·`runSerial++`·결과 stale), `renderAll()`, `analysis.scheduleAutoRun()`(작은 회로 100 ms·큰 회로/연속 편집 250 ms 타이머, `autoRunDelayMs`, 입력 중·미연결이면 대기), `projectIO.noteCommitted()`(자동저장 0.8 s 디바운스).
 2. 실행: `analysis.runAnalysis()` — draft 확정(`commitPendingInputs`), 이전 작업 무효화, `serial = ++runSerial`, 회로·설정을 `structuredClone`, 한 프레임 양보 후 `serial`/`generation`을 다시 확인.
 3. Worker: `AnalysisWorkerClient.start(kind, payload)`가 **요청마다 새 module Worker**를 만들고 `{requestId, kind}`로 응답을 맞춥니다. 새 요청·취소·완료·오류 때 `terminate()`. `analysis-worker.js`의 `executeAnalysisRequest`가 `simulate`(AC면 페이저용 `simulateACAtFrequency` 포함) 또는 `analyzeDCPort`를 실행하고, 오류는 직렬화해 돌려줘 메인에서 `CircuitError`로 복원합니다.
 4. 결과 채택: `await` 뒤 `serial !== state.runSerial` 또는 `generation !== state.generation`이면 **버립니다**(오래된 결과). 통과하면 `state.result`/`phasorResult`를 바꾸고 `renderAll()`. 오류는 `failureRecord`로 코드·메시지·힌트·상세를 모두 `runState.error`에 두고 `describeCircuitFailure`로 진단 표시합니다(재렌더가 같은 힌트를 다시 그림). 다이오드 해석은 역방향 전압에 하한이 없고, 해석 예산은 선형 과도(dt별 LU 재사용)와 Newton 반복을 따로 셉니다. 취소(`AnalysisCancelledError`)는 조용히 무시.

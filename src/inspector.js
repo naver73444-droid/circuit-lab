@@ -6,9 +6,10 @@ import { controlReferenceModel, controlledSourceInputModel } from "./ui-model.js
 import { bindSweep, sweepMarkup } from "./sweep-panel.js";
 import { describeSelection, selectedItems, setSingleSelection } from "./selection-model.js";
 import { yDeltaCommandState } from "./y-delta-circuit.js";
-import { amplitudeText, normalizeAcBasis } from "./ac-basis.js";
+import { acScale, amplitudeText, normalizeAcBasis } from "./ac-basis.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
-import { isCurrentReferenceFlipped, isMagneticPart, referenceDirection } from "./current-direction.js";
+import { actualCurrentText, currentReferenceSign, isCurrentReferenceFlipped, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection, signedCurrent } from "./current-direction.js";
+import { selectAllOnUserFocus } from "./field-select.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
 const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기" };
@@ -164,7 +165,8 @@ export function createInspector(deps) {
   function field(label, key, value, help = "", options = null, _unused = null, active = false) {
     const control = options
       ? `<select data-prop="${key}" aria-label="${escapeHtml(label)}">${options.map(([optionValue, optionLabel]) => `<option value="${optionValue}"${value === optionValue ? " selected" : ""}>${optionLabel}</option>`).join("")}</select>`
-      : `<input data-prop="${key}" aria-label="${escapeHtml(label)}" value="${escapeHtml(value)}" autocomplete="off" />`;
+      // Plain text keyboard on purpose: it has "−" and the unit letters (k, m, u …) on every phone; a number pad (inputmode=decimal) has no minus on iOS.
+      : `<input data-prop="${key}" aria-label="${escapeHtml(label)}" value="${escapeHtml(value)}" inputmode="text" autocomplete="off" />`;
     return `<div class="field${active ? " active-field" : ""}"><label>${label}</label>${control}${help ? `<span class="field-help">${help}</span>` : ""}</div>`;
   }
 
@@ -198,6 +200,32 @@ export function createInspector(deps) {
    * The reference direction of the part's current (both windings for a magnetic part) and the button that flips it. Display only:
    * AC phasors and the signed scope traces follow it, the solver and the DC/instantaneous readouts (always the real direction) do not.
    */
+  /**
+   * The current of the part (winding) in its SHOWN reference, from the fresh result: the DC point, the last transient sample, or the AC
+   * phasor at the phasor frequency (in the chosen rms/peak basis). Empty without a fresh result. It sits on the same row as the flip
+   * button, so flipping shows its effect (×(−1), the phase ±180°) right where the student looks.
+   */
+  function currentResultText(component, winding) {
+    const result = state.result;
+    if (!result || state.stale || state.runState?.status === "stale") return "";
+    const key = probeCurrentKey({ componentId: component.id, winding });
+    const sign = currentReferenceSign(component, winding);
+    if (result.analysis === "ac") {
+      const phasor = state.phasorResult?.points?.[0]?.componentCurrents?.[key];
+      if (!phasor || typeof phasor !== "object" || !Number.isFinite(phasor.re) || !Number.isFinite(phasor.im)) return "";
+      const z = signedCurrent(phasor, sign);
+      const magnitude = Math.hypot(z.re, z.im) * acScale(state.acBasis);
+      const degrees = magnitude > 0 ? (Math.atan2(z.im, z.re) * 180) / Math.PI : 0;
+      return `${engineering(magnitude, "A")} (${normalizeAcBasis(state.acBasis)}) ∠ ${Number(degrees.toFixed(2))}°`;
+    }
+    // DC and instantaneous values name the real direction and magnitude, like the canvas arrow and the hover readout.
+    const point = result.analysis === "dc" ? result.points?.[0] : result.points?.at(-1);
+    const raw = point?.componentCurrents?.[key];
+    if (!Number.isFinite(raw)) return "";
+    const text = actualCurrentText(component, raw, { geometryVersion: circuitGeometryVersion(state.circuit), winding, scale: pointCurrentScale(point.componentCurrents) });
+    return text ? `${text}${result.analysis === "transient" ? " · 마지막 시점" : ""}` : "";
+  }
+
   function currentReferenceMarkup(component) {
     if (component.type === "GND") return "";
     const windings = isMagneticPart(component) ? [1, 2] : [1];
@@ -206,10 +234,12 @@ export function createInspector(deps) {
       const reference = referenceDirection(component, geometryVersion, winding);
       const flipped = isCurrentReferenceFlipped(component, winding);
       const name = windings.length > 1 ? (winding === 2 ? "2차 " : "1차 ") : "";
-      return `<div class="current-reference-row"><span>${name}기준 <b>${escapeHtml(reference?.label ?? "")}</b>${flipped ? " · 뒤집음" : ""}</span>`
-        + `<button type="button" data-flip-current="${winding}" aria-pressed="${flipped}" title="AC 페이저·그래프 부호의 기준 방향을 반대로 (계산은 그대로)">기준 뒤집기</button></div>`;
+      const value = currentResultText(component, winding);
+      return `<div class="current-reference-row"><span>${name}기준 <b>${escapeHtml(reference?.label ?? "")}</b>${flipped ? " · 뒤집음" : ""}`
+        + `${value ? `<output class="current-reference-value" data-current-value="${winding}">${escapeHtml(value)}</output>` : ""}</span>`
+        + `<button type="button" data-flip-current="${winding}" aria-pressed="${flipped}" title="AC 페이저·그래프 부호의 기준 방향을 반대로 (계산은 그대로)"><b aria-hidden="true">⇄</b> 기준 뒤집기</button></div>`;
     }).join("");
-    return `<fieldset class="source-group current-reference"><legend>전류 기준 방향</legend>${rows}`
+    return `<fieldset class="source-group current-reference"><legend>전류 기준 방향 · 결과</legend>${rows}`
       + `<p class="field-help">AC 페이저와 그래프 부호(±)의 기준입니다. 교재 그림과 방향이 다르면 뒤집으세요: 표시 값이 ×(−1)이 되고 계산은 그대로입니다. DC·순간값은 늘 실제로 흐르는 방향과 크기로 보입니다.</p></fieldset>`;
   }
 
@@ -355,10 +385,13 @@ export function createInspector(deps) {
       html += `<div class="field"><label>제어 방향</label><select data-control-direction><option value="1"${component.control?.direction === 1 ? " selected" : ""}>+1 · 대상 p→n 그대로</option><option value="-1"${component.control?.direction === -1 ? " selected" : ""}>−1 · 반전</option></select></div>`;
       if (control.status !== "valid") html += `<div class="connection-detail status-analysis-floating"><strong>제어 대상 오류</strong><span>${escapeHtml(control.reason)}</span><small>해결할 때까지 실행·저장할 수 없습니다.</small></div>`;
     }
+    // A coupled coil / transformer has a long list of fields: its two winding currents and their flip buttons come first, next to the
+    // name, instead of below the whole list (they are what the textbook exercises compare).
+    if (isMagneticPart(component)) html += currentReferenceMarkup(component);
     if (component.type === "COUPLED_L") html += couplingFields(p);
     if (component.type === "XFMR_IDEAL") html += transformerFields(p);
     if (component.type === "GND") html += `<p class="field-help">0 V 기준점입니다.</p>`;
-    html += currentReferenceMarkup(component);
+    if (!isMagneticPart(component)) html += currentReferenceMarkup(component);
     html += sweepMarkup(component, state);
     const savedFocus = captureInspectorFocus();
     elements["inspector-content"].innerHTML = html;
@@ -422,7 +455,7 @@ export function createInspector(deps) {
     const slider = state.learningId && key === "phasorFrequency"
       ? `<input type="range" data-setting-slider="${key}" min="0" max="5" step="0.02" value="${Math.log10(Math.max(1, parseValue(value)))}" aria-label="페이저 주파수 빠른 조절"/>`
       : "";
-    return `<label>${label}${slider}<input data-setting="${key}" value="${escapeHtml(value)}" autocomplete="off" /></label>`;
+    return `<label>${label}${slider}<input data-setting="${key}" value="${escapeHtml(value)}" inputmode="text" autocomplete="off" /></label>`;
   }
 
   function renderAnalysisSettings() {
@@ -516,6 +549,9 @@ export function createInspector(deps) {
       setStatus("미확정 입력 취소", "ready");
     });
     elements["inspector-content"].addEventListener("focusin", (event) => { inspectorLastFocused = event.target; });
+    // Tapping or clicking into a value selects it, so the new value replaces it (the caret is respected once the field has the focus).
+    selectAllOnUserFocus(elements["inspector-content"]);
+    selectAllOnUserFocus(elements["analysis-settings"]);
     elements["inspector-content"].addEventListener("keydown", (event) => {
       if (event.key !== "Tab" || event.ctrlKey || event.altKey || event.metaKey) return;
       inspectorTabIntent = event.shiftKey ? -1 : 1;

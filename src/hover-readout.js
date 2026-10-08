@@ -88,13 +88,27 @@ export function createHoverReadout({ state, elements, workspace, scopeView, read
     tip.classList.toggle("stale", model.title === "결과가 오래됨");
   }
 
+  /** The phone selection bar (canvas-actions.js) when it is up: the touch bubble must never cover its buttons. */
+  function selectionBarRect() {
+    const bar = document.getElementById("selection-bar");
+    if (!bar || bar.hidden) return null;
+    const r = bar.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 ? r : null;
+  }
+
   function place() {
     const margin = 6;
     let x;
     let y;
     if (anchor.touch) {
-      x = anchor.x - size.width / 2;
-      y = anchor.y - size.height - 30;
+      // Above the finger; with the selection bar in the way, below it (the bar sits above the part); if both would cover the bar, no bubble.
+      x = Math.max(margin, Math.min(innerWidth - size.width - margin, anchor.x - size.width / 2));
+      const bar = selectionBarRect();
+      const clear = (top) => !bar || x + size.width + 4 <= bar.left || x - 4 >= bar.right || top + size.height + 4 <= bar.top || top - 4 >= bar.bottom;
+      const spots = [anchor.y - size.height - 30, anchor.y + 30].map((top) => Math.max(margin, Math.min(innerHeight - size.height - margin, top)));
+      const spot = spots.find(clear);
+      if (spot === undefined) { tip.classList.add("hidden"); visible = false; lastKey = null; return; }
+      y = spot;
     } else {
       x = anchor.x + 14;
       y = anchor.y + 18;

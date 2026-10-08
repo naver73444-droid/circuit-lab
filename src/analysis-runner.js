@@ -1,4 +1,4 @@
-import { pinCount } from "./circuit-engine.js";
+import { parseValue, pinCount } from "./circuit-engine.js";
 import { acceptsRunGeneration, endpointExists } from "./circuit-edit.js";
 import { acMagnitudeLevel, acPhaseDegrees, currentDisplayScale } from "./plot-format.js";
 import { AnalysisCancelledError, AnalysisWorkerClient } from "./analysis-worker-client.js";
@@ -7,6 +7,7 @@ import { suggestGroundFix, suggestProbes } from "./editor-guide-model.js";
 import { actualCurrentDirection, currentDirectionGuide, currentReferenceSign, pointCurrentScale, probeCurrentKey, signedCurrent } from "./current-direction.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
 import { escapeHtml } from "./safe-dom.js";
+import { isTypingTarget } from "./editor-shortcuts.js";
 import { traceColor } from "./trace-color.js";
 import { formatPortResult, probeKeysForTarget } from "./ui-model.js";
 import { createSweepRunner } from "./sweep-runner.js";
@@ -15,6 +16,36 @@ import { setSingleSelection } from "./selection-model.js";
 import { presentProbe as presentProbeIn, synchronizeIntent as synchronizeIntentIn } from "./run-state.js";
 
 export { createRunState } from "./run-state.js";
+
+/** Automatic re-run waits (ms): a quick one for a small circuit with a short computation, the long one otherwise or during a burst of edits. */
+export const AUTO_RUN_DELAY_MS = Object.freeze({ small: 100, large: 250 });
+/** Edits closer together than this are one burst (slider, held ◀ ▶ repeating every 110 ms, hammered taps). */
+export const AUTO_RUN_BURST_MS = 300;
+const SMALL_CIRCUIT_PARTS = 20;
+const SMALL_RUN_POINTS = 5000;
+
+/** How many points the analysis will compute (DC 1; transient (end − start)/step; AC decades × points per decade), Infinity if unreadable. */
+export function estimatedRunPoints(settings = {}) {
+  try {
+    if (settings.analysis === "transient") return Math.max(1, (parseValue(settings.end) - parseValue(settings.start ?? 0)) / parseValue(settings.step));
+    if (settings.analysis === "ac") return Math.max(1, Math.log10(parseValue(settings.endFrequency) / parseValue(settings.startFrequency)) * parseValue(settings.pointsPerDecade));
+    return 1;
+  } catch {
+    return Infinity;
+  }
+}
+
+/**
+ * The auto-run wait for this circuit and these settings. The quick wait is for an edit to a circuit that already has a result: the first
+ * run of a freshly opened project (the page is still settling: lazy modules, the "해석 중지" button appearing) and an edit made while a
+ * text field has the focus (a result re-renders the panels under the typing) keep the longer one.
+ */
+export function autoRunDelayMs(circuit, settings, { burst = false, hasResult = true, typing = false } = {}) {
+  if (burst || !hasResult || typing) return AUTO_RUN_DELAY_MS.large;
+  const parts = circuit?.components?.length ?? Infinity;
+  const points = estimatedRunPoints(settings);
+  return parts <= SMALL_CIRCUIT_PARTS && Number.isFinite(points) && points <= SMALL_RUN_POINTS ? AUTO_RUN_DELAY_MS.small : AUTO_RUN_DELAY_MS.large;
+}
 
 /** Isolated port result invalidation; no DOM, worker or solver dependency. */
 export function refreshInvalidatedPortPanel(job, portState, renderPanel) {
@@ -136,6 +167,8 @@ export function createAnalysisRunner(deps) {
     if (show) setStatus(text, "ready");
   }
 
+  let lastAutoSchedule = { at: -Infinity, generation: null, burst: false };
+
   /** Debounced automatic run. requestedAt: when the edit happened (a request queued before this module loaded keeps its own time). */
   function scheduleAutoRun({ requestedAt = performance.now() } = {}) {
     cancelScheduledRun();
@@ -155,7 +188,15 @@ export function createAnalysisRunner(deps) {
     } catch { return; }
     const generation = state.generation;
     setAutoHint("자동 갱신 대기");
-    const wait = Math.max(0, 250 - (performance.now() - requestedAt));
+    // A single edit of a small circuit re-runs almost at once; a burst of edits (slider, held or hammered ◀ ▶) keeps the longer wait, so
+    // only its last value is computed, and so does a large circuit or a long sweep.
+    // Only a NEW edit (another generation) counts towards a burst; the same edit scheduled again (blur, gesture end) keeps its wait.
+    const now = performance.now();
+    const sameEdit = lastAutoSchedule.generation === generation;
+    const burst = sameEdit ? lastAutoSchedule.burst : now - lastAutoSchedule.at < AUTO_RUN_BURST_MS;
+    lastAutoSchedule = { at: sameEdit ? lastAutoSchedule.at : now, generation, burst };
+    const typing = isTypingTarget(document.activeElement);
+    const wait = Math.max(0, autoRunDelayMs(state.circuit, state.settings, { burst, hasResult: Boolean(state.result), typing }) - (now - requestedAt));
     state.autoTimer = setTimeout(() => runAnalysis({ automatic: true, generation, requestedAt }), wait);
   }
 

@@ -27,6 +27,17 @@ const SNAP_RING_PX = 18;
 const LABEL_DIGITS = 5;
 const LABEL_PREFIX = new Map([[-12, "p"], [-9, "n"], [-6, "u"], [-3, "m"], [0, ""], [3, "k"], [6, "meg"], [9, "g"], [12, "t"]]);
 
+/** Smallest on-screen size (px) of a part's name and value text; the labels are drawn at 12 user units. */
+export const CANVAS_TEXT_MIN_PX = 11;
+const CANVAS_LABEL_UNITS = 12;
+/** From this label growth on, a source's value drops its wording ("DC bias 10 V" → "10 V") so neighbours overlap less. */
+export const CANVAS_TEXT_COMPACT_K = 1.3;
+/** How much the label groups are scaled at `scale` screen px per user unit: 1 when they are readable anyway, otherwise just enough. */
+export function canvasTextScale(scale) {
+  if (!(scale > 0)) return 1;
+  return Math.max(1, CANVAS_TEXT_MIN_PX / (CANVAS_LABEL_UNITS * scale));
+}
+
 /**
  * The value text drawn on the canvas. A stored value such as "3.66666666667k" (a converted resistance keeps 12 digits so the circuit stays
  * equivalent) is too long to read there, so a value string longer than 8 characters is shown with at most 5 significant digits:
@@ -109,6 +120,11 @@ export function createCanvasRenderer(deps) {
     svg.style.setProperty("--pin-hit-select-r", units(clamp(near * 0.4, 6.5, 18)));
     svg.style.setProperty("--pin-hit-wire-r", units(clamp(near * 0.6, 11, 22)));
     svg.style.setProperty("--junction-hit-r", units(13));
+    // Part names and values never shrink below CANVAS_TEXT_MIN_PX on screen, however far the view is zoomed out: the label groups are
+    // scaled by k around their anchor (styles.css .label-zoom). When they have to grow a lot, the long source wording is dropped.
+    const k = canvasTextScale(scale);
+    svg.style.setProperty("--canvas-text-k", k.toFixed(3));
+    svg.dataset.textCompact = k >= CANVAS_TEXT_COMPACT_K ? "1" : "0";
   }
   if (typeof ResizeObserver === "function") {
     new ResizeObserver(() => syncHitSizes(true)).observe(elements["circuit-canvas"]);
@@ -172,7 +188,10 @@ export function createCanvasRenderer(deps) {
     const sourceDescriptor = ["V", "I", "VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component, state.settings.analysis) : null;
     const magnetic = component.type === "COUPLED_L" || component.type === "XFMR_IDEAL";
     const valueLabel = magnetic ? magneticValueLabel(component) : formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
-    const value = escapeHtml(sourceDescriptor ? `${sourceDescriptor.label} ${valueLabel} ${sourceDescriptor.unit}` : valueLabel);
+    // A source's wording ("DC bias ") is its own tspan, hidden when the labels have to grow (svg[data-text-compact]); textContent is unchanged.
+    const value = sourceDescriptor
+      ? `<tspan class="value-extra">${escapeHtml(sourceDescriptor.label)} </tspan>${escapeHtml(`${valueLabel} ${sourceDescriptor.unit}`)}`
+      : escapeHtml(valueLabel);
     const editProp = magnetic
       ? (component.type === "XFMR_IDEAL" ? "n" : component.props?.coupling === "M" ? "M" : "k")
       : sourceDescriptor?.prop ?? (component.props?.value !== undefined ? "value" : component.props?.gain !== undefined ? "gain" : "");
@@ -230,8 +249,15 @@ export function createCanvasRenderer(deps) {
     const labelY = vertical ? -7 : -29;
     const valueY = vertical ? 12 : 35;
     const anchor = vertical ? "start" : "middle";
-    const modeMarkup = ["V", "I"].includes(component.type) && !sourceDescriptor ? `<text class="source-mode-label" x="${labelX}" y="${valueY + 16}" style="text-anchor:${anchor}">${escapeHtml(mode)}</text>` : "";
-    const labels = `<g class="upright-labels" transform="rotate(${upright})"><text class="label" x="${labelX}" y="${labelY}" style="text-anchor:${anchor}">${ref}</text>${value ? `<text class="value-label" data-edit-prop="${escapeHtml(editProp)}" x="${labelX}" y="${valueY}" style="text-anchor:${anchor}">${value}</text>` : ""}${modeMarkup}</g>`;
+    // Label groups are scaled around their anchor so they keep a readable screen size (see syncHitSizes): the name grows up from its
+    // baseline, the value block hangs from its top edge (text-before-edge, where the 12-unit text's top always was) and grows down, away
+    // from the name, the body and the pins.
+    const hangY = valueY - 11;
+    const hanging = `dominant-baseline:text-before-edge;text-anchor:${anchor}`;
+    const modeMarkup = ["V", "I"].includes(component.type) && !sourceDescriptor ? `<text class="source-mode-label" x="0" y="19" style="${hanging}">${escapeHtml(mode)}</text>` : "";
+    const valueMarkup = value ? `<text class="value-label" data-edit-prop="${escapeHtml(editProp)}" x="0" y="0" style="${hanging}">${value}</text>` : "";
+    const labels = `<g class="upright-labels" transform="rotate(${upright})"><g transform="translate(${labelX} ${labelY})"><g class="label-zoom"><text class="label" x="0" y="0" style="text-anchor:${anchor}">${ref}</text></g></g>`
+      + (valueMarkup || modeMarkup ? `<g transform="translate(${labelX} ${hangY})"><g class="label-zoom">${valueMarkup}${modeMarkup}</g></g>` : "") + `</g>`;
     const diagnostic = diagnosticIds.has(component.id) ? ` data-diagnostic="1"` : "";
     const diagnosticMarkup = diagnostic ? `<rect class="diagnostic-halo" x="-52" y="-52" width="104" height="104" rx="8"/>` : "";
     return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${escapeHtml(connectionStatus)}"${diagnostic} aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${diagnosticMarkup}${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${labels}${deleteMarkup}</g>`;
