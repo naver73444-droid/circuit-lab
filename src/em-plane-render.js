@@ -7,7 +7,7 @@
 // the moving source is evaluated again, the others come from the cache. All colours come from the palette (CSS tokens).
 import { compress, compressedLevels, contourSet, typicalMagnitude } from './em-contour.js';
 import { computePlaneLines, createSuperpositionSampler } from './em-plane-field.js';
-import { planeAxes, planeNormal, scaleBar, sectionRadius } from './em-plane-geometry.js';
+import { fitLabel, placeSensorLabel, planeAxes, planeNormal, scaleBar, sectionRadius } from './em-plane-geometry.js';
 import { cssRgb, cssRgba } from './em-palette.js';
 import { sourceCenter } from './em-playground-state.js';
 import { strengthText } from './em-source-edit.js';
@@ -164,7 +164,7 @@ function drawSource(ctx, source, scene, palette, selected) {
   if (selected) {
     ctx.strokeStyle = palette.accent.css; ctx.lineWidth = 2.2;
     ctx.beginPath(); ctx.arc(cx, cy, source.type === 'point' ? 19 : 14, 0, 2 * Math.PI); ctx.stroke();
-    label(ctx, `${source.id}  ${strengthText(source)}`, cx + 22, cy - 20, palette, 'left');
+    label(ctx, `${source.id}  ${strengthText(source)}`, cx + 22, cy - 20, palette, 'left', scene, cx);
   }
 }
 
@@ -272,15 +272,20 @@ function drawCurrentSource(ctx, source, scene, palette, selected) {
   if (selected) {
     ctx.strokeStyle = palette.accent.css; ctx.lineWidth = 2.2;
     ctx.beginPath(); ctx.arc(cx, cy, source.type === 'wire' ? 19 : 14, 0, 2 * Math.PI); ctx.stroke();
-    label(ctx, `${source.id}  ${currentStrengthText(source)}`, cx + 22, cy - 20, palette, 'left');
+    label(ctx, `${source.id}  ${currentStrengthText(source)}`, cx + 22, cy - 20, palette, 'left', scene, cx);
   }
 }
 
-function label(ctx, text, x, y, palette, align = 'left') {
+// A one-line label kept inside the canvas (scene.view): a left-aligned one flips to the other side of `flipAround` at the right
+// edge. Its box goes to scene.labels, which the sensor's readout keeps clear of.
+function label(ctx, text, x, y, palette, align = 'left', scene = null, flipAround = null) {
   ctx.font = `600 12px ${FONT}`; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  const width = ctx.measureText(text).width + 4, view = scene?.view;
+  if (view) ({ x, y } = fitLabel({ x, y, width, align, viewWidth: view.width, viewHeight: view.height, flipAround }));
   ctx.lineWidth = 3.5; ctx.strokeStyle = cssRgba(palette.bg.rgb, 0.9);
   ctx.strokeText(text, x, y);
   ctx.fillStyle = palette.text.css; ctx.fillText(text, x, y);
+  scene?.labels?.push({ x: align === 'center' ? x - width / 2 : x - 2, y: y - 8, width, height: 16 });
 }
 
 function drawGauss(ctx, scene, palette) {
@@ -301,7 +306,7 @@ function drawGauss(ctx, scene, palette) {
   const hx = cx + pixels * Math.SQRT1_2, hy = cy - pixels * Math.SQRT1_2;
   ctx.fillStyle = palette.gauss.css;
   ctx.beginPath(); ctx.arc(hx, hy, 6, 0, 2 * Math.PI); ctx.fill();
-  if (gauss.label) label(ctx, gauss.label, cx, cy + pixels + 14, palette, 'center');
+  if (gauss.label) label(ctx, gauss.label, cx, cy + pixels + 14, palette, 'center', scene);
 }
 
 // The Ampere loop: a dashed path (circle or rectangle) with its traversal direction, the sources that link it, and a resize handle.
@@ -328,7 +333,7 @@ function drawAmpere(ctx, scene, palette) {
   }
   const [hx, hy] = rect ? [cx + hw, cy - hh] : [cx + r * Math.SQRT1_2, cy - r * Math.SQRT1_2];
   ctx.beginPath(); ctx.arc(hx, hy, 6, 0, 2 * Math.PI); ctx.fill();
-  if (ampere.label) label(ctx, ampere.label, cx, cy + (rect ? hh : r) + 14, palette, 'center');
+  if (ampere.label) label(ctx, ampere.label, cx, cy + (rect ? hh : r) + 14, palette, 'center', scene);
 }
 
 // Force on the selected source: an arrow of fixed length (the strength is in the text) from the source, along the in-plane part of F.
@@ -342,7 +347,7 @@ function drawForce(ctx, scene, palette) {
     ctx.beginPath(); ctx.moveTo(x + ux * 20, y + uy * 20); ctx.lineTo(x + ux * 62, y + uy * 62); ctx.stroke();
     arrowHead(ctx, x + ux * 66, y + uy * 66, ux, uy, 9);
   }
-  if (force.text) label(ctx, force.text, x + 22, y + 30, palette, 'left');
+  if (force.text) label(ctx, force.text, x + 22, y + 30, palette, 'left', scene, x);
 }
 
 function drawSensor(ctx, scene, palette) {
@@ -357,22 +362,21 @@ function drawSensor(ctx, scene, palette) {
   ctx.fillStyle = cssRgba(palette.bg.rgb, 0.55);
   ctx.beginPath(); ctx.arc(x, y, 8, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(x - 13, y); ctx.lineTo(x + 13, y); ctx.moveTo(x, y - 13); ctx.lineTo(x, y + 13); ctx.stroke();
-  if (!sensor.text) return;
-  ctx.font = `600 12px ${FONT}`;
-  const width = ctx.measureText(sensor.text).width + 14, height = 22;
-  let bx = x + 16, by = y + 14;
-  if (bx + width > view.width - 4) bx = x - 16 - width;
-  if (by + height > view.height - 4) by = y - 14 - height;
-  // Under a finger: centred well above the fingertip, where the hand does not cover it.
-  if (sensor.lift) {
-    bx = Math.max(4, Math.min(view.width - width - 4, x - width / 2));
-    by = Math.max(4, y - 48 - height);
-  }
+  if (!sensor.text) return null;
+  // The readout box stays inside the canvas (em-plane-geometry.placeSensorLabel); a text wider than the canvas gets a smaller font.
+  let size = 12;
+  ctx.font = `600 ${size}px ${FONT}`;
+  const room = view.width - 8 - 14, natural = ctx.measureText(sensor.text).width;
+  if (natural > room) { size = Math.max(9, Math.floor(12 * room / natural)); ctx.font = `600 ${size}px ${FONT}`; }
+  const width = Math.min(view.width - 8, ctx.measureText(sensor.text).width + 14), height = size + 10;
+  // Under a finger (lift): centred well above the fingertip where the hand does not cover it; beside or below it at the top edge.
+  const box = placeSensorLabel({ x, y, width, height, viewWidth: view.width, viewHeight: view.height, lift: Boolean(sensor.lift), avoid: scene.labels });
   ctx.fillStyle = cssRgba(palette.bg.rgb, 0.88);
   ctx.strokeStyle = palette.sensor.css; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.roundRect(bx, by, width, height, 6); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(box.x, box.y, width, height, 6); ctx.fill(); ctx.stroke();
   ctx.fillStyle = palette.text.css; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText(sensor.text, bx + 7, by + height / 2 + 0.5);
+  ctx.fillText(sensor.text, box.x + 7, box.y + height / 2 + 0.5, width - 14);
+  return { x: box.x, y: box.y, width, height, side: box.side, fontSize: size, sensor: [x, y], view: [view.width, view.height] };
 }
 
 function drawScaleBar(ctx, view, palette, wavelengths) {
@@ -396,7 +400,7 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
   // gridBuilds counts how often the field was sampled for the colour map; a chip or theme change must not raise it.
   // partsEvaluated / partsReused: source contributions sampled afresh / taken from the per-source cache (colour and arrow grids).
   const stats = {
-    baseMs: 0, baseCached: false, gridCached: false, gridBuilds: 0, overlayMs: 0, cols: 0, rows: 0, lines: 0, stages: {}, partsEvaluated: 0, partsReused: 0,
+    baseMs: 0, baseCached: false, gridCached: false, gridBuilds: 0, overlayMs: 0, cols: 0, rows: 0, lines: 0, stages: {}, partsEvaluated: 0, partsReused: 0, sensorLabel: null,
   };
 
   function sampleGrid(scene, draft, key) {
@@ -478,7 +482,7 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
       const started = performance.now();
       sizeCanvas(canvas, ctx, view.width, view.height, dpr);
       ctx.clearRect(0, 0, view.width, view.height);
-      const overlay = { ...scene, normal: planeNormal(scene.plane) };
+      const overlay = { ...scene, normal: planeNormal(scene.plane), labels: [] };
       const drawOne = scene.field.kind === 'current' ? drawCurrentSource : drawSource;
       for (const source of scene.sources) {
         if (source.visible !== false) drawOne(ctx, source, overlay, palette, source.id === scene.selectedId);
@@ -486,7 +490,8 @@ export function createPlaneRenderer(baseCanvas, canvas, getPalette) {
       if (scene.gauss) drawGauss(ctx, overlay, palette);
       if (scene.ampere) drawAmpere(ctx, overlay, palette);
       if (scene.force) drawForce(ctx, overlay, palette);
-      if (scene.sensor) drawSensor(ctx, overlay, palette);
+      // Where the sensor's readout box landed (canvas px): the phone checks require it to stay inside the canvas.
+      stats.sensorLabel = scene.sensor ? drawSensor(ctx, overlay, palette) : null;
       drawScaleBar(ctx, view, palette, scene.field.kind === 'wave');
       stats.overlayMs = perfMeasure('em:overlay', started) - started;
       return stats;

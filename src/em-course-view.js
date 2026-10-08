@@ -17,6 +17,17 @@ function prepareCanvas(canvas, ctx, dpr) {
   ctx.globalAlpha = 1; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.lineWidth = 1; ctx.lineCap = 'butt';
 }
 
+// Left-aligned canvas text that stays inside a narrow (phone) picture: a line too long for the room right of `x` gets a smaller
+// font (down to 10 px) and, if it still does not fit, is squeezed to the room.
+function fitText(ctx, text, x, y) {
+  const room = ctx.canvas.clientWidth - x - 6, width = ctx.measureText(text).width;
+  if (!(room > 0) || width <= room) { ctx.fillText(text, x, y); return; }
+  const font = ctx.font, size = Number(/(\d+(?:\.\d+)?)px/.exec(font)?.[1] ?? 12);
+  ctx.font = font.replace(/\d+(?:\.\d+)?px/, `${Math.max(10, Math.floor((size * room / width) * 10) / 10)}px`);
+  ctx.fillText(text, x, y, room);
+  ctx.font = font;
+}
+
 // Redraw when the canvas changes size (window resize, a note appearing above it, a column reflowing).
 function observeSize(canvas, render, signal) {
   const observer = new ResizeObserver(() => render());
@@ -61,7 +72,7 @@ function drawOverlay(ctx, overlay, map, C) {
     const a = map(line.a), b = map(line.b);
     ctx.strokeStyle = C.gauss; ctx.lineWidth = 2; ctx.setLineDash([8, 5]);
     ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); ctx.setLineDash([]);
-    if (line.label) { ctx.fillStyle = C.gauss; ctx.fillText(line.label, 12, a[1] - 6); }
+    if (line.label) { ctx.fillStyle = C.gauss; fitText(ctx, line.label, 12, a[1] - 6); }
   }
   for (const glyph of overlay.glyphs || []) {
     const [x, y] = map(glyph.at), color = glyph.sign ? C.source : C.muted;
@@ -69,10 +80,10 @@ function drawOverlay(ctx, overlay, map, C) {
     ctx.beginPath(); ctx.arc(x, y, 7, 0, 2 * Math.PI); ctx.stroke();
     if (glyph.sign > 0) { ctx.beginPath(); ctx.arc(x, y, 2.5, 0, 2 * Math.PI); ctx.fill(); }
     else if (glyph.sign < 0) { ctx.beginPath(); ctx.moveTo(x - 4, y - 4); ctx.lineTo(x + 4, y + 4); ctx.moveTo(x + 4, y - 4); ctx.lineTo(x - 4, y + 4); ctx.stroke(); }
-    if (glyph.label) { ctx.fillStyle = color; ctx.fillText(glyph.label, x + 12, y + 4); }
+    if (glyph.label) { ctx.fillStyle = color; fitText(ctx, glyph.label, x + 12, y + 4); }
   }
   ctx.fillStyle = C.muted;
-  (overlay.texts || []).forEach((text, i) => ctx.fillText(text, 12, 44 + 18 * i));
+  (overlay.texts || []).forEach((text, i) => fitText(ctx, text, 12, 44 + 18 * i));
 }
 
 export function createCourseView(canvas, onProbe, getPalette) {
@@ -106,7 +117,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
     delete canvas.dataset.envelopeUnresolved;
     const layers = profileLayers(current.profiles, instant);
     if (!layers.length) {
-      ctx.fillStyle = C.muted; ctx.fillText('표본 해상도 제한 · 곡선을 표시하지 않습니다.', 16, 44);
+      ctx.fillStyle = C.muted; fitText(ctx, '표본 해상도 제한 · 곡선을 표시하지 않습니다.', 16, 44);
       canvas.dataset.profileSeries = '0';
       return;
     }
@@ -126,7 +137,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
       }
       const mapY = y => bottom - (y - yMin) / (yMax - yMin) * (bottom - top);
       ctx.fillStyle = C.text;
-      ctx.fillText(`${live ? live.label : data.label} (${live ? live.unit : data.unit})`, left, top - 8);
+      fitText(ctx, `${live ? live.label : data.label} (${live ? live.unit : data.unit})`, left, top - 8);
       ctx.fillStyle = C.muted;
       ctx.fillText(yMax.toExponential(1), 4, top + 5);
       ctx.fillText(yMin.toExponential(1), 4, bottom);
@@ -148,7 +159,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
       if (unresolved) {
         // A wavelength too short for the display would alias into a flat, misleading curve: say so instead of drawing it.
         ctx.fillStyle = C.muted;
-        ctx.fillText(instant[layer.index].reason, left + 10, (top + bottom) / 2 + 4);
+        fitText(ctx, instant[layer.index].reason, left + 10, (top + bottom) / 2 + 4);
         canvas.dataset.instantUnresolved = 'true';
       } else trace(live ? live.points : data.points);
       if (live && !layer.envelope) canvas.dataset.envelopeUnresolved = 'true';
@@ -163,7 +174,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
     const note = noEnvelope ? ' · 진폭 포락선은 표본 상한으로 생략' : withEnvelope ? ' · 파선: 진폭 포락선' : '';
     const axis = current.definition.view?.coordinate || { key: 'z', unit: 'm' };
     const unitScale = axis.scale > 0 ? axis.scale : 1, unitText = axis.unit === '°' ? '°' : ` ${axis.unit}`;
-    ctx.fillText(`${axis.key} ${(xMin / unitScale).toPrecision(3)} … ${(xMax / unitScale).toPrecision(3)}${unitText} · 점선: 측정 위치${note}`, 10, h - 17);
+    fitText(ctx, `${axis.key} ${(xMin / unitScale).toPrecision(3)} … ${(xMax / unitScale).toPrecision(3)}${unitText} · 점선: 측정 위치${note}`, 10, h - 17);
     Object.assign(canvas.dataset, { profileSeries: String(layers.length), profileXMin: String(xMin), profileXMax: String(xMax) });
   }
 
@@ -173,7 +184,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
   function renderCurve(ctx, w, h, C) {
     const spec = current.definition.view.curve || {}, box = curveBox(w, h), list = (current.profiles || []).filter(item => item.points?.length > 1);
     ctx.font = `12px ${FONT}`;
-    if (!list.length) { ctx.fillStyle = C.muted; ctx.fillText('표시할 곡선이 없습니다.', 16, 44); canvas.dataset.curveSeries = '0'; return; }
+    if (!list.length) { ctx.fillStyle = C.muted; fitText(ctx, '표시할 곡선이 없습니다.', 16, 44); canvas.dataset.curveSeries = '0'; return; }
     const scalar = key => current.result?.scalars?.find(item => item.key === key)?.value;
     const marker = spec.marker ? [scalar(spec.marker.x), scalar(spec.marker.y)] : null;
     const xs = list.flatMap(item => item.points.map(q => q.coordinate)), ys = list.flatMap(item => item.points.map(q => q.value));
@@ -197,9 +208,9 @@ export function createCourseView(canvas, onProbe, getPalette) {
       ctx.beginPath(); ctx.arc(mapX(marker[0]), mapY(marker[1]), 6, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
     }
     ctx.restore();
-    ctx.fillStyle = C.text; ctx.fillText(`${spec.yLabel || 'y'} (${spec.yUnit || ''}) ${fmt(y0)} … ${fmt(y1)}`, box.left, 18);
-    ctx.fillStyle = C.muted; ctx.fillText(`${spec.xLabel || 'x'} (${spec.xUnit || ''}) ${fmt(x0)} … ${fmt(x1)} · ${list.map(item => item.label).join(' / ')}`, 10, h - 26);
-    ctx.fillText('그림을 가로로 끌면 위상(관측 위치)이 바뀝니다 · 채운 점: 현재 위치', 10, h - 8);
+    ctx.fillStyle = C.text; fitText(ctx, `${spec.yLabel || 'y'} (${spec.yUnit || ''}) ${fmt(y0)} … ${fmt(y1)}`, box.left, 18);
+    ctx.fillStyle = C.muted; fitText(ctx, `${spec.xLabel || 'x'} (${spec.xUnit || ''}) ${fmt(x0)} … ${fmt(x1)} · ${list.map(item => item.label).join(' / ')}`, 10, h - 26);
+    fitText(ctx, '그림을 가로로 끌면 위상(관측 위치)이 바뀝니다 · 채운 점: 현재 위치', 10, h - 8);
     Object.assign(canvas.dataset, { curveSeries: String(list.length), curveXMin: String(x0), curveXMax: String(x1), curveYMin: String(y0), curveYMax: String(y1) });
   }
 
@@ -219,7 +230,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
       }
     }
     ctx.fillStyle = C.muted; ctx.font = `13px ${FONT}`;
-    ctx.fillText('축상 모델 · 축 밖의 장은 표시하지 않음', 12, 23);
+    fitText(ctx, '축상 모델 · 축 밖의 장은 표시하지 않음', 12, 23);
   }
 
   function renderFieldArrows(ctx, w, h, C, { axes, scale, density, map, vectorKey }) {
@@ -267,8 +278,8 @@ export function createCourseView(canvas, onProbe, getPalette) {
       else glyph(w / 2, h / 2, positive);
       for (let i = 0; i < 8; i++) glyph(w / 2 + outer * scale * Math.cos(i * Math.PI / 4), h / 2 - outer * scale * Math.sin(i * Math.PI / 4), !positive);
     }
-    ctx.fillStyle = C.source; ctx.fillText('내부 +I · 외부 −I', 12, 43);
-    ctx.fillStyle = C.path; ctx.fillText('점선 원: 암페어 경로 · 음영: 포함 전류의 단면', 12, 62);
+    ctx.fillStyle = C.source; fitText(ctx, '내부 +I · 외부 −I', 12, 43);
+    ctx.fillStyle = C.path; fitText(ctx, '점선 원: 암페어 경로 · 음영: 포함 전류의 단면', 12, 62);
     canvas.dataset.probeRegion = result.region || '';
     canvas.dataset.enclosedCurrent = String(result.scalars?.find(v => v.key === 'enclosedCurrent')?.value ?? '');
     const radius = Math.hypot(point[0], point[1]);
@@ -296,7 +307,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
       ctx.strokeStyle = emf > 0 ? C.pos : emf < 0 ? C.neg : C.source; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.ellipse(w / 2, h / 2, radius, Math.max(0, Math.abs(Math.cos(params.theta)) * radius), 0, 0, 2 * Math.PI); ctx.stroke();
       ctx.fillStyle = C.muted; ctx.font = `13px ${FONT}`;
-      ctx.fillText(`루프 개념도 · N=${params.turns} · θ=${params.theta.toPrecision(3)} rad · 색: 기전력 부호`, 12, 44);
+      fitText(ctx, `루프 개념도 · N=${params.turns} · θ=${params.theta.toPrecision(3)} rad · 색: 기전력 부호`, 12, 44);
     } else if (definition.id === 'motional-rod') {
       const { length, railLength, velocity } = params, x = result.scalars?.find(s => s.key === 'position')?.value;
       ctx.strokeStyle = C.source; ctx.lineWidth = 3;
@@ -310,7 +321,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
       }
       if (params.closedCircuit === 1) { const a = map([0, -length / 2, 0]), b = map([0, length / 2, 0]); ctx.strokeStyle = C.source; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); }
       ctx.fillStyle = C.muted; ctx.font = `13px ${FONT}`;
-      ctx.fillText(`레일·이동도선 · v=${velocity} m/s · B는 z 방향`, 12, 44);
+      fitText(ctx, `레일·이동도선 · v=${velocity} m/s · B는 z 방향`, 12, 44);
     } else if (kind !== 'coax-cross-section') {
       ctx.fillStyle = C.source; ctx.beginPath(); ctx.arc(w / 2, h / 2, 9, 0, 2 * Math.PI); ctx.fill();
     }
@@ -325,11 +336,11 @@ export function createCourseView(canvas, onProbe, getPalette) {
         ctx.beginPath(); ctx.arc(...center, radius, 0, 2 * Math.PI); ctx.stroke();
       }
       ctx.setLineDash([]); ctx.fillStyle = C.gauss; ctx.font = `13px ${FONT}`;
-      ctx.fillText(definition.id === 'ampere-wire' ? '점선: 암페어 경로 (방향은 입력 조건)' : '점선: 가우스면 단면 (3D 플럭스는 수치검증)', 12, 44);
+      fitText(ctx, definition.id === 'ampere-wire' ? '점선: 암페어 경로 (방향은 입력 조건)' : '점선: 가우스면 단면 (3D 플럭스는 수치검증)', 12, 44);
     }
     if (['dielectric-interface', 'layered-plate'].includes(definition.id)) {
       ctx.fillStyle = C.gauss; ctx.font = `13px ${FONT}`;
-      ctx.fillText(`εr1=${params.epsilon1R} · εr2=${params.epsilon2R} · 선: 재료/도체 경계`, 12, 44);
+      fitText(ctx, `εr1=${params.epsilon1R} · εr2=${params.epsilon2R} · 선: 재료/도체 경계`, 12, 44);
     }
     // Lecture experiments may describe extra structure (an interface line, an image current) in world coordinates.
     const overlay = typeof definition.view?.overlay === 'function' ? definition.view.overlay(params) : null;
@@ -384,7 +395,7 @@ export function createCourseView(canvas, onProbe, getPalette) {
         }
       } else renderStructure(ctx, w, h, C, { scale, map });
       ctx.fillStyle = C.muted; ctx.font = `13px ${FONT}`;
-      ctx.fillText(`${'xyz'[axes[0]]}${'xyz'[axes[1]]} 단면 · ${vectorKey} 방향`, 12, 23);
+      fitText(ctx, `${'xyz'[axes[0]]}${'xyz'[axes[1]]} 단면 · ${vectorKey} 방향`, 12, 23);
     }
     drawProbe(ctx, w, h, C, { axes, axisOnly, scale, map, vectorKey });
     drawClock(ctx, w, C);
@@ -407,10 +418,10 @@ export function createCourseView(canvas, onProbe, getPalette) {
     ctx.beginPath(); ctx.arc(px, py, 10, 0, 2 * Math.PI);
     ctx.moveTo(px - 16, py); ctx.lineTo(px + 16, py); ctx.moveTo(px, py - 16); ctx.lineTo(px, py + 16); ctx.stroke();
     ctx.fillStyle = C.text; ctx.font = `12px ${FONT}`;
-    if (isCoax(current.definition)) { ctx.fillText('흰 점: 관측 위치 · 점선: 관측 반경', 12, h - 16); return; }
-    ctx.fillText(axisOnly ? `z ±${(h / (2 * scale)).toPrecision(3)} m · 흰 원: 측정점`
+    if (isCoax(current.definition)) { fitText(ctx, '흰 점: 관측 위치 · 점선: 관측 반경', 12, h - 16); return; }
+    fitText(ctx, axisOnly ? `z ±${(h / (2 * scale)).toPrecision(3)} m · 흰 원: 측정점`
       : `${'xyz'[axes[0]]} ±${(w / (2 * scale)).toPrecision(2)} / ${'xyz'[axes[1]]} ±${(h / (2 * scale)).toPrecision(2)} m · 등축비`, 12, h - 30);
-    ctx.fillText('화살표: 장 방향 · 길이는 크기와 무관', 12, h - 13);
+    fitText(ctx, '화살표: 장 방향 · 길이는 크기와 무관', 12, h - 13);
   }
 
   const move = event => {
@@ -514,7 +525,7 @@ export function createRadialProfileView(canvas, onRadius, getPalette) {
     const left = 58, right = w - 18, top = 34, bottom = h - 40;
     const mapX = x => left + (x - domain[0]) / (domain[1] - domain[0]) * (right - left), mapY = y => bottom - (y - yMin) / (yMax - yMin) * (bottom - top);
     ctx.font = `12px ${FONT}`; ctx.fillStyle = C.text;
-    ctx.fillText(normalized ? 'Bφ/B₀ · B₀=μI/(2πa)' : 'Bφ (T)' + (current.normalized ? ' · I=0: 정규화 없음' : ''), 12, 20);
+    fitText(ctx, normalized ? 'Bφ/B₀ · B₀=μI/(2πa)' : 'Bφ (T)' + (current.normalized ? ' · I=0: 정규화 없음' : ''), 12, 20);
     ctx.fillStyle = C.muted;
     ctx.fillText(yMax.toPrecision(3), 3, top + 5);
     ctx.fillText(yMin.toPrecision(3), 3, bottom);
@@ -539,7 +550,7 @@ export function createRadialProfileView(canvas, onRadius, getPalette) {
     if (Number.isFinite(value)) { ctx.fillStyle = C.probe; ctx.beginPath(); ctx.arc(x, mapY(value / (normalized ? normalizer : 1)), 5, 0, 2 * Math.PI); ctx.fill(); }
     ctx.restore();
     ctx.fillStyle = C.text;
-    ctx.fillText((current.normalized ? 'r/a' : 'r (m)') + ' · ' + domain[0].toPrecision(3) + ' … ' + domain[1].toPrecision(3) + ' · 드래그로 관측점 이동', 12, h - 15);
+    fitText(ctx, (current.normalized ? 'r/a' : 'r (m)') + ' · ' + domain[0].toPrecision(3) + ' … ' + domain[1].toPrecision(3) + ' · 드래그로 관측점 이동', 12, h - 15);
     Object.assign(canvas.dataset, {
       profileSeries: '1', radius: String(radius), cursor: String(cursor), normalized: String(normalized),
       profileXMin: String(domain[0]), profileXMax: String(domain[1]), probeRegion: current.result.region || '',
@@ -588,7 +599,7 @@ export function drawTimeTrace(canvas, trace, time, palette, label) {
   const t0 = trace.points[0].t, t1 = trace.points.at(-1).t;
   const mapX = t => left + (t - t0) / (t1 - t0 || 1) * (right - left), mapY = v => bottom - (v - yMin) / (yMax - yMin) * (bottom - top);
   ctx.font = `12px ${FONT}`; ctx.fillStyle = C.text;
-  ctx.fillText(`${label} (${trace.unit})`, left, 14);
+  fitText(ctx, `${label} (${trace.unit})`, left, 14);
   ctx.strokeStyle = C.grid; ctx.strokeRect(left, top, right - left, bottom - top);
   ctx.strokeStyle = C.line; ctx.beginPath(); ctx.moveTo(left, mapY(0)); ctx.lineTo(right, mapY(0)); ctx.stroke();
   ctx.strokeStyle = C.field; ctx.lineWidth = 2; ctx.beginPath();

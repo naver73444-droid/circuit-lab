@@ -21,7 +21,10 @@ export const SHELL = `
       <div class="em-course-heading">
         <strong id="em-course-title"></strong><span id="em-course-status" class="em-course-status"></span>
       </div>
-      <p class="em-note" id="em-course-desc" hidden></p>
+      <div class="em-course-desc-row">
+        <p class="em-note" id="em-course-desc" hidden></p>
+        <button class="em-course-more" id="em-course-desc-more" type="button" aria-controls="em-course-desc" aria-expanded="false" hidden>더 보기</button>
+      </div>
       <p class="em-note" id="em-course-picture-note" hidden></p>
       <div class="em-course-canvas-box" id="em-course-canvas-box">
         <canvas id="em-course-canvas" tabindex="0"

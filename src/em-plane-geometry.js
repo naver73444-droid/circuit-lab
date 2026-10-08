@@ -140,6 +140,45 @@ export function scaleBar(view, targetPx = 96) {
   return { meters, pixels: meters * view.scale, label };
 }
 
+const clampTo = (value, low, high) => (high < low ? low : Math.max(low, Math.min(high, value)));
+
+/**
+ * Top-left corner of the sensor's readout box (width × height px) for a sensor at canvas (x, y), kept inside the view with a
+ * `margin`. At rest the box sits below and to the right of the sensor, flips to the left / above at an edge and slides along
+ * the edge when neither side fits; it never covers the crosshair (|dy| ≤ 13 px). With `lift` (a finger holds the sensor) it
+ * sits centred well above the fingertip; near the top edge it moves beside the finger, and below it when there is no room
+ * beside either. Of the spots inside the view, the first one clear of the `avoid` boxes ({ x, y, width, height }: the labels of
+ * a selected source, a force, ...) wins. Returns { x, y, side } with side 'below' | 'above' | 'lift-above' | 'lift-right' |
+ * 'lift-left' | 'lift-below'.
+ */
+export function placeSensorLabel({ x, y, width, height, viewWidth, viewHeight, lift = false, margin = 4, avoid = [] }) {
+  const left = margin, top = margin, right = viewWidth - margin - width, bottom = viewHeight - margin - height;
+  const slide = value => clampTo(value, left, right);
+  const besideY = clampTo(y - height - 6, top, bottom);
+  const spots = lift
+    ? [[slide(x - width / 2), y - 48 - height, 'lift-above'], [x + 44, besideY, 'lift-right'], [x - 44 - width, besideY, 'lift-left'],
+      [slide(x - width / 2), y + 48, 'lift-below']]
+    : [[x + 16, y + 14, 'below'], [x - 16 - width, y + 14, 'below'], [x + 16, y - 14 - height, 'above'], [x - 16 - width, y - 14 - height, 'above'],
+      [slide(x + 16), y + 14, 'below'], [slide(x + 16), y - 14 - height, 'above']];
+  const inside = ([bx, by]) => bx >= left - 1e-9 && bx <= right + 1e-9 && by >= top - 1e-9 && by <= bottom + 1e-9;
+  const clear = ([bx, by]) => avoid.every(o => !o || bx >= o.x + o.width + 2 || bx + width <= o.x - 2 || by >= o.y + o.height + 2 || by + height <= o.y - 2);
+  const fitting = spots.filter(inside);
+  const [bx, by, side] = fitting.find(clear) ?? fitting[0] ?? [slide(spots.at(-1)[0]), clampTo(spots.at(-1)[1], top, bottom), spots.at(-1)[2]];
+  return { x: bx, y: by, side };
+}
+
+/**
+ * Anchor of a one-line canvas label (textBaseline 'middle', `align` 'left' or 'center') of `width` px so the whole text stays
+ * inside the view: a left-aligned label that would run off the right edge flips to the other side of `flipAround` (the x of
+ * the thing it names), and the result is clamped to the margins. Returns { x, y }.
+ */
+export function fitLabel({ x, y, width, align = 'left', viewWidth, viewHeight, flipAround = null, margin = 4, halfHeight = 8 }) {
+  let start = align === 'center' ? x - width / 2 : x;
+  if (align === 'left' && flipAround !== null && start + width > viewWidth - margin) start = flipAround - (x - flipAround) - width;
+  start = clampTo(start, margin, viewWidth - margin - width);
+  return { x: align === 'center' ? start + width / 2 : start, y: clampTo(y, margin + halfHeight, viewHeight - margin - halfHeight) };
+}
+
 /** Zoom keeping the world point under (x, y) fixed. Returns the new { span, offset }. */
 export function zoomAbout(view, x, y, factor) {
   const span = Math.min(SPAN_RANGE[1], Math.max(SPAN_RANGE[0], view.span * factor));

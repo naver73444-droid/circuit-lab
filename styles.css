@@ -686,6 +686,9 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .em-course-sweep .em-number input { width: 8em; }
 .em-course-sweep .em-error { flex: 1 1 100%; margin: 0; }
 .em-course-sweep[hidden], #em-course-desc[hidden] { display: none; }
+.em-course-desc-row { display: flex; align-items: flex-end; gap: 6px; min-width: 0; }
+.em-course-desc-row #em-course-desc { flex: 1 1 auto; min-width: 0; }
+.em-course-more { display: none; }
 .em-param.no-slider { grid-template-columns: minmax(84px, 30%) minmax(0, 1fr); }
 .em-param > select { grid-column: 2 / -1; }
 .em-course-conditions { display: grid; gap: 8px; margin-top: 10px; }
@@ -732,7 +735,17 @@ body :has(.topbar) { height: 100%; min-height: 0; }
   .em-course-pick select { min-width: 0; }
   .em-course-body { display: flex; flex-direction: column; }
   .em-course-visual, .em-course-side { overflow: visible; }
-  .em-course-canvas-box { flex: none; height: min(60dvh, 420px); min-height: 320px; }
+  /* The picture fits the first screen under the bar, the title and the folded description (375x667 included). */
+  .em-course-canvas-box { flex: none; height: clamp(300px, calc(100dvh - 300px), 420px); min-height: 300px; }
+  /* A 16 px strip at both sides of the picture lets a finger scroll the page; the rest of the picture claims the drag. */
+  .em-course-canvas-box::before, .em-course-canvas-box::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 1; width: 16px; touch-action: pan-y; }
+  .em-course-canvas-box::before { left: 0; }
+  .em-course-canvas-box::after { right: 0; }
+  #em-course-gesture:not(:empty)::after { content: " 그림 좌우 끝을 밀면 페이지가 스크롤됩니다."; }
+  /* The description folds to its first line; the "더 보기" button keeps a 44 px target without making the row taller. */
+  #em-course-desc:not([hidden]):not([data-expanded="true"]) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden; }
+  #em-course-picture-note.em-folded { display: none; }
+  .em-course-more:not([hidden]) { display: inline-flex; align-items: center; justify-content: center; flex: none; margin: -9px -4px -9px 0; padding: 0 8px; border: 0; background: transparent; color: var(--accent); font-size: 12px; font-weight: 600; }
   .em-param { grid-template-columns: minmax(0, 1fr) minmax(104px, 40%); }
   .em-param-label { grid-column: 1 / -1; }
   .em-param > input[type="range"] { grid-column: 1; }

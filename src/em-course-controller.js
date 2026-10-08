@@ -34,7 +34,7 @@ export function createEMCourseController(root, { onClose } = {}) {
   const events = new AbortController(), listen = { signal: events.signal }, records = new Map();
   const $ = selector => root.querySelector(selector);
   let active = false, selectedId = rememberedId() || getExperiment(FIRST_EXPERIMENT)?.id || EXPERIMENTS[0]?.id;
-  let playing = false, playFrame = null, lastTick = 0, checkTimer = null, renderFrame = null;
+  let playing = false, playFrame = null, lastTick = 0, checkTimer = null, renderFrame = null, noteHiddenAtFold = null;
   root.innerHTML = SHELL;
   // A theme change recolours every canvas of the screen: the picture and the emf(t) time graph under it.
   const palette = createPalette(root, () => { if (active) renderTime(definition(), record()); schedulePicture(); });
@@ -240,6 +240,8 @@ export function createEMCourseController(root, { onClose } = {}) {
     $('#em-course-status').dataset.status = flags.symbolicOnly ? 'unsupported' : result.status;
     $('#em-course-picture-note').textContent = pictureNote(def, data, flags);
     $('#em-course-picture-note').hidden = !$('#em-course-picture-note').textContent;
+    // Measure the fold again only when the note appears or goes (renderNumeric runs on every drag frame).
+    if (noteHiddenAtFold !== $('#em-course-picture-note').hidden) syncDescriptionFold();
     const keys = Object.entries(result.vectors || {}).filter(([, v]) => Array.isArray(v) && v.every(Number.isFinite)).map(([key]) => key);
     const select = $('#em-course-vector'), choices = keys.length ? keys : [''];
     if ([...select.options].map(o => o.value).join() !== choices.join()) {
@@ -560,6 +562,8 @@ export function createEMCourseController(root, { onClose } = {}) {
     $('#em-course-kind').textContent = sections + (MODEL_KIND[def.modelKind] || '대칭·가정에 따른 해석 모델');
     $('#em-course-desc').textContent = def.description || '';
     $('#em-course-desc').hidden = !def.description;
+    $('#em-course-desc').dataset.expanded = 'false';
+    syncDescriptionFold();
     $('#em-course-gesture').textContent = gestureText(def);
     // A structural choice that is also a choice parameter is shown once, as the structural select.
     const isChoice = key => def.parameters.some(p => p.key === key && paramSpec(p).kind === 'select');
@@ -594,6 +598,28 @@ export function createEMCourseController(root, { onClose } = {}) {
     }
     buildDefinition();
   }
+
+  // Phones fold the description to its first line (styles.css) so the picture fits the first screen; "더 보기" unfolds it.
+  // The button shows only while the folded text is really cut (or unfolded); a resize of the text measures again.
+  // The picture note (shape example, why a picture is missing) folds with it.
+  function syncDescriptionFold() {
+    const desc = $('#em-course-desc'), more = $('#em-course-desc-more'), expanded = desc.dataset.expanded === 'true';
+    const note = !$('#em-course-picture-note').hidden;
+    noteHiddenAtFold = !note;
+    const cut = expanded || note || (!desc.hidden && desc.scrollHeight > desc.clientHeight + 1);
+    $('#em-course-picture-note').classList.toggle('em-folded', !expanded);
+    more.hidden = !cut;
+    more.textContent = expanded ? '접기' : '더 보기';
+    more.setAttribute('aria-expanded', String(expanded));
+  }
+  $('#em-course-desc-more').addEventListener('click', () => {
+    const desc = $('#em-course-desc');
+    desc.dataset.expanded = String(desc.dataset.expanded !== 'true');
+    syncDescriptionFold();
+  }, listen);
+  const descWatcher = new ResizeObserver(syncDescriptionFold);
+  descWatcher.observe($('#em-course-desc'));
+  events.signal.addEventListener('abort', () => descWatcher.disconnect(), { once: true });
 
   $('#em-course-select').addEventListener('change', () => {
     if ($('#em-course-select').value) switchExperiment($('#em-course-select').value);

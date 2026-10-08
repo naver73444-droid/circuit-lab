@@ -224,6 +224,93 @@ describe("phone study workspaces", { timeout: 600000 }, () => {
     });
   }
 
+  for (const size of PHONES) {
+    const tag = `${size[0]}x${size[1]}`;
+    test(`${tag} 전자기학: the sensor's readout box stays inside the plane at the top centre and the edges, at rest and under the finger, electric and magnetic`, async () => {
+      await phone("/?workspace=em", size);
+      await until(`${L}.getEMState()?.active && document.getElementById("em-plane").clientWidth > 100`, "the EM plane");
+      for (const field of ["electric", "magnetic"]) {
+        await ev(`document.querySelector('[data-em-field-mode="${field}"]').click()`);
+        await until(`${L}.getEMState().field === "${field}"`, `the ${field} mode`);
+        for (const [where, fx, fy] of [["top centre", 0.5, 0.04], ["top left", 0.03, 0.04], ["top right", 0.97, 0.04], ["right edge", 0.97, 0.5]]) {
+          await ev(`document.getElementById("em-plane").scrollIntoView({ block: "start" })`);
+          await settle();
+          const box = await ev(`(() => { const r = document.getElementById("em-plane").getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
+          const at = { x: box.x + box.w * fx, y: box.y + box.h * fy };
+          const label = () => ev(`${L}.getEMState().diagnostics.plane.sensorLabel`);
+          // A finger on empty space brings the sensor along; while it is down the readout avoids the fingertip.
+          const held = await fingerDrag({ x: at.x, y: at.y + 30 }, at, { during: label });
+          const rest = await label();
+          for (const [state, lab] of [["under the finger", held], ["at rest", rest]]) {
+            const what = `${field} ${where} ${state}: ${JSON.stringify(lab)}`;
+            assert.ok(lab && Math.abs(lab.sensor[0] - box.w * fx) < 3 && Math.abs(lab.sensor[1] - box.h * fy) < 3, `the sensor is where the finger was (${what})`);
+            assert.ok(lab.x >= 0 && lab.y >= 0 && lab.x + lab.width <= lab.view[0] && lab.y + lab.height <= lab.view[1], `the readout box is inside the canvas (${what})`);
+            assert.ok(lab.fontSize >= 9, `the readout stays legible (${what})`);
+          }
+          const [sx, sy] = held.sensor;
+          assert.ok(!(sx > held.x - 22 && sx < held.x + held.width + 22 && sy > held.y - 22 && sy < held.y + held.height + 22), `the readout is not under the fingertip (${field} ${where}: ${JSON.stringify(held)})`);
+          if (where === "top centre") await shot(`${tag}-em-${field}-sensor-top`);
+        }
+      }
+      await ev(`document.querySelector('[data-em-field-mode="electric"]').click()`);
+    });
+  }
+
+  test("375x667 전자기학 문제 풀이: the folded description keeps the whole picture on the first screen, 더 보기 unfolds it; a finger on the picture's side strip scrolls the page", async () => {
+    await phone("/?workspace=em", PHONES[2]);
+    await until(`${L}.getEMState()?.active && document.getElementById("em-plane").clientWidth > 100`, "the EM plane");
+    await ev(`document.getElementById("em-course-open").click()`);
+    await until(`${L}.getEMState().course?.active === true && document.getElementById("em-course-canvas").clientWidth > 100`, "the EM course");
+    const original = (await em()).course.selectedId;
+    const choose = async (id) => {
+      await ev(`(() => { const t = document.getElementById("em-course-topic"); for (const o of t.options) { t.value = o.value; t.dispatchEvent(new Event("change", { bubbles: true })); if ([...document.querySelectorAll("#em-course-select option")].some((x) => x.value === ${JSON.stringify(id)})) break; } const s = document.getElementById("em-course-select"); if (s.value !== ${JSON.stringify(id)}) { s.value = ${JSON.stringify(id)}; s.dispatchEvent(new Event("change", { bubbles: true })); } return true; })()`);
+      await until(`${L}.getEMState().course.selectedId === ${JSON.stringify(id)}`, `the ${id} experiment`);
+      await settle();
+      await toTop("em");
+      await settle();
+    };
+    const firstScreen = () => ev(`(() => {
+      const c = document.getElementById("em-course-canvas").getBoundingClientRect(), d = document.getElementById("em-course-desc"), m = document.getElementById("em-course-desc-more").getBoundingClientRect();
+      return { top: c.top, bottom: c.bottom, inner: innerHeight, descHeight: d.getBoundingClientRect().height, more: !document.getElementById("em-course-desc-more").hidden, moreBox: [m.width, m.height], note: getComputedStyle(document.getElementById("em-course-picture-note")).display };
+    })()`);
+    // The first experiment, and a coax one whose picture also carries a note.
+    for (const id of ["force-lorentz", "coax-current"]) {
+      await choose(id);
+      const fold = await firstScreen();
+      assert.ok(fold.top >= 0 && fold.bottom <= fold.inner, `${id}: the whole picture is on the first screen (${JSON.stringify(fold)})`);
+      assert.ok(fold.descHeight <= 20, `${id}: the description shows its first line only (${JSON.stringify(fold)})`);
+      assert.equal(fold.more, true, `${id}: 더 보기 is offered`);
+      assert.ok(Math.min(...fold.moreBox) >= 44, `${id}: 더 보기 is a 44 px target (${fold.moreBox})`);
+      if (id === "coax-current") assert.equal(fold.note, "none", "the picture note folds with the description");
+      await shot(`375x667-em-course-first-screen-${id}`);
+      await ev(`document.getElementById("em-course-desc-more").click()`);
+      await settle();
+      const open = await firstScreen();
+      assert.ok(open.descHeight > fold.descHeight + 10, `${id}: 더 보기 shows the whole description (${fold.descHeight} -> ${open.descHeight})`);
+      assert.equal(await ev(`document.getElementById("em-course-desc-more").textContent`), "접기");
+      if (id === "coax-current") assert.notEqual(open.note, "none", "and the picture note");
+      await ev(`document.getElementById("em-course-desc-more").click()`);
+      await settle();
+      assert.equal((await firstScreen()).descHeight, fold.descHeight, `${id}: 접기 folds it again`);
+    }
+    await assertTouchFriendly("em", "375x667 course with the folded description");
+    // The side strips of the picture belong to the page: a vertical finger drag there scrolls and leaves the probe alone.
+    await choose("force-lorentz");
+    const box = await ev(`(() => { const c = document.getElementById("em-course-canvas"); c.scrollIntoView({ block: "center" }); const r = c.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
+    await settle();
+    const before = await em(), point = before.course.records[before.course.selectedId].point, scrolled = await scrollTop("em");
+    for (const x of [box.x + 6, box.x + box.w - 6]) {
+      const top = await scrollTop("em");
+      await fingerDrag({ x, y: box.y + box.h * 0.7 }, { x, y: box.y + box.h * 0.2 }, { steps: 10 });
+      await sleep(250);
+      assert.ok((await scrollTop("em")) > top + 20, `a drag on the ${x < box.x + 20 ? "left" : "right"} strip scrolls the page`);
+    }
+    const after = await em();
+    assert.deepEqual(after.course.records[after.course.selectedId].point, point, "the probe stayed where it was");
+    assert.ok((await scrollTop("em")) > scrolled, "the page moved");
+    await choose(original);
+  });
+
   test("390x844 전자기학: a touch grabs the sensor from a fingertip away; two fingers pinch-zoom the plane without moving a charge or the sensor", async () => {
     await phone("/?workspace=em", PHONES[0]);
     await until(`${L}.getEMState()?.active && document.getElementById("em-plane").clientWidth > 100`, "the EM plane");

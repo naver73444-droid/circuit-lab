@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createPlaneView, handlesOf, hitGauss, hitSource, planeAxes, planeNormal, pointOnPlane, scaleBar, sectionRadius, zoomAbout,
+  createPlaneView, fitLabel, handlesOf, hitGauss, hitSource, placeSensorLabel, planeAxes, planeNormal, pointOnPlane, scaleBar, sectionRadius, zoomAbout,
 } from '../../src/em-plane-geometry.js';
 import { cycleSelectionTarget, inspectorFields, patchFromField, sliderFromStrength, strengthFromSlider, strengthText } from '../../src/em-source-edit.js';
 import { validatePointSources } from '../../src/em-playground-physics.js';
@@ -179,4 +179,51 @@ test('keyboard selection walks the visible sources, wraps for brackets and stops
   assert.equal(cycleSelectionTarget(sources, 'd', 1, false), null, 'Tab past the last source lets the focus leave');
   assert.equal(cycleSelectionTarget(sources, 'a', -1, false), null);
   assert.equal(cycleSelectionTarget([], null, 1), null);
+});
+
+test('the sensor readout box stays inside the canvas: it flips at an edge and slides along it when neither side fits', () => {
+  const inside = (box, w, h, W, H) => box.x >= 4 && box.y >= 4 && box.x + w <= W - 4 + 1e-9 && box.y + h <= H - 4 + 1e-9;
+  const phone = { width: 180, height: 22, viewWidth: 346, viewHeight: 474 };
+  // Room on the right and below: the usual spot, down and to the right of the crosshair.
+  assert.deepEqual(placeSensorLabel({ ...phone, x: 40, y: 100 }), { x: 56, y: 114, side: 'below' });
+  // Right edge: flips to the left of the sensor.
+  assert.deepEqual(placeSensorLabel({ ...phone, x: 320, y: 100 }), { x: 124, y: 114, side: 'below' });
+  // Upper middle of a phone canvas: neither side has 180 px, so the box slides inside and stays below the crosshair.
+  const middle = placeSensorLabel({ ...phone, x: 173, y: 20 });
+  assert.ok(inside(middle, 180, 22, 346, 474) && middle.y >= 20 + 14, JSON.stringify(middle));
+  // Bottom edge: goes above the sensor.
+  assert.equal(placeSensorLabel({ ...phone, x: 40, y: 465 }).side, 'above');
+  for (const [x, y] of [[0, 0], [346, 0], [0, 474], [346, 474], [173, 4], [173, 470]]) {
+    const box = placeSensorLabel({ ...phone, x, y });
+    assert.ok(inside(box, 180, 22, 346, 474), `(${x}, ${y}) -> ${JSON.stringify(box)}`);
+  }
+});
+
+test('the sensor readout keeps clear of a source label when another spot inside the canvas is free', () => {
+  const phone = { width: 120, height: 22, viewWidth: 346, viewHeight: 474 };
+  const sourceLabel = { x: 200, y: 100, width: 80, height: 16 };
+  assert.deepEqual(placeSensorLabel({ ...phone, x: 180, y: 90 }), { x: 196, y: 104, side: 'below' });
+  const moved = placeSensorLabel({ ...phone, x: 180, y: 90, avoid: [sourceLabel] });
+  assert.deepEqual(moved, { x: 44, y: 104, side: 'below' }, 'it flips to the free left side');
+  // Nowhere free: it still stays inside the canvas.
+  const everywhere = { x: 0, y: 0, width: 346, height: 474 };
+  assert.deepEqual(placeSensorLabel({ ...phone, x: 180, y: 90, avoid: [everywhere] }), { x: 196, y: 104, side: 'below' });
+});
+
+test('under a finger the readout goes above the fingertip, beside it at the top edge and below it when there is no room beside', () => {
+  const phone = { width: 120, height: 22, viewWidth: 346, viewHeight: 474, lift: true };
+  assert.deepEqual(placeSensorLabel({ ...phone, x: 173, y: 200 }), { x: 113, y: 130, side: 'lift-above' });
+  assert.equal(placeSensorLabel({ ...phone, x: 60, y: 30 }).side, 'lift-right');
+  assert.equal(placeSensorLabel({ ...phone, x: 300, y: 30 }).side, 'lift-left');
+  const wide = placeSensorLabel({ ...phone, width: 300, x: 173, y: 30 });
+  assert.equal(wide.side, 'lift-below');
+  assert.ok(wide.y >= 30 + 48 && wide.x >= 4 && wide.x + 300 <= 342, JSON.stringify(wide));
+});
+
+test('a canvas label keeps its whole text inside the view, flipping a left-aligned one to the other side of what it names', () => {
+  const room = { viewWidth: 346, viewHeight: 474 };
+  assert.deepEqual(fitLabel({ ...room, x: 100, y: 50, width: 80 }), { x: 100, y: 50 });
+  assert.deepEqual(fitLabel({ ...room, x: 322, y: 50, width: 80, flipAround: 300 }), { x: 198, y: 50 });
+  assert.deepEqual(fitLabel({ ...room, x: 10, y: 470, width: 100, align: 'center' }), { x: 54, y: 462 });
+  assert.deepEqual(fitLabel({ ...room, x: 340, y: 2, width: 100, align: 'center' }), { x: 292, y: 12 });
 });
