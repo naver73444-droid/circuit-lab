@@ -39,12 +39,16 @@ summary { cursor: pointer; padding: 6px 9px; font-size: 12px; color: var(--muted
 .hidden { display: none !important; }
 .primary { background: var(--action); border-color: var(--action); color: #fff; font-weight: 600; }
 .primary:hover:not(:disabled) { background: var(--action-hover); border-color: var(--action-hover); color: #fff; }
-html { height: 100%; overflow: hidden; }
-body { margin: 0; min-width: 320px; height: 100dvh; display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; background: var(--bg); color: var(--text); }
+html { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* Screen-high app: 100vh for browsers without dvh (viewport-guard.js then supplies the real height as --app-height), 100dvh everywhere else. */
+body { margin: 0; min-width: 320px; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0,1fr); overflow: hidden; background: var(--bg); color: var(--text); }
 /* Hosted without <body> (published page): the app may sit inside one wrapper element, so the element that directly holds the header is the
    screen-high grid and every element between it and <body> just passes the height down. Without this the workspaces grow past the screen and the bottom is cut off. */
 body :has(.topbar) { height: 100%; min-height: 0; }
-:has(> .topbar) { display: grid; grid-template-rows: auto minmax(0,1fr); height: 100dvh; min-height: 0; overflow: hidden; }
+:has(> .topbar) { display: grid; grid-template-rows: auto minmax(0,1fr); height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+@supports not (height: 100dvh) { body { height: var(--app-height, 100vh); } }
+/* No double-tap zoom on controls (a fast second tap on ◀ ▶ must be a second step, not a zoom); pinch stays available outside the canvas. */
+.topbar, main, .value-sheet { touch-action: manipulation; }
 
 /* Header: brand, workspace tabs, theme. */
 .topbar { display: flex; align-items: center; gap: 14px; padding: 6px 16px; border-bottom: 1px solid var(--line); background: var(--chrome); }
@@ -261,6 +265,32 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .input-editing { border-color: var(--warning) !important; }
 .input-invalid { border-color: var(--danger) !important; background: var(--danger-bg) !important; }
 
+/* Value adjuster (value-sheet.js). Desktop: a compact card at the top of the properties panel (◀ slider ▶ and prefix chips; the
+   inspector field below stays the text input). Phone (.is-phone): a bottom sheet with its own number-pad field, sitting on the keyboard. */
+.value-sheet { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin: 8px 12px 0; padding: 8px; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--raised); }
+.value-sheet[hidden] { display: none; }
+.value-sheet-head { display: none; }
+.value-sheet-step { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.value-sheet-stepper { min-width: 40px; font-size: 15px; color: var(--accent); user-select: none; -webkit-user-select: none; }
+.value-sheet-slide { display: grid; gap: 0; min-width: 0; }
+.value-sheet-slide input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+.value-sheet-scale { display: flex; justify-content: space-between; color: var(--muted); font: 10px var(--mono); }
+.value-sheet-prefixes { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.value-sheet-prefixes button { min-height: 32px; padding: 0; font: 600 14px var(--mono); }
+.value-sheet-prefixes button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--selection); }
+.value-sheet.is-phone { position: fixed; left: 0; right: 0; bottom: var(--kb-inset, 0px); z-index: 45; margin: 0; gap: 8px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); border-width: 1px 0 0; border-color: var(--line); border-radius: 16px 16px 0 0; background: var(--chrome); box-shadow: 0 -8px 24px #0006; }
+:root[data-keyboard] .value-sheet.is-phone { padding-bottom: 8px; }
+.value-sheet.is-phone .value-sheet-head { display: flex; align-items: center; gap: 6px; }
+.value-sheet-name { flex: 0 1 auto; min-width: 0; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.value-sheet-input { flex: 1 1 0; width: 0; min-width: 0; min-height: 44px; padding: 4px 10px; font: 600 18px var(--mono); color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 10px; }
+.value-sheet-input.sheet-invalid { border-color: var(--danger); background: var(--danger-bg); }
+.value-sheet-unit { flex: 0 0 auto; color: var(--muted); font: 14px var(--mono); }
+.value-sheet.is-phone .value-sheet-head button { flex: 0 0 auto; min-width: 44px; min-height: 44px; padding: 0 8px; font-size: 14px; }
+.value-sheet-series { font: 600 13px var(--mono); color: var(--muted); }
+.value-sheet.is-phone .value-sheet-stepper { min-width: 52px; min-height: 48px; font-size: 18px; }
+.value-sheet.is-phone .value-sheet-slide input[type="range"] { height: 44px; }
+.value-sheet.is-phone .value-sheet-prefixes button { min-height: 44px; font-size: 16px; }
+
 /* Side panel: properties | results. */
 .side-tabs { display: flex; gap: 4px; padding: 6px 8px 0; border-bottom: 1px solid var(--line-soft); flex: 0 0 auto; }
 .side-tabs button { flex: 1; min-height: 34px; border-radius: 9px 9px 0 0; border-bottom: none; background: transparent; }
@@ -406,48 +436,69 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 
 /* Phone / tablet portrait: single column, canvas first, one panel below, bottom tab bar. */
 @media (max-width: 899px) {
+  /* --tabbar-h: the fixed bottom tab bar (46px buttons + 6px padding twice + border), not counting the home-indicator safe area. */
+  :root { --tabbar-h: 60px; --safe-bottom: env(safe-area-inset-bottom, 0px); }
   body { grid-template-rows: auto minmax(0,1fr); }
-  .topbar { flex-wrap: wrap; padding: 6px 10px; gap: 6px 10px; }
-  .brand { flex: 1; }
-  .appearance { order: 2; width: 72px; min-height: 40px; }
-  .workspace-tabs { order: 3; flex: 1 0 100%; }
-  .workspace-tabs button { flex: 1; min-height: 40px; padding-inline: 8px; }
-  .workbench { display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: 72px; padding: 6px 6px 0; gap: 8px; position: relative; }
+  /* One header row: workspace tabs + theme. The brand is dropped on a phone; every pixel goes to the circuit. */
+  .topbar { flex-wrap: nowrap; padding: 6px 8px; gap: 6px; }
+  .brand { display: none; }
+  .workspace-tabs { flex: 1 1 auto; gap: 4px; }
+  .workspace-tabs button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 2px 4px; font-size: 13px; line-height: 1.15; white-space: normal; word-break: keep-all; border-radius: 12px; }
+  .appearance { flex: 0 0 auto; width: 64px; min-height: 44px; font-size: 16px; }
+  /* The bottom tab bar is fixed to the screen (not sticky inside the scroller), and the scroller keeps the bar's height free at its end. */
+  .workbench { display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; padding: 6px 6px calc(var(--tabbar-h) + var(--safe-bottom)); scroll-padding-bottom: calc(var(--tabbar-h) + 12px + var(--safe-bottom)); gap: 8px; position: relative; }
   .workbench > .panel { flex: 0 0 auto; order: 1; }
   .workbench > .canvas-panel { order: 0; overflow: visible; }
-  .canvas-wrap { flex: 0 0 auto; height: clamp(280px, 46dvh, 460px); }
+  /* The canvas takes what the first screen has left under the editor header (header rows + footer + tab bar ≈ 360px). */
+  .canvas-wrap { flex: 0 0 auto; height: clamp(280px, calc(100vh - 360px), 560px); height: clamp(280px, calc(100dvh - 360px), 560px); }
   /* Header: two rows. Row 1 = title + undo/redo/help + file menu; row 2 = tools. Zoom and selection actions sit on the canvas. */
   .canvas-head { flex-wrap: nowrap; padding: 6px 8px 2px; gap: 4px; }
   .canvas-caption { flex: 1 1 0; min-width: 0; }
   .canvas-caption span { display: none; }
   .canvas-caption strong { overflow: hidden; text-overflow: ellipsis; }
-  .head-tools button, .head-tools > summary, .file-menu > summary { min-height: 40px; }
-  .head-tools button { min-width: 40px; padding: 2px 4px; font-size: 16px; }
+  .head-tools button, .head-tools > summary, .file-menu > summary { min-height: 44px; }
+  .head-tools button { min-width: 44px; padding: 2px 4px; font-size: 16px; }
   .file-menu { position: relative; flex: 0 0 auto; }
   .file-menu > summary { display: flex; align-items: center; gap: 4px; padding: 2px 11px; list-style: none; font-size: 13px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 9px; }
   .file-menu > summary::-webkit-details-marker { display: none; }
   .file-menu > summary::after { content: "▾"; color: var(--muted); }
   .file-menu[open] > summary { color: var(--accent); border-color: var(--accent); background: var(--selection); }
   .file-menu .file-actions { position: absolute; right: 0; top: calc(100% + 6px); z-index: 38; width: min(260px, calc(100vw - 24px)); flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 6px; padding: 10px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.4); }
-  .file-actions button, .file-actions select { min-height: 44px; padding: 2px 10px; font-size: 14px; text-align: left; max-width: none; width: 100%; }
+  .file-actions button, .file-actions select { min-height: 44px; padding: 2px 10px; font-size: 16px; text-align: left; max-width: none; width: 100%; }
   .canvas-bar { flex-wrap: nowrap; padding: 2px 8px 6px; gap: 4px 6px; }
   .canvas-bar .tool-group:first-child { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; }
-  .canvas-bar .tool-group:first-child .tool { flex: 1 1 auto; min-width: 40px; }
-  .tool-group button { min-height: 40px; padding-inline: 6px; font-size: 13px; }
+  .canvas-bar .tool-group:first-child .tool { flex: 1 1 auto; min-width: 44px; }
+  .tool-group button { min-height: 44px; padding-inline: 6px; font-size: 13px; }
   .tool-group.compact { gap: 3px; }
-  .tool-group.compact button { min-width: 40px; padding-inline: 4px; }
-  .interaction-help > summary { min-height: 40px; min-width: 40px; justify-content: center; padding: 2px 4px; font-size: 0; }
+  .tool-group.compact button { min-width: 44px; padding-inline: 4px; }
+  .interaction-help > summary { min-height: 44px; min-width: 44px; justify-content: center; padding: 2px 4px; font-size: 0; }
   .interaction-help > summary::before { margin-right: 0; width: 20px; height: 20px; font-size: 13px; }
   .interaction-help-card { position: fixed; left: 8px; right: 8px; top: 120px; width: auto; max-height: calc(100dvh - 190px); }
   .canvas-corner { position: absolute; right: 8px; bottom: 8px; z-index: 5; display: flex; align-items: center; gap: 4px; padding: 3px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--line-soft); border-radius: 12px; }
-  .canvas-corner button { min-height: 40px; min-width: 40px; padding: 2px 6px; font-size: 16px; }
+  .canvas-corner button { min-height: 44px; min-width: 44px; padding: 2px 6px; font-size: 16px; }
+  /* With the value sheet up, the zoom/rotate corner moves to the top so the sheet never covers it. */
+  :root.value-sheet-open .canvas-corner { top: 8px; bottom: auto; }
   .canvas-corner #fit-button { font-size: 13px; color: var(--accent); }
   .canvas-corner button:disabled { display: none; }
   .canvas-corner .tool-group { gap: 3px; flex-wrap: nowrap; }
-  .analysis-bar { padding: 6px 8px; }
-  .analysis-pick select, .run-button, .cancel-analysis { min-height: 40px; }
-  .draft-notice { position: fixed; left: 8px; bottom: 64px; z-index: 60; background: var(--warning-bg); border: 1px solid var(--warning); padding: 6px 8px; border-radius: 10px; }
-  .draft-notice button { min-height: 40px; }
+  /* Analysis bar: two fixed rows, so a run that shows/hides "해석 중지" never shifts the canvas. Row 1: kind · run · stop. Row 2: toggles · status · settings. */
+  .analysis-bar { padding: 4px 8px; gap: 2px 8px; }
+  .analysis-bar > * { order: 4; }
+  .analysis-bar > .analysis-pick { order: 0; font-size: 0; }
+  .analysis-bar > .run-button { order: 1; }
+  .analysis-bar > .cancel-analysis { order: 2; }
+  .analysis-bar::before { content: ""; order: 3; flex: 1 0 100%; height: 0; }
+  .analysis-pick select { font-size: 16px; }
+  .analysis-pick select, .run-button, .cancel-analysis { min-height: 44px; }
+  .auto-toggle { min-height: 44px; padding: 0 2px; }
+  .auto-toggle input[type="checkbox"] { width: 20px; height: 20px; }
+  .analysis-bar .status-dot { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .analysis-settings { margin-left: 0; }
+  .analysis-settings > summary { min-height: 44px; display: flex; align-items: center; padding: 0 4px; }
+  .palette-more > summary { min-height: 44px; display: flex; align-items: center; }
+  .inline-value-editor { min-height: 44px; font-size: 16px; }
+  .draft-notice { position: fixed; left: 8px; bottom: calc(var(--tabbar-h) + 8px + var(--safe-bottom)); z-index: 60; background: var(--warning-bg); border: 1px solid var(--warning); padding: 6px 8px; border-radius: 10px; }
+  .draft-notice button { min-height: 44px; }
   .panel { overflow: visible; }
   #side-panel .side-tabs { display: none; }
   #side-panel { display: block; }
@@ -464,11 +515,22 @@ body :has(.topbar) { height: 100%; min-height: 0; }
   .wave-actions { margin-left: 0; }
   .wave-actions button, .scale-control button, .probe-chip button { min-height: 40px; min-width: 40px; }
   .port-controls button, .study-tabs button, .result-switch button { min-height: 44px; }
-  .view-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; position: sticky; bottom: 0; z-index: 30; flex: 0 0 auto; order: 2; margin: auto -6px 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: var(--chrome); border-top: 1px solid var(--line); }
+  .view-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; margin: 0; padding: 6px 8px calc(6px + var(--safe-bottom)); background: var(--chrome); border-top: 1px solid var(--line); }
   .view-tabs button { min-height: 46px; border-radius: 12px; }
+  /* Keyboard up (viewport-guard.js): the tab bar steps aside so it never sits on the field being typed into. */
+  :root[data-keyboard] .view-tabs { display: none; }
+  :root[data-keyboard] .workbench { padding-bottom: 12px; }
+  /* Value sheet up: it covers the tab bar (✕ brings the tabs back) and the scroller keeps its height free. */
+  :root.value-sheet-open .view-tabs { visibility: hidden; }
+  :root.value-sheet-open .workbench { padding-bottom: calc(var(--value-sheet-h, 200px) + 8px); }
+  :root.value-sheet-open .draft-notice { bottom: calc(var(--value-sheet-h, 200px) + 8px); }
   .cursor-readout { max-height: none; }
 }
-@media (pointer: coarse) { .component-delete { display: none; } }
+@media (pointer: coarse) {
+  .component-delete { display: none; }
+  /* Touch: the selected part gets a soft band behind it, visible around the finger. */
+  .component.selected .component-hit { stroke: color-mix(in srgb, var(--accent) 18%, transparent); stroke-linecap: round; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 @media (prefers-contrast: more) { :root { --line: #8b96a6; --line-soft: #717c8b; --muted: #d3dbe6; } :root[data-theme="light"] { --line: #566170; --line-soft: #748091; --muted: #273445; } }
 .visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

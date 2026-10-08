@@ -3,10 +3,14 @@ import { passedDragSlop, viewForPinch } from "./interaction-math.js";
 /** Touch-only routing on a stable SVG root. Mouse and keyboard keep their paths.
  * No synthetic click dispatch: tap targets are chosen from circuit geometry.
  * A second finger cancels the object gesture, then starts viewport-only pinch.
+ * Holding one finger still for LONG_PRESS_MS calls api.longPress (pick up a part that was not selected yet).
  */
+export const LONG_PRESS_MS = 380;
+
 export function installCanvasTouch(svg, api) {
   const contacts = new Map();
-  let first = null, pinch = null, multi = false, lastTouch = -Infinity;
+  let first = null, pinch = null, multi = false, lastTouch = -Infinity, holdTimer = null;
+  const stopHold = () => { if (holdTimer !== null) clearTimeout(holdTimer); holdTimer = null; };
   const xy = e => ({ x: e.clientX, y: e.clientY });
   const pair = () => {
     const [a, b] = [...contacts.values()];
@@ -14,6 +18,7 @@ export function installCanvasTouch(svg, api) {
   };
   const release = id => { try { if (svg.hasPointerCapture(id)) svg.releasePointerCapture(id); } catch {} };
   const cancel = () => {
+    stopHold();
     if (first) api.finish(first.id, "cancel");
     const ids = [...contacts.keys()]; contacts.clear(); first = null; pinch = null; multi = false;
     for (const id of ids) release(id);
@@ -28,7 +33,12 @@ export function installCanvasTouch(svg, api) {
       const target = api.pick(xy(e));
       first = { id: e.pointerId, point: xy(e), target, moved: false };
       api.begin(e, target);
+      if (api.longPress && target) {
+        const held = first, event = e;
+        holdTimer = setTimeout(() => { holdTimer = null; if (first === held && !held.moved && !multi) api.longPress(event, target); }, LONG_PRESS_MS);
+      }
     } else {
+      stopHold();
       multi = true;
       if (first) { const id = first.id; api.finish(id, "cancel"); try { svg.setPointerCapture(id); } catch {} }
       first = null;
@@ -48,7 +58,7 @@ export function installCanvasTouch(svg, api) {
       if (view) api.setView(view);
     } else if (first && !multi && e.pointerId === first.id) {
       first.moved ||= passedDragSlop(first.point, xy(e), "touch");
-      if (first.moved) api.move(e);
+      if (first.moved) { stopHold(); api.move(e); }
     }
   }, { capture: true, passive: false });
   const end = (e, reason) => {
@@ -60,6 +70,7 @@ export function installCanvasTouch(svg, api) {
       cancel(); return;
     }
     e.stopImmediatePropagation(); lastTouch = performance.now();
+    if (first && e.pointerId === first.id) stopHold();
     if (first && !multi && e.pointerId === first.id) {
       first.moved ||= passedDragSlop(first.point, xy(e), "touch");
       if (reason === "commit" && first.moved) api.move(e);

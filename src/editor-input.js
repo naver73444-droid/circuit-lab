@@ -50,6 +50,7 @@ export function createEditorInput(deps) {
   const { state, elements, workspace, scopeView, mutate, mutateGrouped, closeEditGroup, snapshot, commitMove, undo, redo, runAnalysis, saveProject, hover, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe,
     renderCanvas, renderOverlay, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
     renderAll, renderSelection, applySelection, setMarquee, scheduleDragUpdate, cancelDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, reconcileAnalysis, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
+  const openValueSheet = deps.openValueSheet ?? (() => false);
   let canvasTouch = null;
   const notices = createCanvasNotices(elements["canvas-notices"]);
 
@@ -132,8 +133,12 @@ export function createEditorInput(deps) {
     "voltage-probe": "V 프로브 — 핀이나 배선을 누르면 접지 기준 전압이 추가됩니다.",
     "current-probe": "I 프로브 — 부품을 누르면 기준 방향 전류가 추가됩니다.",
   };
+  // Touch screens get finger wording for the select tool (tap / long press / two fingers instead of click / Shift).
+  const TOUCH_SELECT_HINT = "탭: 선택·값 조절 · 길게 눌러 끌기: 이동 · 빈 곳 끌기: 화면 이동 · 두 손가락: 확대";
+  const coarsePointer = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
   function restoreToolHint() {
-    elements["tool-hint"].textContent = state.tool.startsWith("place:") ? "캔버스를 눌러 배치 · 계속 놓을 수 있습니다 · Esc로 종료" : TOOL_HINTS[state.tool];
+    const hint = state.tool === "select" && coarsePointer() ? TOUCH_SELECT_HINT : TOOL_HINTS[state.tool];
+    elements["tool-hint"].textContent = state.tool.startsWith("place:") ? "캔버스를 눌러 배치 · 계속 놓을 수 있습니다 · Esc로 종료" : hint;
   }
 
   /** Drop a half-drawn wire but stay in the current tool. */
@@ -734,7 +739,7 @@ export function createEditorInput(deps) {
     const remove = hitElement?.closest("[data-delete-component]");
     const label = hitElement?.closest("[data-edit-prop]");
     if (!endpointMode && state.tool === "select" && remove) return {kind:"delete",id:remove.dataset.deleteComponent};
-    if (!endpointMode && state.tool === "select" && label) return {kind:"properties",id:label.closest("[data-id]")?.dataset.id};
+    if (!endpointMode && state.tool === "select" && label) return {kind:"value",id:label.closest("[data-id]")?.dataset.id};
     if (!endpointMode && state.tool === "select" && badge) return { kind: "properties", id: badge.dataset.showConnection };
     if (!endpointMode) {
       let best = null, bestDistance = 23;
@@ -799,6 +804,19 @@ export function createEditorInput(deps) {
           if(scale>0)beginCanvasPointer(event,{kind:"pan",screenScale:scale,originView:{...state.canvasView},moved:false});
         }
       },
+      // Long press on a part (or junction) that is not selected yet: select it and pick it up, so it follows the same finger.
+      longPress: (event, target) => {
+        if (state.tool !== "select" || state.pendingPin || state.port.mode || !["component","junction"].includes(target?.kind)) return;
+        if (isSelected(state, target.kind, target.id)) return; // a selected part is already draggable
+        const item = target.kind === "component" ? state.circuit.components.find(c=>c.id===target.id) : (state.circuit.junctions??[]).find(j=>j.id===target.id);
+        const point = svgPoint(event);
+        if (!item || !point) return;
+        if (state.drag) { if (state.drag.kind !== "pan" || state.drag.moved) return; finishCanvasPointer(state.drag.pointerId, "cancel"); }
+        setSingleSelection(state, { kind: target.kind, id: target.id });
+        beginCanvasPointer(event,{kind:target.kind,id:item.id,start:point,origin:{x:item.x,y:item.y},before:snapshot(),moved:false,group:null,wasMulti:false});
+        try { navigator.vibrate?.(12); } catch { /* no haptics */ }
+        renderSelection();
+      },
       move: updateCanvasPointer,
       finish: finishCanvasPointer,
       tap: (event, target) => {
@@ -806,6 +824,8 @@ export function createEditorInput(deps) {
         hover.showTouch(target, event.clientX, event.clientY);
         if(target.kind === "delete") { if(state.selected?.kind === "component" && state.selected.id === target.id) deleteSelection(); return; }
         if(target.kind === "properties") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); showInspector(); return; }
+        // A value label: the phone value sheet when the part has one, the properties panel otherwise.
+        if(target.kind === "value") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); if(!openValueSheet(target.id)) showInspector(); return; }
         if(target.kind === "pin") { handlePinClick(target.id,target.pin); return; }
         if(target.kind === "junction") {
           if(state.tool === "voltage-probe") addVoltageProbeEndpoint({junctionId:target.id});
@@ -815,7 +835,7 @@ export function createEditorInput(deps) {
         }
         if(target.kind === "component") {
           if(state.tool === "current-probe")addCurrentProbe(target.id, currentProbeWinding(state.circuit.components.find(c=>c.id===target.id), point));
-          else {setSingleSelection(state,{kind:"component",id:target.id});renderSelection();}
+          else {setSingleSelection(state,{kind:"component",id:target.id});openValueSheet(target.id);renderSelection();}
           return;
         }
         if(target.kind === "wire") {

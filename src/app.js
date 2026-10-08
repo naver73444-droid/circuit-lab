@@ -20,6 +20,8 @@ import { hasShareHash } from "./share-url.js";
 import { createFlowLayer } from "./flow-layer.js";
 import { createMeasureView } from "./measure-view.js";
 import { selectedItems, selectedKeys } from "./selection-model.js";
+import { createValueSheet } from "./value-sheet.js";
+import { installViewportGuard } from "./viewport-guard.js";
 
 const elements = Object.fromEntries([
   "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "flow-layer", "flow-toggle", "flow-hint", "empty-hint",
@@ -103,8 +105,13 @@ const inspector = createInspector({
   flipCurrentReference: (...args) => { session.flipCurrentReference(...args); hover.refresh(); },
 });
 const hover = createHoverReadout({ state, elements, workspace, scopeView });
+const valueSheet = createValueSheet({
+  state, inputDrafts, isCircuitUiActive, setStatus, showInspector,
+  mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, updateCanvasView: () => renderer.updateCanvasView(),
+});
 const input = createEditorInput({
   state, elements, workspace, scopeView, renderAll, renderSelection, setStatus, showInspector, showCanvas, isCircuitUiActive, hover,
+  openValueSheet: (id) => valueSheet.openFor(id),
   applySelection: renderer.applySelection, setMarquee: renderer.setMarquee,
   runAnalysis: () => analysis.runAnalysis(), saveProject: () => projectIO.saveProject(),
   mutate: session.mutate, mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, snapshot: session.snapshot, commitMove: session.commitMove, undo: session.undo, redo: session.redo,
@@ -198,6 +205,7 @@ function renderSelection() {
   analysis.renderPortPanel();
   syncSelectionButtons();
   hover.refresh();
+  valueSheet.sync();
 }
 
 function syncSelectionButtons() {
@@ -223,6 +231,7 @@ function renderAll() {
   updateHistoryButtons();
   syncSelectionButtons();
   hover.refresh();
+  valueSheet.sync();
   elements["stale-badge"].classList.toggle("hidden", !(state.stale || state.runState.status === "stale"));
   analysis.updateAnalysisControls();
 }
@@ -240,6 +249,7 @@ function showCircuitWorkspace() {
 function setupEvents() {
   document.getElementById("circuit-course-back").addEventListener("click", () => workspaceTabs.activate("circuit"));
   initResponsiveEditor(document, window);
+  installViewportGuard(window, document);
   // The help card is a popover: Escape or an outside click closes it.
   const help = document.getElementById("interaction-help");
   document.addEventListener("click", (event) => { if (help.open && !help.contains(event.target)) help.open = false; });
@@ -296,6 +306,7 @@ function initialize() {
         panels.cancelInteractions();
         workspace.circuitActive = false;
         panels.synchronize();
+        valueSheet.sync();
       } else lazyWorkspaces[from]?.controller?.deactivate();
     },
     onIntent: (name) => lazyWorkspaces[name]?.prefetch(),
@@ -307,7 +318,7 @@ function initialize() {
         panels.synchronize();
         if (workspace.renderDeferred) renderAll(); else { renderer.updateCanvasView(); scopeView.render(); }
       }
-      queueMicrotask(() => { workspace.switching = false; });
+      queueMicrotask(() => { workspace.switching = false; valueSheet.sync(); });
     },
   });
   initializePhasorPractice();
@@ -331,6 +342,7 @@ function initialize() {
     getFlow: () => flow.inspect(),
     setFlow: (value) => flow.setEnabled(value),
     getLayout: () => panels.inspect(),
+    getValueSheet: () => valueSheet.inspect(),
     getWorkspace: () => workspaceTabs.active,
     // Lazy controllers report null until loaded; await ensureWorkspace(name) first.
     getEMState: () => emLazy.controller?.inspect() ?? null,
