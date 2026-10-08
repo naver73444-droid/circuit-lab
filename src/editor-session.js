@@ -4,6 +4,9 @@ import { classifyCircuitConnections, connectionFrequency } from "./circuit-statu
 import { currentProbeLabel, isMagneticPart, toggleCurrentReference } from "./current-direction.js";
 import { nextAvailableProbeColor, removeProbeByKey } from "./ui-model.js";
 import { allocatorFor } from "./id-allocator.js";
+import { componentDefaults, pinCount } from "./circuit-engine.js";
+import { newWireShape } from "./wire-router.js";
+import { setSingleSelection } from "./selection-model.js";
 
 const HISTORY_LIMIT = 100;
 /** Default idle window of a coalescing group (wheel ticks). */
@@ -216,6 +219,48 @@ export function createEditorSession(deps) {
     committed();
   }
 
+  /**
+   * Several probes in ONE undo step (the empty waveform panel's "추천 프로브" button and its node chips). Specs come from
+   * suggestProbes() (editor-guide-model.js); a probe that already exists or points at a missing part is skipped. Returns how many were added.
+   */
+  function addProbes(specs) {
+    const fresh = [];
+    for (const spec of specs ?? []) {
+      const component = state.circuit.components.find((item) => item.id === spec?.componentId);
+      if (!component || component.type === "GND") continue;
+      const voltage = spec.kind === "voltage" && Number.isInteger(spec.pin) && spec.pin >= 0 && spec.pin < pinCount(component.type);
+      if (!voltage && spec.kind !== "current") continue;
+      const key = voltage ? `V:${component.id}:${spec.pin}` : `I:${component.id}`;
+      if (state.probes.some((probe) => probe.key === key) || fresh.some((probe) => probe.key === key)) continue;
+      const ref = component.props?.ref ?? component.id;
+      fresh.push(voltage
+        ? { key, kind: "voltage", componentId: component.id, pin: spec.pin, wireId: null, label: `V(${ref}.${spec.pin + 1})` }
+        : { key, kind: "current", componentId: component.id, label: currentProbeLabel(component, circuitGeometryVersion(state.circuit), 1) });
+    }
+    if (!fresh.length) return 0;
+    recordProbeEdit();
+    for (const probe of fresh) state.probes.push({ ...probe, color: nextAvailableProbeColor(PROBE_COLORS, state.probes) });
+    refreshProbeViews();
+    committed();
+    return fresh.length;
+  }
+
+  /** The one-tap fix of a circuit without ground (suggestGroundFix()): a GND and its wire to the source terminal, one undo step. */
+  function addGround(fix) {
+    const source = state.circuit.components.find((item) => item.id === fix?.sourceId);
+    if (!source || state.circuit.components.some((item) => item.type === "GND")) return null;
+    let id = null;
+    mutate(() => {
+      const allocator = allocatorFor(state);
+      id = allocator.next("G", state.circuit.components);
+      state.circuit.components.push({ id, type: "GND", x: fix.x, y: fix.y, rotation: 0, props: componentDefaults("GND", 1) });
+      const a = { componentId: source.id, pin: fix.pin }, b = { componentId: id, pin: 0 };
+      state.circuit.wires.push({ id: allocator.next("W", state.circuit.wires), a, b, ...newWireShape(state.circuit, a, b) });
+      setSingleSelection(state, { kind: "component", id });
+    });
+    return id;
+  }
+
   function removeProbe(key) {
     recordProbeEdit();
     state.probes = removeProbeByKey(state.probes, key);
@@ -251,5 +296,8 @@ export function createEditorSession(deps) {
     committed();
   }
 
-  return { currentConnections, snapshot, restore, mutate, bumpGeneration, commitMove, mutateGrouped, closeEditGroup, undo, redo, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe, flipCurrentReference };
+  return {
+    currentConnections, snapshot, restore, mutate, bumpGeneration, commitMove, mutateGrouped, closeEditGroup, undo, redo,
+    addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, addProbes, addGround, removeProbe, flipCurrentReference,
+  };
 }

@@ -23,6 +23,7 @@ import { selectedItems, selectedKeys } from "./selection-model.js";
 import { createValueSheet } from "./value-sheet.js";
 import { installViewportGuard } from "./viewport-guard.js";
 import { createCanvasActions } from "./canvas-actions.js";
+import { createFirstRunGuide } from "./first-run-guide.js";
 
 const elements = Object.fromEntries([
   "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "flow-layer", "flow-toggle", "flow-hint", "empty-hint",
@@ -53,6 +54,9 @@ const measureView = createMeasureView({ panel: elements["measure-panel"], summar
 let panels = null;
 let workspaceTabs = null;
 let canvasActions = null; // phone selection bar + part strip, created once the editor input exists
+let firstRunGuide = null; // three-step guide on an empty canvas, created once the project IO exists
+// The analysis kind of the last result announced to the waveform panel (phone tab dot / desktop header flash); reset per project.
+let announcedAnalysis = null;
 // Heavy workspace controllers (EM, circuit course, signals) load on first use.
 let emLazy = null;
 let circuitCourseLazy = null;
@@ -81,7 +85,7 @@ const session = createEditorSession({
 });
 const renderer = createCanvasRenderer({
   state, elements, workspace, scopeView, currentConnections: session.currentConnections,
-  afterCanvasRender: () => { flow.refresh(); canvasActions?.schedule(); },
+  afterCanvasRender: () => { flow.refresh(); canvasActions?.schedule(); firstRunGuide?.sync(); },
   onDragFrame: () => { flow.suspend(); canvasActions?.schedule(); },
   onViewChange: () => canvasActions?.schedule(),
 });
@@ -98,6 +102,9 @@ const analysis = createAnalysisRunner({
   openProbeContextMenu: (...args) => input.openProbeContextMenu(...args),
   measureView,
   onStaleChange: () => { flow.refresh(); renderer.refreshCurrentArrows(); },
+  addProbes: session.addProbes,
+  addGround: session.addGround,
+  onResultReady: announceResult,
 });
 const inspector = createInspector({
   state, elements, workspace, inputDrafts, phasorView, renderAll, setStatus, showInspector, isCircuitUiActive,
@@ -136,6 +143,21 @@ const projectIO = createProjectIO({
   setTool: input.setTool, fitCanvas: input.fitCanvas, seriesForProbes: analysis.seriesForProbes,
   showCircuitWorkspace: () => showCircuitWorkspace(),
 });
+firstRunGuide = createFirstRunGuide({
+  element: elements["empty-hint"],
+  getState: () => ({ empty: state.circuit.components.length === 0, placing: state.tool.startsWith("place:") }),
+  onOpenExample: () => projectIO.loadExample("rc-charge"),
+});
+
+/**
+ * A finished run: an AC or transient result of a different kind than the last one announced gets the student to the waveform panel without
+ * switching to it (phone: dot on the 파형 tab, desktop: the panel header lights up briefly). A DC result only updates the bookkeeping.
+ */
+function announceResult(analysisKind) {
+  const changed = analysisKind !== announcedAnalysis;
+  announcedAnalysis = analysisKind;
+  if (changed && (analysisKind === "ac" || analysisKind === "transient")) panels?.notifyResult("wave");
+}
 
 /** Clear everything tied to the previous project: pending runs, gestures, drafts, selection, results and port state. */
 function resetProjectSession() {
@@ -160,6 +182,7 @@ function resetProjectSession() {
   state.stale = false;
   state.runState = { status: "not-run", analysis: null, generation: null, error: null };
   state.port = { mode: null, p: null, n: null, loadIds: [], result: null, stale: false, error: null };
+  announcedAnalysis = null;
   elements["error-box"].classList.add("hidden");
   analysis.updateAnalysisControls();
   input.closeProbeContextMenu();
@@ -354,6 +377,7 @@ function initialize() {
     getLayout: () => panels.inspect(),
     getValueSheet: () => valueSheet.inspect(),
     getCanvasActions: () => canvasActions.inspect(),
+    getFirstRun: () => firstRunGuide.inspect(),
     getWorkspace: () => workspaceTabs.active,
     // Lazy controllers report null until loaded; await ensureWorkspace(name) first.
     getEMState: () => emLazy.controller?.inspect() ?? null,

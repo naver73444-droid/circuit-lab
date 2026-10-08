@@ -19,6 +19,7 @@ import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { sourceInlineDescriptor } from "./ui-model.js";
 import { isSelected, selectedKeys } from "./selection-model.js";
+import { diagnosticHighlightIds } from "./analysis-diagnostics.js";
 
 const LABEL_LONG = 8;
 /** Radius (screen px) of the ring around the pin/junction a half-drawn wire would join: big enough to show around a fingertip. */
@@ -85,6 +86,8 @@ export function createCanvasRenderer(deps) {
   let arrowFrame = null;
   let dragFrame = null;
   let pendingDrag = null;
+  // Parts named by the last failed run (analysis-diagnostics.js), marked with a red dashed halo until the run state changes.
+  let diagnosticIds = new Set();
   // Render counters (debug hook): full rebuilds vs cheap drag updates.
   const stats = { full: 0, overlay: 0, drag: 0, dragFallback: 0, selection: 0 };
 
@@ -229,7 +232,9 @@ export function createCanvasRenderer(deps) {
     const anchor = vertical ? "start" : "middle";
     const modeMarkup = ["V", "I"].includes(component.type) && !sourceDescriptor ? `<text class="source-mode-label" x="${labelX}" y="${valueY + 16}" style="text-anchor:${anchor}">${escapeHtml(mode)}</text>` : "";
     const labels = `<g class="upright-labels" transform="rotate(${upright})"><text class="label" x="${labelX}" y="${labelY}" style="text-anchor:${anchor}">${ref}</text>${value ? `<text class="value-label" data-edit-prop="${escapeHtml(editProp)}" x="${labelX}" y="${valueY}" style="text-anchor:${anchor}">${value}</text>` : ""}${modeMarkup}</g>`;
-    return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${escapeHtml(connectionStatus)}" aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${labels}${deleteMarkup}</g>`;
+    const diagnostic = diagnosticIds.has(component.id) ? ` data-diagnostic="1"` : "";
+    const diagnosticMarkup = diagnostic ? `<rect class="diagnostic-halo" x="-52" y="-52" width="104" height="104" rx="8"/>` : "";
+    return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${escapeHtml(connectionStatus)}"${diagnostic} aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${diagnosticMarkup}${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${labels}${deleteMarkup}</g>`;
   }
 
   /**
@@ -406,6 +411,7 @@ export function createCanvasRenderer(deps) {
     try { connection = currentConnections(); }
     catch { connectionError = true; connection = { byComponent: {}, counts: {} }; }
     const junctionById = junctionLookup();
+    diagnosticIds = state.runState?.status === "error" && state.runState.error ? diagnosticHighlightIds(state.circuit, state.runState.error) : new Set();
     elements["wire-layer"].innerHTML = state.circuit.wires.map((wire) => {
       const a = endpointPosition(wire.a, componentById, junctionById);
       const b = endpointPosition(wire.b, componentById, junctionById);

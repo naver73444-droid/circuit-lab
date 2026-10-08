@@ -396,7 +396,7 @@ export function buildTopology(circuit) {
   const wires = circuit.wires;
   const junctions = circuit.junctions ?? [];
   if (!components.some((component) => component.type === "GND")) {
-    throw new CircuitError("NO_GROUND", "접지가 없습니다.", "회로에 GND를 하나 이상 배치하고 연결하세요.");
+    throw new CircuitError("NO_GROUND", "접지(GND)가 없습니다.", "전압은 GND(0 V)를 기준으로 계산합니다. 전원의 − 단자에 GND를 하나 놓고 배선하세요.");
   }
   const pins = [];
   for (const component of components) {
@@ -649,12 +649,16 @@ function refinedConstraintError(error, circuit, analysis, start = 0) {
   const conflict = diagnostic.conflicts[0];
   if (conflict) {
     const initial = analysis === "initial";
+    // The inductor wording only fits a loop that really contains an inductor (DC short); a loop of voltage sources and wires gets its own.
+    const inductive = conflict.constraints.some((constraint) => constraint.type === "L" || constraint.type === "COUPLED_L");
     return new CircuitError(
       initial ? "INITIAL_CONDITION_CONFLICT" : "IDEAL_CONSTRAINT_CONFLICT",
       `${initial ? "초기" : "DC"} 이상 전압 제약이 모순입니다: ${conflict.constraints.map(constraintLabel).join(" ↔ ")}.`,
       initial
         ? "전압원의 시작값과 커패시터 IC를 같은 방향·값으로 맞추거나 회로 연결을 명시적으로 바꾸세요. 시간 간격 축소는 이 대수 모순을 해결하지 않습니다."
-        : "DC에서 인덕터는 0 V 단락입니다. 직렬저항·배선·소스값 등 물리 모델을 명시적으로 바꾸세요. L의 IC나 시간 간격 변경은 DC 모순을 해결하지 않습니다.",
+        : inductive
+          ? "DC에서 인덕터는 0 V 단락입니다. 직렬저항·배선·소스값 등 물리 모델을 명시적으로 바꾸세요. L의 IC나 시간 간격 변경은 DC 모순을 해결하지 않습니다."
+          : "전압원(또는 0 V 전류 센서)과 배선이 닫힌 고리를 이루어 서로 다른 전압을 강요합니다. 고리 안의 전압원 하나를 지우거나 값을 맞추거나, 고리에 저항을 넣으세요.",
       { certainty: "confirmed", reason: "ideal-voltage-conflict", analysis: initial ? "transient-initial" : "dc", ...conflict },
     );
   }

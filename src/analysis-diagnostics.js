@@ -1,4 +1,6 @@
-const ANALYSIS_LABELS = { dc: "DC 동작점", transient: "시간응답", ac: "AC 주파수" };
+import { suggestGroundFix } from "./editor-guide-model.js";
+
+const ANALYSIS_LABELS ={ dc: "DC 동작점", transient: "시간응답", ac: "AC 주파수" };
 
 export function analysisLabel(analysis) {
   return ANALYSIS_LABELS[analysis] ?? String(analysis ?? "해석");
@@ -50,6 +52,19 @@ export function describeCircuitFailure(circuit, settings, error) {
     constraints,
     relatedComponentIds: relatedComponents(circuit, error),
   };
+}
+
+/**
+ * The parts the canvas marks for a failed run: the ones the failure names (floating parts, the sources of a voltage loop) and, for a
+ * circuit without ground, the source whose − terminal the "GND 추가" fix would use.
+ */
+export function diagnosticHighlightIds(circuit, error) {
+  const ids = new Set(relatedComponents(circuit, error));
+  if (error?.code === "NO_GROUND") {
+    const fix = suggestGroundFix(circuit);
+    if (fix) ids.add(fix.sourceId);
+  }
+  return ids;
 }
 
 export function resultAvailabilityText(runState, analysis, probeCount) {

@@ -3,7 +3,8 @@ import { acceptsRunGeneration, endpointExists } from "./circuit-edit.js";
 import { acMagnitudeLevel, acPhaseDegrees, currentDisplayScale } from "./plot-format.js";
 import { suggestAnalysis } from "./analysis-policy.js";
 import { AnalysisCancelledError, AnalysisWorkerClient } from "./analysis-worker-client.js";
-import { describeCircuitFailure, failureRecord, resultAvailabilityText } from "./analysis-diagnostics.js";
+import { describeCircuitFailure, diagnosticHighlightIds, failureRecord, resultAvailabilityText } from "./analysis-diagnostics.js";
+import { suggestGroundFix, suggestProbes } from "./editor-guide-model.js";
 import { actualCurrentDirection, currentDirectionGuide, currentProbeLabel, currentReferenceSign, pointCurrentScale, probeCurrentKey, signedCurrent } from "./current-direction.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
 import { escapeHtml } from "./safe-dom.js";
@@ -47,7 +48,7 @@ export function createRunState() {
  */
 export function createAnalysisRunner(deps) {
   const { state, elements, workspace, inputDrafts, scopeView, phasorView, mutate, currentConnections, bumpGeneration, removeProbe, renderCanvas, renderAll, setStatus, setTool, showCanvas,
-    phasorPanelVisible, commitPendingInputs, updateDraftNotice, openProbeContextMenu, measureView, onStaleChange } = deps;
+    phasorPanelVisible, commitPendingInputs, updateDraftNotice, openProbeContextMenu, measureView, onStaleChange, addProbes, addGround, onResultReady } = deps;
   /** Anything drawn from the result (the current-flow overlay) must go the moment the result turns stale, not on the next canvas render. */
   const staleChanged = () => { try { onStaleChange?.(); } catch { /* a failing observer must not break the run lifecycle */ } };
   const analysisWorkerClient = new AnalysisWorkerClient();
@@ -161,6 +162,7 @@ export function createAnalysisRunner(deps) {
 
   function scheduleAutoRun() {
     cancelScheduledRun();
+    showGroundAdvice(null);
     if (!state.autoUpdate) { setAutoHint("수동 실행"); return; }
     if (!state.circuit.components.length) { setAutoHint("회로 작성 중"); return; }
     if (inputDrafts.size || state.inlineEdit || document.querySelector(".input-invalid, .input-editing")) {
@@ -169,6 +171,8 @@ export function createAnalysisRunner(deps) {
     try {
       const status = currentConnections();
       if ((status.counts.unwired ?? 0) || (status.counts["no-ground"] ?? 0)) {
+        // Everything is wired but there is no GND at all: say so and offer the one-tap fix instead of waiting silently.
+        if (!(status.counts.unwired ?? 0)) showGroundAdvice(suggestGroundFix(state.circuit));
         setAutoHint("연결 완료 후 자동 갱신", { show: true }); return;
       }
     } catch { return; }
@@ -178,15 +182,40 @@ export function createAnalysisRunner(deps) {
     state.autoTimer = setTimeout(() => runAnalysis({ automatic: true, generation, requestedAt }), 250);
   }
 
+  const groundFixButton = (fix) => (fix
+    ? `<div class="diagnostic-fixes"><button type="button" class="primary" data-fix-ground="${escapeHtml(fix.sourceId)}">${escapeHtml(fix.label)}</button></div>`
+    : "");
+
+  /** The error box while the auto-run waits on a circuit without any GND (not a failed run: the run state is untouched). null hides it. */
+  function showGroundAdvice(fix) {
+    const box = elements["error-box"];
+    if (!fix) {
+      if (box.dataset.advice) { delete box.dataset.advice; box.classList.add("hidden"); }
+      return;
+    }
+    if (!workspace.circuitActive) return;
+    const markup = `<div class="diagnostic-heading"><span>자동 해석 대기</span><code>NO_GROUND</code></div><strong>접지(GND)가 없어 해석할 수 없습니다.</strong>`
+      + `<p>전압은 GND(0 V)를 기준으로 계산합니다. 전원의 − 단자에 GND를 하나 연결하세요.</p>${groundFixButton(fix)}`;
+    const key = `ground:${fix.sourceId}:${fix.label}`;
+    if (box.dataset.advice !== key) { box.innerHTML = markup; box.dataset.advice = key; } // unchanged advice is not re-announced (role=alert)
+    box.classList.remove("hidden");
+  }
+
   function renderFailureDiagnostic(error) {
     if (!workspace.circuitActive) { workspace.renderDeferred = true; return; }
+    delete elements["error-box"].dataset.advice;
     const diagnostic = describeCircuitFailure(state.circuit, state.settings, error);
+    const marked = diagnosticHighlightIds(state.circuit, error).size > 0;
+    const fix = diagnostic.code === "NO_GROUND" ? groundFixButton(suggestGroundFix(state.circuit)) : "";
+    const markNote = marked ? `<p class="diagnostic-mark-note">문제 부품은 캔버스에 빨간 점선으로 표시했습니다.</p>` : "";
     const constraints = diagnostic.constraints.length
       ? `<div class="diagnostic-constraints">${diagnostic.constraints.map((constraint) => `<button type="button" data-diagnostic-component="${escapeHtml(constraint.componentId)}"><b>${escapeHtml(constraint.ref)}</b><span>${escapeHtml(constraint.text)}</span></button>`).join("")}</div>`
       : diagnostic.relatedComponentIds.length
         ? `<div class="diagnostic-constraints">${diagnostic.relatedComponentIds.map((componentId) => { const component = state.circuit.components.find((item) => item.id === componentId); return `<button type="button" data-diagnostic-component="${escapeHtml(componentId)}"><b>${escapeHtml(component?.props?.ref ?? componentId)}</b><span>ID ${escapeHtml(componentId)} 선택</span></button>`; }).join("")}</div>`
         : "";
-    elements["error-box"].innerHTML = `<div class="diagnostic-heading"><span>${escapeHtml(diagnostic.analysis)}</span><span class="certainty-${diagnostic.certainty}">${escapeHtml(diagnostic.certaintyLabel)}</span><code>${escapeHtml(diagnostic.code)}</code></div><strong>${escapeHtml(diagnostic.message)}</strong>${constraints}<p>${escapeHtml(diagnostic.hint)}</p>`;
+    const heading = `<div class="diagnostic-heading"><span>${escapeHtml(diagnostic.analysis)}</span>`
+      + `<span class="certainty-${diagnostic.certainty}">${escapeHtml(diagnostic.certaintyLabel)}</span><code>${escapeHtml(diagnostic.code)}</code></div>`;
+    elements["error-box"].innerHTML = `${heading}<strong>${escapeHtml(diagnostic.message)}</strong>${constraints}<p>${escapeHtml(diagnostic.hint)}</p>${markNote}${fix}`;
     elements["error-box"].classList.remove("hidden");
     elements["error-box"].querySelectorAll("[data-diagnostic-component]").forEach((button) => button.addEventListener("click", () => {
       setSingleSelection(state, { kind: "component", id: button.dataset.diagnosticComponent });
@@ -228,6 +257,7 @@ export function createAnalysisRunner(deps) {
       setStatus(`${automatic ? "최신 결과 · 자동" : "해석 완료"} · ${state.lastRunMs.toFixed(0)} ms`, "ready");
       setAutoHint(`완료 · ${state.lastRunMs.toFixed(1)} ms${state.autoUpdate ? " · 자동 갱신" : ""}`);
       renderAll();
+      try { onResultReady?.(state.result.analysis); } catch { /* a failing observer must not break the run lifecycle */ }
     } catch (error) {
       if (error instanceof AnalysisCancelledError) return;
       if (serial !== state.runSerial || !acceptsRunGeneration(generation, state.generation)) return;
@@ -402,10 +432,49 @@ export function createAnalysisRunner(deps) {
     } else measureView.clear();
     if (!hasData) {
       const availability = resultAvailabilityText(state.runState, state.settings.analysis, state.probes.length);
-      elements["plot-empty"].querySelector("span").textContent = availability
-        ?? (state.result ? "표시할 프로브를 회로에 놓으세요." : "회로에 V 또는 I 프로브를 놓으세요.");
+      renderPlotEmpty(availability
+        ?? (state.result ? "결과가 나왔습니다 · 파형으로 볼 곳(프로브)을 고르세요." : "회로에 V 또는 I 프로브를 놓으세요."));
       elements["cursor-readout"].textContent = CURSOR_HINT;
     }
+  }
+
+  // ---- empty waveform panel: recommended probes in one step, or one node at a time
+
+  let probeSuggestion = null;
+  let plotEmptyMarkup = "";
+  /** The empty plot's message and, when the circuit has no probe at all, the recommended probes (one undo step) and the node chips. */
+  function renderPlotEmpty(text) {
+    const box = elements["plot-empty"];
+    probeSuggestion = !state.probes.length && state.circuit.components.length ? suggestProbes(state.circuit) : null;
+    const offer = probeSuggestion?.probes ?? [];
+    const chips = probeSuggestion?.nodes ?? [];
+    const chipMarkup = chips.length
+      ? `<div class="node-chips" role="group" aria-label="노드 전압 프로브 하나 추가"><span>또는 노드 하나만</span>${chips.map((chip) => `<button type="button" data-suggest-node="${escapeHtml(chip.key)}">${escapeHtml(chip.label)}</button>`).join("")}</div>`
+      : "";
+    const offerMarkup = offer.length
+      ? `<div class="probe-suggest"><button type="button" class="primary" data-suggest-probes title="${escapeHtml(offer.map((probe) => probe.label).join(" · "))}">추천 프로브 자동 추가</button>`
+        + `<small>${escapeHtml(offer.map((probe) => probe.label).join(" · "))} · 되돌리기 한 번으로 취소</small>${chipMarkup}</div>`
+      : "";
+    const markup = `<span>${escapeHtml(text)}</span>${offerMarkup}`;
+    if (markup !== plotEmptyMarkup) { box.innerHTML = markup; plotEmptyMarkup = markup; }
+    box.classList.toggle("has-offer", offer.length > 0);
+  }
+
+  function addSuggestedProbes(event) {
+    const all = event.target.closest?.("[data-suggest-probes]");
+    const node = event.target.closest?.("[data-suggest-node]");
+    if (!probeSuggestion || (!all && !node)) return;
+    const specs = all ? probeSuggestion.probes : probeSuggestion.nodes.filter((chip) => chip.key === node.dataset.suggestNode);
+    addProbes?.(specs);
+  }
+
+  function fixMissingGround(event) {
+    if (!event.target.closest?.("[data-fix-ground]")) return;
+    const fix = suggestGroundFix(state.circuit);
+    if (!fix || !commitPendingInputs()) return;
+    showGroundAdvice(null);
+    const id = addGround?.(fix);
+    if (id) setStatus("GND 추가됨 · 되돌리기로 취소", "ready");
   }
 
   // ---- DC port analysis
@@ -576,6 +645,8 @@ export function createAnalysisRunner(deps) {
     elements["port-run-button"].addEventListener("click", runPortAnalysis);
     elements["reset-view-button"].addEventListener("click", () => scopeView.fit());
     elements["probe-list"].addEventListener("click", (event) => { if (event.target.closest("[data-sweep-clear-legend]")) clearSweep(); });
+    elements["plot-empty"].addEventListener("click", addSuggestedProbes);
+    elements["error-box"].addEventListener("click", fixMissingGround);
     elements["ac-view-toggle"].querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
       state.acView = button.dataset.acView;
       elements["ac-view-toggle"].querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));

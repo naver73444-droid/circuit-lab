@@ -36,6 +36,8 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
     for (const button of viewButtons) {
       const selected = mobile.matches ? phoneView === button.dataset.view : sideView === button.dataset.view;
       button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
+      // The "new result" dot only means something on the phone tab bar, and only until that panel is looked at.
+      if (button.dataset.fresh && (!mobile.matches || selected)) { delete button.dataset.fresh; button.setAttribute('aria-label', (button.textContent ?? '').trim()); }
     }
     for (const button of resultButtons) button.setAttribute('aria-pressed', String(resultView === button.dataset.resultView));
     notify();
@@ -56,6 +58,32 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
   }
   /** Phone only: bring the canvas back into view, e.g. after choosing a part or a port pin. */
   function showCanvas() { if (mobile.matches) workbench.scrollTop = 0; }
+
+  /**
+   * A new result worth looking at in `name` (an AC or transient run finished). Never switches panels: the phone puts a dot on that tab
+   * (until the tab is opened), the desktop briefly highlights the panel header, which is always on screen there.
+   */
+  let flashTimer = null;
+  function notifyResult(name = 'wave') {
+    if (!isActive() || !(name in PANELS)) return;
+    if (mobile.matches) {
+      if (isOpen(name)) return;
+      for (const button of viewButtons) {
+        if (button.dataset.view !== name || button.closest?.('.side-tabs')) continue;
+        button.dataset.fresh = '1';
+        button.setAttribute('aria-label', `${(button.textContent ?? '').trim()} · 새 결과`);
+      }
+      return;
+    }
+    const header = nodes[name]?.querySelector?.('.wave-header');
+    if (!header?.classList) return;
+    header.classList.remove('result-flash');
+    void header.offsetWidth; // restart the animation when two results arrive close together
+    header.classList.add('result-flash');
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => header.classList.remove('result-flash'), 1800);
+  }
+  const freshViews = () => viewButtons.filter((button) => button.dataset.fresh).map((button) => button.dataset.view);
 
   for (const button of viewButtons) button.addEventListener('click', () => show(button.dataset.view));
   for (const button of resultButtons) button.addEventListener('click', () => show(button.dataset.resultView, { scroll: false }));
@@ -82,5 +110,8 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
   });
   mobile.addEventListener('change', () => { beforeChange(); synchronize(); });
   synchronize();
-  return { show, showCanvas, isOpen, mobile, synchronize, cancelInteractions: beforeChange, inspect: () => ({ mobile: mobile.matches, side: sideView, view: phoneView, result: resultView }) };
+  return {
+    show, showCanvas, isOpen, mobile, synchronize, notifyResult, cancelInteractions: beforeChange,
+    inspect: () => ({ mobile: mobile.matches, side: sideView, view: phoneView, result: resultView, fresh: freshViews() }),
+  };
 }
