@@ -3,6 +3,7 @@ import { cloneComponentSet, deleteSelectionFromCircuit } from "./circuit-edit.js
 import { allItems, clearSelection, selectedItems, setSelectionItems, setSingleSelection } from "./selection-model.js";
 import { moveGroup, movableItems, rotateGroup } from "./group-edit.js";
 import { allocatorFor } from "./id-allocator.js";
+import { rerouteWires, wiresFollowingMove } from "./wire-router.js";
 import { NUDGE_IDLE_MS } from "./editor-shortcuts.js";
 import { convertYDeltaInCircuit, retargetPortEndpoint, selectedResistorIds } from "./y-delta-circuit.js";
 import { CLIPBOARD_FORMAT, additionLimitReason, buildClipboard, clipboardLimitReason, controlsNeedingTarget, parseClipboardText, pasteClipboard, pasteRejection, serializeClipboard } from "./clipboard-model.js";
@@ -132,7 +133,10 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
     commitActiveDrag();
     const items = selectedItems(state);
     if (!items.some((item) => item.kind === "component")) return;
-    mutate(() => { rotateGroup(state.circuit, items, direction, state.selected); });
+    mutate(() => {
+      rotateGroup(state.circuit, items, direction, state.selected);
+      rerouteWires(state.circuit, wiresFollowingMove(state.circuit, items)); // wires to the turned pins leave them the new way
+    });
   }
 
   /** Arrow-key move by whole grid steps. A press is one history entry; held-key repeats extend that entry. Moves the whole selection. */
@@ -143,7 +147,10 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
       : state.circuit.components.some((component) => component.id === item.id));
     if (!items.length) return false;
     if (!repeat) closeEditGroup();
-    mutateGrouped("nudge", () => { moveGroup(state.circuit, items, dx * steps * GRID_SIZE, dy * steps * GRID_SIZE); }, { idleMs: NUDGE_IDLE_MS });
+    mutateGrouped("nudge", () => {
+      moveGroup(state.circuit, items, dx * steps * GRID_SIZE, dy * steps * GRID_SIZE);
+      rerouteWires(state.circuit, wiresFollowingMove(state.circuit, items));
+    }, { idleMs: NUDGE_IDLE_MS });
     return true;
   }
 
@@ -272,5 +279,26 @@ export function createSelectionCommands({ state, elements, mutate, mutateGrouped
     return true;
   }
 
-  return { deleteSelection, cloneSelection, rotateSelection, convertYDelta, nudgeSelection, selectAll, copySelection, pasteSelection };
+  /**
+   * "배선 정리": the selected wires (none selected: every wire) are drawn again on a fresh automatic route; clicked bend points are dropped.
+   * Only the drawing changes, never what is connected. One history entry, none when nothing would change.
+   */
+  function tidyWires() {
+    commitActiveDrag();
+    const selected = selectedItems(state).filter((item) => item.kind === "wire").map((item) => item.id);
+    const ids = selected.length ? selected : state.circuit.wires.map((wire) => wire.id);
+    const trial = structuredClone(state.circuit);
+    const original = new Map(state.circuit.wires.map((wire) => [wire.id, JSON.stringify(wire)]));
+    const changed = rerouteWires(trial, ids, { fresh: true }).filter((id) => JSON.stringify(trial.wires.find((wire) => wire.id === id)) !== original.get(id));
+    if (!changed.length) {
+      setStatus(ids.length ? "배선이 이미 정리되어 있습니다" : "정리할 배선이 없습니다", "ready");
+      return 0;
+    }
+    mutate(() => { rerouteWires(state.circuit, ids, { fresh: true }); });
+    const message = `배선 ${changed.length}개를 자동 경로로 정리했습니다 · 되돌리기 Ctrl+Z`;
+    setStatus(message, "ready");
+    return changed.length;
+  }
+
+  return { deleteSelection, cloneSelection, rotateSelection, convertYDelta, nudgeSelection, selectAll, copySelection, pasteSelection, tidyWires };
 }

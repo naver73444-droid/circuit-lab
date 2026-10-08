@@ -5,11 +5,13 @@ import {
   localPin as geometryLocalPin,
   normalizePoints,
   orthogonalLeg,
+  appendFixedWaypoint,
   pinPosition as geometryPinPosition,
   polylinePath,
   routeWirePoints,
   snapPoint,
 } from "./circuit-geometry.js";
+import { createRoutingContext, previewRoute } from "./wire-router.js";
 import { actualCurrentDirection, currentArrowGeometry, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection } from "./current-direction.js";
 import { flowSampleIndex } from "./wire-current-model.js";
 import { engineering } from "./scope-model.js";
@@ -329,6 +331,21 @@ export function createCanvasRenderer(deps) {
     return routeWirePoints(wire, a, b, circuitGeometryVersion(state.circuit));
   }
 
+  /** Clicked bend points joined by plain L legs (how a wire was drawn before automatic routing; still used off the grid). */
+  function legacyLegs(start, anchors) {
+    let points = [];
+    for (const anchor of anchors) points = appendFixedWaypoint(start, points, anchor);
+    return points;
+  }
+
+  // What the preview route keeps clear of, built once per half-drawn wire (the circuit does not change while a wire is pending).
+  let routingCache = null;
+  function previewContext() {
+    const key = [state.pendingPin, state.circuit, state.circuit.components.length, state.circuit.wires.length, (state.circuit.junctions ?? []).length];
+    if (!routingCache || routingCache.key.some((value, index) => value !== key[index])) routingCache = { key, context: createRoutingContext(state.circuit) };
+    return routingCache.context;
+  }
+
   function renderOverlay(componentById = new Map(state.circuit.components.map((component) => [component.id, component]))) {
     if (overlayFrame !== null) { cancelAnimationFrame(overlayFrame); overlayFrame = null; }
     const endpointCounts = new Map();
@@ -360,11 +377,15 @@ export function createCanvasRenderer(deps) {
     if (state.pendingPin && state.pointer) {
       const start = endpointPosition(state.pendingPin, componentById, junctionLookup());
       if (start) {
-        const fixed = normalizePoints([start, ...state.pendingWaypoints]);
-        if (fixed.length > 1) junctions.push(`<path class="wire-preview-fixed" d="${polylinePath(fixed)}"/>`);
-        const current = state.pendingWaypoints.at(-1) ?? start;
         const target = snapPoint(state.pointer);
-        junctions.push(`<path class="wire-preview" d="${polylinePath([current, ...orthogonalLeg(current, target)])}"/>`);
+        // The route the finished wire will get (wire-router), live under the pointer: solid up to the last clicked point, then dashed.
+        // An off-grid drawing (old geometry) cannot be routed and shows the clicked points joined by plain L legs as before.
+        const routed = previewRoute(state.circuit, state.pendingPin, state.pendingWaypoints, target, previewContext());
+        const fixed = routed ? routed.fixed : normalizePoints([start, ...legacyLegs(start, state.pendingWaypoints)]);
+        if (fixed.length > 1) junctions.push(`<path class="wire-preview-fixed" d="${polylinePath(fixed)}"/>`);
+        const current = fixed.at(-1) ?? start;
+        const live = routed ? routed.live : [current, ...orthogonalLeg(current, target)];
+        junctions.push(`<path class="wire-preview" d="${polylinePath(live)}"/>`);
       }
     }
     elements["overlay-layer"].innerHTML = junctions.join("");

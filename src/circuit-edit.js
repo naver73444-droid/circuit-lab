@@ -1,5 +1,5 @@
 import { componentDefaults, endpointKey, parseValue, pinCount } from "./circuit-engine.js";
-import { circuitGeometryVersion, projectSplitPoint, snapPoint, splitRouteWaypoints } from "./circuit-geometry.js";
+import { circuitGeometryVersion, closestSegmentIndex, projectSplitPoint, snapPoint, splitRouteWaypoints } from "./circuit-geometry.js";
 
 export { endpointKey };
 
@@ -30,6 +30,26 @@ export function nextEntityId(items, prefix) {
   let index = 1;
   while (used.has(`${prefix}${index}`)) index += 1;
   return `${prefix}${index}`;
+}
+
+/** Distance along a polyline to the point nearest `target`. */
+function distanceAlong(points, target) {
+  const index = closestSegmentIndex(points, target);
+  let length = 0;
+  for (let step = 0; step < index; step += 1) length += Math.hypot(points[step + 1].x - points[step].x, points[step + 1].y - points[step].y);
+  return length + Math.hypot(target.x - points[index].x, target.y - points[index].y);
+}
+
+/** The anchors (clicked points) before and after `point` along the route. */
+function splitAnchors(routePoints, anchors, point) {
+  const cut = distanceAlong(routePoints, point);
+  const first = [], second = [];
+  for (const anchor of anchors) {
+    const at = distanceAlong(routePoints, anchor);
+    if (Math.abs(at - cut) < 1e-9) continue;
+    (at < cut ? first : second).push({ x: anchor.x, y: anchor.y });
+  }
+  return { first, second };
 }
 
 /**
@@ -64,9 +84,11 @@ export function splitWireAtJunction(circuit, wireId, point, routePoints = null, 
   const firstId = allocator ? allocator.next("W", copy.wires) : nextEntityId(copy.wires, "W");
   const secondId = allocator ? allocator.next("W", copy.wires) : nextEntityId([...copy.wires, { id: firstId }], "W");
   copy.junctions.push(junction);
+  // A routed wire (wire-router) keeps the clicked points that fall on each half.
+  const anchors = Array.isArray(original.anchors) && routePoints?.length >= 2 ? splitAnchors(routePoints, original.anchors, snapped) : null;
   copy.wires.splice(index, 1,
-    { id: firstId, a: original.a, b: { junctionId: junction.id }, waypoints: split.first },
-    { id: secondId, a: { junctionId: junction.id }, b: original.b, waypoints: split.second },
+    { id: firstId, a: original.a, b: { junctionId: junction.id }, waypoints: split.first, ...(anchors ? { anchors: anchors.first } : {}) },
+    { id: secondId, a: { junctionId: junction.id }, b: original.b, waypoints: split.second, ...(anchors ? { anchors: anchors.second } : {}) },
   );
   return { circuit: copy, junction, endpoint: { junctionId: junction.id }, unchanged: false, replacementWireId: firstId, splitWireIds: [firstId, secondId] };
 }
@@ -191,6 +213,7 @@ export function remapFragment(circuit, fragment, offset = 40, { resolveControl =
     wire.a = remapEnd(original.a);
     wire.b = remapEnd(original.b);
     if (Array.isArray(wire.waypoints)) wire.waypoints = wire.waypoints.map((point) => snapPoint({ x: point.x + offset, y: point.y + offset }));
+    if (Array.isArray(wire.anchors)) wire.anchors = wire.anchors.map((point) => snapPoint({ x: point.x + offset, y: point.y + offset }));
     wires.push(wire);
   }
   return { components, wires, junctions, idMap, junctionMap, clearedControls };
