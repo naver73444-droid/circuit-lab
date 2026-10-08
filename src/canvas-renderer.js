@@ -21,6 +21,8 @@ import { sourceInlineDescriptor } from "./ui-model.js";
 import { isSelected, selectedKeys } from "./selection-model.js";
 
 const LABEL_LONG = 8;
+/** Radius (screen px) of the ring around the pin/junction a half-drawn wire would join: big enough to show around a fingertip. */
+const SNAP_RING_PX = 18;
 const LABEL_DIGITS = 5;
 const LABEL_PREFIX = new Map([[-12, "p"], [-9, "n"], [-6, "u"], [-3, "m"], [0, ""], [3, "k"], [6, "meg"], [9, "g"], [12, "t"]]);
 
@@ -78,7 +80,7 @@ export function magneticSymbolMarkup(component) {
  * A component drag takes a cheaper path (updateMoved): move that part's <g transform> and the `d` of the wires attached to it.
  */
 export function createCanvasRenderer(deps) {
-  const { state, elements, workspace, currentConnections, afterCanvasRender, onDragFrame, scopeView } = deps;
+  const { state, elements, workspace, currentConnections, afterCanvasRender, onDragFrame, onViewChange, scopeView } = deps;
   let overlayFrame = null;
   let arrowFrame = null;
   let dragFrame = null;
@@ -113,6 +115,7 @@ export function createCanvasRenderer(deps) {
     const v = state.canvasView;
     elements["circuit-canvas"].setAttribute("viewBox", `${v.x} ${v.y} ${v.width} ${v.height}`);
     syncHitSizes();
+    onViewChange?.();
   }
 
   function scheduleOverlayRender() {
@@ -377,7 +380,9 @@ export function createCanvasRenderer(deps) {
     if (state.pendingPin && state.pointer) {
       const start = endpointPosition(state.pendingPin, componentById, junctionLookup());
       if (start) {
-        const target = snapPoint(state.pointer);
+        // On a pin or junction the wire would join, the end sits exactly there and a ring (fixed screen size) says so.
+        const snap = state.wireSnap && state.wireSnap.x === state.pointer.x && state.wireSnap.y === state.pointer.y ? state.wireSnap : null;
+        const target = snap ?? snapPoint(state.pointer);
         // The route the finished wire will get (wire-router), live under the pointer: solid up to the last clicked point, then dashed.
         // An off-grid drawing (old geometry) cannot be routed and shows the clicked points joined by plain L legs as before.
         const routed = previewRoute(state.circuit, state.pendingPin, state.pendingWaypoints, target, previewContext());
@@ -386,6 +391,7 @@ export function createCanvasRenderer(deps) {
         const current = fixed.at(-1) ?? start;
         const live = routed ? routed.live : [current, ...orthogonalLeg(current, target)];
         junctions.push(`<path class="wire-preview" d="${polylinePath(live)}"/>`);
+        if (snap) junctions.push(`<circle class="snap-ring" cx="${snap.x}" cy="${snap.y}" r="${(SNAP_RING_PX / (hitScale || 0.5)).toFixed(2)}"/>`);
       }
     }
     elements["overlay-layer"].innerHTML = junctions.join("");

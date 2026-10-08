@@ -22,6 +22,7 @@ import { createMeasureView } from "./measure-view.js";
 import { selectedItems, selectedKeys } from "./selection-model.js";
 import { createValueSheet } from "./value-sheet.js";
 import { installViewportGuard } from "./viewport-guard.js";
+import { createCanvasActions } from "./canvas-actions.js";
 
 const elements = Object.fromEntries([
   "engine-status", "stale-badge", "run-button", "cancel-analysis-button", "palette-list", "circuit-canvas", "wire-layer", "component-layer", "overlay-layer", "flow-layer", "flow-toggle", "flow-hint", "empty-hint",
@@ -51,6 +52,7 @@ const scopeView = new ScopeView(elements["wave-plot"], elements["scope-controls"
 const measureView = createMeasureView({ panel: elements["measure-panel"], summary: elements["measure-summary"], body: elements["measure-body"], bButton: elements["cursor-b-button"], scopeView });
 let panels = null;
 let workspaceTabs = null;
+let canvasActions = null; // phone selection bar + part strip, created once the editor input exists
 // Heavy workspace controllers (EM, circuit course, signals) load on first use.
 let emLazy = null;
 let circuitCourseLazy = null;
@@ -79,8 +81,9 @@ const session = createEditorSession({
 });
 const renderer = createCanvasRenderer({
   state, elements, workspace, scopeView, currentConnections: session.currentConnections,
-  afterCanvasRender: () => flow.refresh(),
-  onDragFrame: () => flow.suspend(),
+  afterCanvasRender: () => { flow.refresh(); canvasActions?.schedule(); },
+  onDragFrame: () => { flow.suspend(); canvasActions?.schedule(); },
+  onViewChange: () => canvasActions?.schedule(),
 });
 const flow = createFlowLayer({ state, elements, scopeView, wireRoutes: renderer.wireRoutes });
 // Probe arrows show the real direction at the scope cursor time in a transient run, so they follow the cursor (one frame per move).
@@ -112,6 +115,7 @@ const valueSheet = createValueSheet({
 const input = createEditorInput({
   state, elements, workspace, scopeView, renderAll, renderSelection, setStatus, showInspector, showCanvas, isCircuitUiActive, hover,
   openValueSheet: (id) => valueSheet.openFor(id),
+  armSelectionBar: () => canvasActions?.arm(),
   applySelection: renderer.applySelection, setMarquee: renderer.setMarquee,
   runAnalysis: () => analysis.runAnalysis(), saveProject: () => projectIO.saveProject(),
   mutate: session.mutate, mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, snapshot: session.snapshot, commitMove: session.commitMove, undo: session.undo, redo: session.redo,
@@ -120,6 +124,11 @@ const input = createEditorInput({
   updateCanvasView: renderer.updateCanvasView, endpointPosition: renderer.endpointPosition, pinPosition: renderer.pinPosition, routeForWireId: renderer.routeForWireId,
   renderInspector: inspector.renderInspector, openInlineEditor: inspector.openInlineEditor, closeInlineEditor: inspector.closeInlineEditor,
   assignPortEndpoint: analysis.assignPortEndpoint, presentProbe: analysis.presentProbe, reconcileAnalysis: analysis.reconcileWithCircuit,
+});
+// Phone: actions over the selected part and the part strip while placing (canvas-actions.js).
+canvasActions = createCanvasActions({
+  state, isCircuitUiActive, wrap: document.getElementById("canvas-wrap"), canvas: elements["circuit-canvas"],
+  commands: { ...input.barCommands, editValue: (id) => { if (!valueSheet.openFor(id)) showInspector(); } },
 });
 const projectIO = createProjectIO({
   state, elements, resetProjectSession, setStatus,
@@ -206,6 +215,7 @@ function renderSelection() {
   syncSelectionButtons();
   hover.refresh();
   valueSheet.sync();
+  canvasActions?.schedule();
 }
 
 function syncSelectionButtons() {
@@ -343,6 +353,7 @@ function initialize() {
     setFlow: (value) => flow.setEnabled(value),
     getLayout: () => panels.inspect(),
     getValueSheet: () => valueSheet.inspect(),
+    getCanvasActions: () => canvasActions.inspect(),
     getWorkspace: () => workspaceTabs.active,
     // Lazy controllers report null until loaded; await ensureWorkspace(name) first.
     getEMState: () => emLazy.controller?.inspect() ?? null,

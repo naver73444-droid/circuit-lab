@@ -1,6 +1,8 @@
 /**
  * Value adjuster for the selected R / C / L / source.
- *  - Phone: a bottom sheet over the panel tab bar (opens when such a part is tapped, ✕ hides it until another part is chosen).
+ *  - Phone: a bottom sheet docked above the panel tab bar. It opens only on an explicit choice (a tap on the part or its value, "값" on the selection
+ *    bar), never because a part merely became selected (placing a part, a long-press pick-up, a diagnostic link): popping up on its own
+ *    would cover the lower canvas right after the student placed a part. ✕ hides it until the part is chosen again.
  *    The text field asks for the number pad (inputmode="decimal"); prefixes come from the chips, so no letter keyboard is needed.
  *  - Desktop: the same controls as a compact card at the top of the properties panel (the inspector field below stays the text input).
  * Every gesture is ONE undo step (createValueGesture): a slider drag, a held ◀/▶ (auto-repeat), a chip tap, a typed value.
@@ -47,7 +49,7 @@ export function createValueSheet(deps) {
   const input = $("#value-sheet-input"), slider = $("#value-sheet-slider"), seriesButton = $('[data-sheet-action="series"]');
   const gesture = createValueGesture({ mutateGrouped, closeEditGroup });
   let series = "E12";
-  let dismissed = null;   // phone: the part whose sheet the user closed
+  let requested = null;   // phone: the part whose sheet was explicitly asked for (openFor); cleared by ✕ or another selection
   let current = null;     // { id, field }
   let slideBase = null;   // value text when the slider drag began
   let repeat = null;      // auto-repeat timer of a held ◀/▶
@@ -90,8 +92,8 @@ export function createValueSheet(deps) {
   function sync() {
     place();
     const found = target();
-    if (!found || dismissed !== found.component.id) dismissed = null; // closing lasts until another part (or nothing) is chosen
-    const show = Boolean(found) && !(phone.matches && dismissed === found.component.id);
+    if (!found || requested !== found.component.id) requested = null; // a request lasts while that part stays the selection
+    const show = Boolean(found) && (!phone.matches || requested === found.component.id);
     sheet.hidden = !show;
     sheet.classList.toggle("is-phone", phone.matches);
     doc.documentElement.classList.toggle("value-sheet-open", show && phone.matches);
@@ -224,7 +226,7 @@ export function createValueSheet(deps) {
     const action = event.target.closest?.("[data-sheet-action]")?.dataset.sheetAction;
     if (!action) return;
     if (action === "series") { series = series === "E12" ? "E24" : "E12"; seriesButton.textContent = series; return; }
-    if (action === "close" || action === "inspect") { dismissed = current?.id ?? null; sync(); }
+    if (action === "close" || action === "inspect") { requested = null; sync(); }
     if (action === "inspect") showInspector();
   });
   // Shortcuts (R rotate, Delete ...) must not fire while a sheet control has focus.
@@ -236,8 +238,8 @@ export function createValueSheet(deps) {
 
   return {
     sync,
-    /** Show the sheet for this part even if the user closed it before (an explicit tap on the part or its value). */
-    openFor(id) { if (dismissed === id) dismissed = null; shownFor = null; sync(); return !sheet.hidden; },
+    /** Show the sheet for this part (an explicit tap on the part or its value), also after the user closed it before. */
+    openFor(id) { requested = id; shownFor = null; sync(); return !sheet.hidden; },
     canAdjust: (component) => Boolean(primaryValueField(component, state.settings.analysis)),
     inspect: () => ({ visible: !sheet.hidden, phone: phone.matches, id: current?.id ?? null, prop: current?.field.prop ?? null, series, value: input.value, sliding: slideBase !== null }),
   };

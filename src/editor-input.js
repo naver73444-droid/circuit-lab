@@ -38,6 +38,7 @@ export function createInputState() {
     pendingPin: null,
     pendingWaypoints: [],
     pointer: null,
+    wireSnap: null, // world point of the pin/junction the half-drawn wire would join right now (ringed on the canvas)
     drag: null,
     ignoreClickUntil: 0,
     pointerOwnerId: null,
@@ -51,6 +52,8 @@ export function createEditorInput(deps) {
     renderCanvas, renderOverlay, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
     renderAll, renderSelection, applySelection, setMarquee, scheduleDragUpdate, cancelDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, reconcileAnalysis, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
   const openValueSheet = deps.openValueSheet ?? (() => false);
+  // The user explicitly chose the current selection (phone selection bar, canvas-actions.js).
+  const armSelectionBar = () => deps.armSelectionBar?.();
   let canvasTouch = null;
   const notices = createCanvasNotices(elements["canvas-notices"]);
 
@@ -117,6 +120,7 @@ export function createEditorInput(deps) {
   function setTool(tool) {
     state.port.mode = null;
     state.tool = tool;
+    state.wireSnap = null;
     state.pendingPin = null;
     state.pendingWaypoints = [];
     state.pointer = null;
@@ -143,6 +147,7 @@ export function createEditorInput(deps) {
 
   /** Drop a half-drawn wire but stay in the current tool. */
   function cancelPendingWire() {
+    state.wireSnap = null;
     state.pendingPin = null;
     state.pendingWaypoints = [];
     state.pointer = null;
@@ -186,6 +191,7 @@ export function createEditorInput(deps) {
     }
     if (state.tool === "wire" || state.tool === "select") {
       if (!state.pendingPin) {
+        state.wireSnap = null;
         state.pendingPin = target;
         state.pendingWaypoints = [];
         state.pointer = endpointPosition(target);
@@ -315,6 +321,7 @@ export function createEditorInput(deps) {
         if (event.shiftKey) toggleSelection(state, { kind: "wire", id: wire.id });
         else setSingleSelection(state, { kind: "wire", id: wire.id });
         renderSelection();
+        armSelectionBar();
       }
     });
     wires.addEventListener("dblclick", (event) => {
@@ -486,6 +493,17 @@ export function createEditorInput(deps) {
 
   // ---- canvas view
 
+  /**
+   * Zoom factor of one wheel event, proportional to how far the wheel/trackpad moved: a mouse notch (deltaY ±100) is about ×1.17 / ×0.85 as
+   * before, while a trackpad's stream of small deltas now zooms smoothly instead of one full step per event. Ctrl+wheel (trackpad pinch)
+   * is more responsive; every event stays within ×0.74 … ×1.35.
+   */
+  function wheelZoomFactor(event) {
+    const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1);
+    const exponent = Math.max(-0.3, Math.min(0.3, delta * (event.ctrlKey ? 0.01 : 0.0016)));
+    return Math.exp(exponent);
+  }
+
   function zoomCanvas(factor, anchor = { x: state.canvasView.x + state.canvasView.width / 2, y: state.canvasView.y + state.canvasView.height / 2 }) {
     const old = state.canvasView;
     const width = Math.max(CANVAS_VIEW_MIN_WIDTH, Math.min(CANVAS_VIEW_MAX_WIDTH, old.width * factor));
@@ -587,7 +605,7 @@ export function createEditorInput(deps) {
     if (!state.pendingPin) return;
     // Released outside the canvas area (toolbar, inspector, another window's edge): the gesture is abandoned, not completed on whatever pin is geometrically near.
     if (!client || !document.elementFromPoint(client.x, client.y)?.closest?.("#canvas-wrap")) { cancelPendingWire(); return; }
-    const target = pickTouchTarget(client);
+    const target = pickTouchTarget(client, { touch: drag.pointerType === "touch" });
     if (!target) return;
     if (target.kind === "wire") {
       const point = svgPoint({ clientX: client.x, clientY: client.y });
@@ -649,6 +667,9 @@ export function createEditorInput(deps) {
       // A press without movement on a member of a multi-selection narrows the selection to it.
       if (drag.wasMulti) setSingleSelection(state, { kind: drag.kind, id: drag.id });
       renderSelection();
+      // A mouse/pen click on a part asks for its value controls (on a phone-width window the sheet opens only on such an explicit choice).
+      if (drag.kind === "component" && drag.pointerType !== "touch" && !drag.wasMulti) openValueSheet(drag.id);
+      armSelectionBar();
     }
     if (drag.moved) {
       state.ignoreClickUntil = performance.now() + 180;
@@ -656,6 +677,7 @@ export function createEditorInput(deps) {
       // Dropped back exactly where it started: no history entry, no stale result.
       if (snapshot() === drag.before) renderAll();
       else commitMove(drag.before);
+      armSelectionBar(); // after carrying a part, its actions are right there
     }
     return true;
   }
@@ -669,7 +691,7 @@ export function createEditorInput(deps) {
       drag.lastClient = { x: event.clientX, y: event.clientY };
       if (!drag.started) startWireFromDrag(drag);
       const wirePoint = svgPoint(event);
-      if (wirePoint) { state.pointer = snapPoint(wirePoint); scheduleOverlayRender(); }
+      if (wirePoint) { aimWire(wirePoint, wireSnapFromPick(drag.lastClient, drag.pointerType === "touch")); scheduleOverlayRender(); }
       return;
     }
     if (drag.kind === "marquee") {
@@ -693,7 +715,9 @@ export function createEditorInput(deps) {
     if (!point) return;
     const item = drag.kind === "junction" ? (state.circuit.junctions ?? []).find(j => j.id === drag.id) : state.circuit.components.find(c => c.id === drag.id);
     if (!item) return;
-    const target = snapPoint({ x: drag.origin.x + point.x - drag.start.x, y: drag.origin.y + point.y - drag.start.y });
+    // A finger hides what it carries: a touch drag draws (and drops) the part a little above the fingertip.
+    const lift = drag.lift ?? { x: 0, y: 0 };
+    const target = snapPoint({ x: drag.origin.x + point.x - drag.start.x + lift.x, y: drag.origin.y + point.y - drag.start.y + lift.y });
     if (drag.group) {
       // The whole selection moves by the primary item's snapped offset (so the group stays rigid) and every item lands on the grid itself.
       applyGroupOffset(state.circuit, drag.group, target.x - drag.origin.x, target.y - drag.origin.y, { snap: true });
@@ -725,9 +749,48 @@ export function createEditorInput(deps) {
     else rerouteWires(state.circuit, drag.followers);
   }
 
+  // ---- wire aim (snap feedback) and touch lift
+
+  /** How far above the fingertip a touch-dragged part is carried, in screen px (the finger covers roughly a 40 px disc). */
+  const TOUCH_LIFT_PX = 36;
+  function touchLift() {
+    const scale = elements["circuit-canvas"].getScreenCTM()?.a;
+    return scale > 0 ? { x: 0, y: -TOUCH_LIFT_PX / scale } : { x: 0, y: 0 };
+  }
+
+  /** The pin / junction a wire end would join (not the start of the wire itself), as a world point; null elsewhere. */
+  function snapEndpoint(endpoint) {
+    if (!endpoint || !state.pendingPin || endpointsEqual(endpoint, state.pendingPin) || !endpointExists(state.circuit, endpoint)) return null;
+    const at = endpointPosition(endpoint);
+    return at ? { ...at, endpoint } : null;
+  }
+  /** Drag-wire: the same pick the release will use (screen radius, larger for touch). */
+  function wireSnapFromPick(client, touch) {
+    if (!client) return null;
+    const target = pickTouchTarget(client, { touch });
+    return target?.kind === "pin" ? snapEndpoint({ componentId: target.id, pin: target.pin }) : target?.kind === "junction" ? snapEndpoint({ junctionId: target.id }) : null;
+  }
+  /** Click-click wire with a mouse: exactly what a click here would hit (the pin or junction under the pointer). */
+  function wireSnapUnderPointer(event) {
+    const pin = event.target?.closest?.(PIN_SELECTOR);
+    const group = pin?.closest?.(".component");
+    if (pin && group) return snapEndpoint({ componentId: group.dataset.id, pin: Number(pin.dataset.pin) });
+    const junction = event.target?.closest?.("[data-junction-id]");
+    return junction ? snapEndpoint({ junctionId: junction.dataset.junctionId }) : null;
+  }
+  /** Move the live end of the wire preview: onto the snapped pin/junction (ringed), else onto the nearest grid point. */
+  function aimWire(point, snap) {
+    state.wireSnap = snap ? { x: snap.x, y: snap.y } : null;
+    state.pointer = snap ? { x: snap.x, y: snap.y } : snapPoint(point);
+  }
+
   // ---- touch hit testing and routing
 
-  function pickTouchTarget(point) {
+  // Pin / junction capture radius in screen px: a fingertip is far less precise than a mouse pointer.
+  const PIN_PICK_PX = { mouse: 22, touch: 32 };
+  const JUNCTION_PICK_PX = { mouse: 20, touch: 28 };
+
+  function pickTouchTarget(point, { touch = true } = {}) {
     const svg = elements["circuit-canvas"], matrix = svg.getScreenCTM();
     if (!matrix) return null;
     if (state.tool === "pan" || state.tool.startsWith("place:")) return { kind: "background" };
@@ -757,8 +820,8 @@ export function createEditorInput(deps) {
     }
     const targets = [];
     const add = (world, target, radius) => { if (!world) return; const p = screen(world); targets.push({ ...target, x:p.x, y:p.y, radius }); };
-    if (endpointMode) for (const c of state.circuit.components) for (let pin=0; pin<pinCount(c.type); pin++) add(pinPosition(c,pin), {kind:"pin",id:c.id,pin},22);
-    if (state.tool !== "current-probe") for (const j of state.circuit.junctions ?? []) add(j,{kind:"junction",id:j.id},20);
+    if (endpointMode) for (const c of state.circuit.components) for (let pin=0; pin<pinCount(c.type); pin++) add(pinPosition(c,pin), {kind:"pin",id:c.id,pin},touch ? PIN_PICK_PX.touch : PIN_PICK_PX.mouse);
+    if (state.tool !== "current-probe") for (const j of state.circuit.junctions ?? []) add(j,{kind:"junction",id:j.id},touch ? JUNCTION_PICK_PX.touch : JUNCTION_PICK_PX.mouse);
     const nearest = nearestScreenTarget(point, targets);
     if (nearest) return nearest;
     if (state.tool !== "current-probe") {
@@ -779,7 +842,7 @@ export function createEditorInput(deps) {
     const svg = elements["circuit-canvas"];
     canvasTouch = installCanvasTouch(svg, {
       canStart: () => state.pointerOwnerId === null,
-      pick: pickTouchTarget,
+      pick: (point) => pickTouchTarget(point, { touch: true }),
       world: p => svgPoint({clientX:p.x,clientY:p.y}),
       view: () => ({...state.canvasView}),
       setView: view => { state.canvasView = view; updateCanvasView(); },
@@ -797,7 +860,8 @@ export function createEditorInput(deps) {
           // A selected part of a multi-selection drags the whole group, like the mouse path.
           const multi = selectedKeys(state).size > 1;
           const group = multi ? captureGroupOrigins(state.circuit, selectedItems(state)) : null;
-          if (beginCanvasPointer(event,{kind:target.kind,id:item.id,start:point,origin:{x:item.x,y:item.y},before:snapshot(),moved:false,group,wasMulti:multi}) && multi) state.selected = { kind: target.kind, id: target.id };
+          const payload = { kind: target.kind, id: item.id, start: point, origin: { x: item.x, y: item.y }, before: snapshot(), moved: false, group, wasMulti: multi, lift: touchLift() };
+          if (beginCanvasPointer(event, payload) && multi) state.selected = { kind: target.kind, id: target.id };
         } else if (["background","component","junction","wire"].includes(target.kind)) {
           // First swipe navigates. Only an already selected object can be dragged.
           const scale = svg.getScreenCTM()?.a;
@@ -813,8 +877,9 @@ export function createEditorInput(deps) {
         if (!item || !point) return;
         if (state.drag) { if (state.drag.kind !== "pan" || state.drag.moved) return; finishCanvasPointer(state.drag.pointerId, "cancel"); }
         setSingleSelection(state, { kind: target.kind, id: target.id });
-        beginCanvasPointer(event,{kind:target.kind,id:item.id,start:point,origin:{x:item.x,y:item.y},before:snapshot(),moved:false,group:null,wasMulti:false});
-        try { navigator.vibrate?.(12); } catch { /* no haptics */ }
+        beginCanvasPointer(event,{kind:target.kind,id:item.id,start:point,origin:{x:item.x,y:item.y},before:snapshot(),moved:false,group:null,wasMulti:false,lift:touchLift()});
+        // Haptic tick; browsers refuse (and log) vibrate() before the first tap on the page, so ask only once the page was activated.
+        try { if (navigator.userActivation?.hasBeenActive !== false) navigator.vibrate?.(12); } catch { /* no haptics */ }
         renderSelection();
       },
       move: updateCanvasPointer,
@@ -823,26 +888,26 @@ export function createEditorInput(deps) {
         const point = svgPoint(event); if(!target || !point || state.tool === "pan")return;
         hover.showTouch(target, event.clientX, event.clientY);
         if(target.kind === "delete") { if(state.selected?.kind === "component" && state.selected.id === target.id) deleteSelection(); return; }
-        if(target.kind === "properties") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); showInspector(); return; }
+        if(target.kind === "properties") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); armSelectionBar(); showInspector(); return; }
         // A value label: the phone value sheet when the part has one, the properties panel otherwise.
-        if(target.kind === "value") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); if(!openValueSheet(target.id)) showInspector(); return; }
+        if(target.kind === "value") { setSingleSelection(state,{kind:"component",id:target.id}); renderSelection(); armSelectionBar(); if(!openValueSheet(target.id)) showInspector(); return; }
         if(target.kind === "pin") { handlePinClick(target.id,target.pin); return; }
         if(target.kind === "junction") {
           if(state.tool === "voltage-probe") addVoltageProbeEndpoint({junctionId:target.id});
           else if(state.port.mode || state.tool === "wire" || state.pendingPin) handleEndpointClick({junctionId:target.id});
-          else { setSingleSelection(state,{kind:"junction",id:target.id});renderSelection(); }
+          else { setSingleSelection(state,{kind:"junction",id:target.id});renderSelection();armSelectionBar(); }
           return;
         }
         if(target.kind === "component") {
           if(state.tool === "current-probe")addCurrentProbe(target.id, currentProbeWinding(state.circuit.components.find(c=>c.id===target.id), point));
-          else {setSingleSelection(state,{kind:"component",id:target.id});openValueSheet(target.id);renderSelection();}
+          else {setSingleSelection(state,{kind:"component",id:target.id});openValueSheet(target.id);renderSelection();armSelectionBar();}
           return;
         }
         if(target.kind === "wire") {
           const wire=state.circuit.wires.find(w=>w.id===target.id); if(!wire)return;
           if(state.pendingPin)createJunctionAndConnect(wire.id,point);
           else if(state.tool === "voltage-probe")addVoltageProbeEndpoint(wire.a.componentId !== undefined ? wire.a : wire.b,wire.id);
-          else if(state.tool === "select"){setSingleSelection(state,{kind:"wire",id:wire.id});renderSelection();}
+          else if(state.tool === "select"){setSingleSelection(state,{kind:"wire",id:wire.id});renderSelection();armSelectionBar();}
           return;
         }
         if(state.pendingPin)addPendingWaypoint(point);
@@ -928,7 +993,7 @@ export function createEditorInput(deps) {
       if (!workspace.circuitActive) return;
       if (state.pendingPin && event.isPrimary !== false && event.target.closest?.("#circuit-canvas")) {
         const point = svgPoint(event);
-        if (point) { state.pointer = snapPoint(point); scheduleOverlayRender(); }
+        if (point) { aimWire(point, wireSnapUnderPointer(event)); scheduleOverlayRender(); }
       }
       updateCanvasPointer(event);
     });
@@ -943,7 +1008,7 @@ export function createEditorInput(deps) {
       event.preventDefault();
       if (wheelAdjustValue(event)) return;
       const point = svgPoint(event);
-      if (point) zoomCanvas(event.deltaY > 0 ? 1.18 : .84, point);
+      if (point) zoomCanvas(wheelZoomFactor(event), point);
     }, { passive: false });
     elements["undo-button"].addEventListener("click", undoEdit);
     elements["redo-button"].addEventListener("click", redoEdit);
@@ -1050,6 +1115,7 @@ export function createEditorInput(deps) {
         redo: () => { redoEdit(); return true; },
         tool: () => { setTool(shortcut.tool); return false; },
         nudge: () => nudgeSelection(shortcut),
+        help: () => { const help = document.getElementById("interaction-help"); if (help) help.open = !help.open; return true; },
       }[shortcut.action]();
       if (handled && (shortcut.preventDefault || shortcut.action === "nudge")) event.preventDefault();
     });
@@ -1059,5 +1125,28 @@ export function createEditorInput(deps) {
     for (const kind of ["copy", "cut", "paste"]) document.addEventListener(kind, (event) => nativeClipboardEvent(event, kind));
   }
 
-  return { setTool, restoreToolHint, renderPalette, openProbeContextMenu, closeProbeContextMenu, fitCanvas, cancelPointerSessions, cancelInteractions, attach };
+  /** Actions of the phone selection bar (canvas-actions.js); each is one undo step like its toolbar/keyboard twin. */
+  const barCommands = {
+    rotate: () => rotateSelection(1),
+    clone: () => cloneSelection(),
+    remove: () => deleteSelection(),
+    setTool,
+    /** "배선": the wire tool; from a junction the wire starts right there. */
+    startWire: (target) => {
+      setTool("wire");
+      const item = target?.items?.[0];
+      if (target?.kind === "junction" && item) handleEndpointClick({ junctionId: item.id });
+      else elements["tool-hint"].textContent = "배선 — 시작할 핀을 누르거나 핀에서 끌어 다른 핀에 놓으세요 · 완료하면 [선택]";
+    },
+    voltageProbe: (item) => {
+      if (item?.kind === "junction") addVoltageProbeEndpoint({ junctionId: item.id });
+      else if (item?.kind === "wire") {
+        const wire = state.circuit.wires.find((entry) => entry.id === item.id);
+        if (wire) addVoltageProbeEndpoint(wire.a.componentId !== undefined ? wire.a : wire.b, wire.id);
+      }
+      setStatus("V 프로브 추가 · 파형 탭에서 확인", "ready");
+    },
+  };
+
+  return { setTool, restoreToolHint, renderPalette, openProbeContextMenu, closeProbeContextMenu, fitCanvas, cancelPointerSessions, cancelInteractions, attach, barCommands };
 }

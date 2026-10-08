@@ -23,9 +23,9 @@
 </div>
 <nav aria-label="학습 작업공간" class="workspace-tabs" role="tablist">
 <button aria-controls="workbench" aria-selected="true" data-workspace-tab="circuit" id="circuit-workspace-tab" role="tab" tabindex="0" type="button">회로</button>
-<button aria-controls="em-workspace" aria-selected="false" data-workspace-tab="em" id="em-workspace-tab" role="tab" tabindex="-1" type="button">전자기학</button>
-<button aria-controls="signals-workspace" aria-selected="false" data-workspace-tab="signals" id="signals-workspace-tab" role="tab" tabindex="-1" type="button">신호 및 시스템</button>
-<button aria-controls="circuit-course-workspace" aria-selected="false" data-workspace-tab="circuit-course" id="circuit-course-workspace-tab" role="tab" tabindex="-1" type="button">회로 과정</button>
+<button aria-controls="em-workspace" aria-selected="false" aria-label="전자기학" data-short="전자기" data-workspace-tab="em" id="em-workspace-tab" role="tab" tabindex="-1" type="button">전자기학</button>
+<button aria-controls="signals-workspace" aria-selected="false" aria-label="신호 및 시스템" data-short="신호" data-workspace-tab="signals" id="signals-workspace-tab" role="tab" tabindex="-1" type="button">신호 및 시스템</button>
+<button aria-controls="circuit-course-workspace" aria-selected="false" aria-label="회로 과정" data-short="과정" data-workspace-tab="circuit-course" id="circuit-course-workspace-tab" role="tab" tabindex="-1" type="button">회로 과정</button>
 </nav>
 <select aria-label="화면 테마" class="appearance" id="appearance"><option value="dark">다크</option><option value="light">라이트</option><option value="system">시스템</option></select>
 </header>
@@ -52,9 +52,9 @@
 <div aria-label="편집 도구" class="tool-group" role="group">
 <button class="tool active" data-tool="select" title="선택·이동 (V, Esc)" type="button">선택</button>
 <button class="tool" data-tool="wire" title="핀 두 개를 클릭해 배선 (W)" type="button">배선</button>
-<button class="tool" data-tool="voltage-probe" title="선이나 핀의 전압 측정" type="button">V 프로브</button>
-<button class="tool" data-tool="current-probe" title="부품 전류 측정" type="button">I 프로브</button>
-<button class="tool" data-tool="pan" title="부품을 움직이지 않고 회로 화면 이동" type="button">화면 이동</button>
+<button aria-label="V 프로브" class="tool" data-short="V 측정" data-tool="voltage-probe" title="선이나 핀의 전압 측정" type="button">V 프로브</button>
+<button aria-label="I 프로브" class="tool" data-short="I 측정" data-tool="current-probe" title="부품 전류 측정" type="button">I 프로브</button>
+<button aria-label="화면 이동" class="tool" data-short="이동" data-tool="pan" title="부품을 움직이지 않고 회로 화면 이동" type="button">화면 이동</button>
 </div>
 <div aria-label="편집 동작" class="tool-group compact" role="group">
 <button aria-label="되돌리기" id="undo-button" title="되돌리기 (Ctrl+Z)" type="button">↶</button>
@@ -69,12 +69,12 @@
 <button aria-label="회로 확대" id="zoom-in-button" type="button">＋</button>
 <button id="fit-button" type="button">화면 맞춤</button>
 </div>
-<details class="interaction-help" id="interaction-help"><summary aria-label="조작 도움말" title="조작 도움말">조작 도움말</summary><div class="interaction-help-card">
+<details class="interaction-help" id="interaction-help"><summary aria-label="조작 도움말" aria-keyshortcuts="?" title="조작 도움말 (?)">조작 도움말</summary><div class="interaction-help-card">
 <ul>
 <li><b>선택·이동</b> 클릭으로 선택하고 끌어 이동, 빈 곳을 끌면 화면 이동. <kbd>Shift</kbd>+클릭은 선택에 더하거나 빼고, <kbd>Shift</kbd>+빈 곳 끌기는 상자로 고릅니다. 선택한 부품 중 하나를 끌면 함께 움직입니다 (터치: 선택한 부품을 끌거나, 아무 부품이나 길게 눌러 끌기 · 두 손가락 확대·축소).</li>
 <li><b>배선·값</b> 핀에서 다른 핀(또는 배선·접속점)까지 끌거나, 핀 두 개를 차례로 누릅니다. 빈 격자점은 경유점, 경로는 자동 직교 (터치: 배선 도구에서 끌기). 값 글자는 두 번 눌러 수정, R·C·L은 값 글자 위에서 휠로 E12 값 한 칸씩 변경. 속성 패널 위 값 카드(폰: 부품을 누르면 아래에 뜨는 값 시트)의 ◀ ▶는 표준값 한 칸, 슬라이더는 ×0.1~×10, 칩은 단위 접두사.</li>
 <li><b>프로브·값 읽기</b> V 프로브는 핀·배선, I 프로브는 부품. 해석 뒤 핀·배선·부품에 마우스를 올리면(터치는 탭) 전압·전류·전력 표시. 그래프를 누르면 커서 고정, <kbd>←</kbd><kbd>→</kbd> 이동.</li>
-<li><b>단축키</b> <kbd>R</kbd>/<kbd>Shift+R</kbd> 회전 · <kbd>Delete</kbd>/<kbd>Backspace</kbd> 삭제 · <kbd>Ctrl+D</kbd> 복제 · <kbd>Ctrl+C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> 복사·잘라내기·붙여넣기 · <kbd>Ctrl+A</kbd> 모두 선택 · <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd> 되돌리기·다시 하기 · <kbd>Y</kbd> 저항 3개 Y↔Δ 변환 · <kbd>W</kbd> 배선 · <kbd>V</kbd>/<kbd>Esc</kbd> 선택 · <kbd>←↑↓→</kbd> 이동(<kbd>Shift</kbd> 5칸) · <kbd>Ctrl+S</kbd> 저장 · <kbd>Ctrl+Enter</kbd> 해석.</li>
+<li><b>단축키</b> <kbd>R</kbd>/<kbd>Shift+R</kbd> 회전 · <kbd>Delete</kbd>/<kbd>Backspace</kbd> 삭제 · <kbd>Ctrl+D</kbd> 복제 · <kbd>Ctrl+C</kbd>/<kbd>X</kbd>/<kbd>V</kbd> 복사·잘라내기·붙여넣기 · <kbd>Ctrl+A</kbd> 모두 선택 · <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd> 되돌리기·다시 하기 · <kbd>Y</kbd> 저항 3개 Y↔Δ 변환 · <kbd>W</kbd> 배선 · <kbd>V</kbd>/<kbd>Esc</kbd> 선택 · <kbd>←↑↓→</kbd> 이동(<kbd>Shift</kbd> 5칸) · <kbd>Ctrl+S</kbd> 저장 · <kbd>Ctrl+Enter</kbd> 해석 · <kbd>?</kbd> 이 도움말.</li>
 </ul>
 </div></details>
 </div>

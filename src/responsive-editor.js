@@ -1,13 +1,15 @@
 // Phone layout of the circuit editor header. Desktop keeps the full toolbar; at phone width the controls are
 // regrouped (elements are moved, never recreated, so ids and event wiring stay intact):
-//   row 1  title · undo · redo · help · "파일" menu (examples, new, save, open, AC course)
+//   row 1  title · help · "파일" menu (examples, new, save, open, AC course)
 //   row 2  editing tools + delete
-//   canvas corner  clone · rotate (only while a component is selected) · zoom out/in · fit
+//   canvas corner (thumb reach, lower right)  undo · redo · zoom out/in · fit
+// Clone and rotate also move to the corner, but the phone shows them on the selection bar next to the part (canvas-actions.js), so the
+// corner keeps them hidden (styles.css).
 export const PHONE_QUERY = '(max-width: 899px)';
 
 // [element id, mobile container id], in document order so the desktop layout can be restored exactly.
 const MOVES = [
-  ['undo-button', 'head-tools'], ['redo-button', 'head-tools'],
+  ['undo-button', 'canvas-corner'], ['redo-button', 'canvas-corner'],
   ['clone-button', 'canvas-corner'], ['rotate-button', 'canvas-corner'], ['zoom-group', 'canvas-corner'],
   ['interaction-help', 'head-tools'],
 ];

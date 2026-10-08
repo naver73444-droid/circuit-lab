@@ -7,6 +7,7 @@
  *   W / V              배선 / 선택 도구          방향키 (Shift = 5칸)   선택 항목 이동
  *   Y                  저항 3개 Y↔Δ 변환(선택한 저항 3개가 Y 또는 Δ일 때)
  *   Ctrl+S             JSON 저장                 Ctrl+Enter     해석 실행
+ *   ?                  조작 도움말 열기·닫기
  *
  * typing(글자를 입력하는 칸에 포커스)이면 Ctrl+S와 Ctrl+Enter만 동작한다(브라우저 "페이지 저장" 대화상자 대신 프로젝트 저장,
  * 입력 중이던 값은 실행 전에 확정). 체크박스·버튼·슬라이더처럼 글자를 받지 않는 요소가 포커스를 쥐고 있어도 단축키는 동작한다.
@@ -112,6 +113,7 @@ export function shortcutFor(event, { typing = false, textSelection = false } = {
     return null;
   }
   if (mod || event.altKey) return null;
+  if (event.key === "?") return { action: "help", preventDefault: true };
   if (event.key === "Delete" || event.key === "Backspace") return { action: "delete" };
   if (Object.hasOwn(ARROWS, event.key)) {
     const [dx, dy] = ARROWS[event.key];

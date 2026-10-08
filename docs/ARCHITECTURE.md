@@ -36,7 +36,7 @@ app.js (조립자, 유일하게 모든 모듈을 앎)
 - `analysis-runner.js` — 해석 수명주기(예약·Worker 실행·취소·stale·진단)와 결과 표시(프로브 목록, 파형, 페이저, 포트 패널). `sweep-runner.js`(스윕), `analysis-worker-client.js`(Worker 1회용 래퍼), `analysis-worker.js`(Worker 본체).
 - `inspector.js` — 속성·해석 설정·화면 값 편집·draft 확정. `sweep-panel.js`(스윕 UI).
 - `project-io.js` — 예제·새 회로·JSON 저장/열기·CSV·자동저장·복원 배너·링크 공유. 모든 프로젝트 교체는 `openProject()` 한 길이며 시작 시 `#p=`와 열린 탭에서 주소를 바꾸는 `hashchange`도 같은 길을 탑니다. 교체 직전에 `autosave.retire()`가 이전 프로젝트의 대기 중 저장을 마무리하고, 새 프로젝트의 첫 저장이 그 슬롯을 `<탭 id>.prev`로 옮깁니다(탭마다 prev는 하나, 5개 한도에 함께 셈). 예제·새 회로·파일 열기는 이전 프로젝트에서 직접 입력한 해석 설정을 가져오지 않고 기본값에서 시작합니다.
-- `hover-readout.js` — 판독 말풍선. `canvas-notices.js` — 캔버스 위 알림. `responsive-editor.js` — 폰 폭에서 머리줄 요소 재배치(이동만, 재생성 없음). `panel-controller.js` — 고정 레이아웃(폰 하단 탭, `파형 크게`). `theme.js`.
+- `hover-readout.js` — 판독 말풍선. `canvas-notices.js` — 캔버스 위 알림. `responsive-editor.js` — 폰 폭에서 머리줄 요소 재배치(이동만, 재생성 없음). `canvas-actions.js` — 폰 캔버스 위 선택 동작 막대(직접 고른 선택에만, 다른 부품·구석 단추를 피해 배치)와 부품 놓기 줄. `panel-controller.js` — 고정 레이아웃(폰 하단 탭, `파형 크게`). `theme.js`.
 - 표시: `flow-layer.js`("전류 흐름" 보기: 배선 위로 전류 방향 점선이 흐르는 별도 SVG 레이어 `#flow-layer`, `wire-current-model`이 계산한 배선 전류를 속도 등급별 path로 그림. 결과가 오래되는 즉시(`markStale`·`markInputDirty`·실행 무효화 → `onStaleChange`) 지우고, 이동 끌기(`state.drag`가 부품·접속점이고 움직인 상태)가 진행되는 동안에는 어떤 렌더가 와도 숨김 유지. 망 그래프·배선 경로는 회로 지오메트리(회로 객체·`generation`·항목 수)별로 캐시하고, 결과·표본·지오메트리가 같으면 다시 계산하지 않음. 배선 id는 `escapeHtml`로 속성에 넣음), `scope-view.js`(파형 SVG, 커서 A/B; 관찰은 `subscribe(fn)` → 해제 함수, 이벤트 `change`·`cursor`), `measure-view.js`(측정 요약), `phasor-view.js`·`phasor-practice.js`(복소 연산 모델 + 연습 탭), `trace-color.js`(파형 색 대비 계산 + 테마별 색), `safe-dom.js`(escape).
 
 ### 학습 작업공간 (지연 로딩, 회로 편집기와 독립)
