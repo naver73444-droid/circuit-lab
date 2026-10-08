@@ -47,6 +47,20 @@ export function createProjectIO(deps) {
     launch.hash = false;
   }
 
+  /**
+   * A share link is opened once: right after it is opened (or found stale) #p= leaves the current history entry, so neither a reload
+   * nor a back/forward step onto this entry brings it back over later work. Only the hash goes; ?example / ?run wait for the first edit.
+   */
+  function dropShareHash() {
+    launch.hash = false;
+    if (!hasShareHash(location.hash)) return;
+    try {
+      const url = new URL(location.href);
+      url.hash = "";
+      history.replaceState(history.state, "", url.pathname + url.search);
+    } catch { /* address bar cleanup is cosmetic */ }
+  }
+
   /** Called once the user has agreed to replace the project: the old project's pending save is finished (never lost, never written over the new one), and the launch link is spent. */
   function beginReplacement({ startup = false } = {}) {
     // The old project's last edits are written first and its slot becomes the "previous" slot at the next save (see persistence.js).
@@ -272,6 +286,7 @@ export function createProjectIO(deps) {
     }
     const opened = openProject(decoded.project, { fallbackTitle: "공유된 회로", fallbackSubtitle: "공유 링크에서 불러온 회로", resultText: "공유 링크에서 회로를 불러왔습니다. 해석 실행으로 계산하세요.", autosave: fromHashChange, startup: !fromHashChange });
     if (!opened) return false;
+    dropShareHash();
     notices.show({ text: "공유 링크에서 불러왔습니다", autoHideMs: 6000 });
     setStatus("공유 링크에서 불러오기 완료", "ready");
     return true;
@@ -322,6 +337,10 @@ export function createProjectIO(deps) {
     elements["share-button"].addEventListener("click", copyShareLink);
     window.addEventListener("hashchange", () => {
       if (!hasShareHash(location.hash)) return;
+      // Back/forward onto one of the app's own entries (they carry history.state.circuitLab, see back-navigation.js) that still
+      // holds a link, e.g. a workspace step pushed while the link was decoding: that link was already opened, never reopen it.
+      // A link pasted into the address bar is a new entry without that state.
+      if (history.state?.circuitLab) { dropShareHash(); return; }
       deps.showCircuitWorkspace?.(); // the opened circuit must be visible, whichever workspace the tab was on
       openShareHash(location.hash, { fromHashChange: true });
     });
