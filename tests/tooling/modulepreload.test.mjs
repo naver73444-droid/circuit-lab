@@ -49,6 +49,21 @@ test("each lazy workspace preloads its own graph minus the first screen", async 
   for (const entry of Object.values(entries)) assert.ok(app.includes(`import("./${entry}"`), `app.js still loads ${entry} lazily`);
 });
 
+test("the editor's result side stays off the first screen and is preloaded as one list with the analysis worker's graph", async () => {
+  const { LAZY_MODULES } = await import(pathToFileURL(resolve(root, "src/module-preload-map.js")).href);
+  const first = closure(root, "app.js");
+  for (const file of ["result-views.js", "analysis-runner.js", "scope-view.js", "phasor-view.js", "measure-view.js", "phasor-practice.js", "node-readout-model.js"]) {
+    assert.ok(!first.has(file), `${file} is not imported statically by the first screen`);
+  }
+  assert.deepEqual(Object.keys(LAZY_MODULES), ["results"]);
+  const expected = new Set([...closure(root, "result-views.js"), ...closure(root, "analysis-worker.js")].filter((file) => !first.has(file)));
+  assert.equal(LAZY_MODULES.results[0], "result-views.js");
+  assert.equal(new Set(LAZY_MODULES.results).size, LAZY_MODULES.results.length, "no duplicates");
+  assert.deepEqual(new Set(LAZY_MODULES.results), expected);
+  assert.ok(read(root, "app.js").includes('import("./result-views.js"'), "app.js loads the result side lazily");
+  assert.ok(read(root, "analysis-worker-client.js").includes('new URL("./analysis-worker.js"'), "the worker the list preloads is the one the client starts");
+});
+
 test("the generator reports the real tree as up to date", () => {
   const result = spawnSync(process.execPath, [resolve(root, "scripts/gen-modulepreload.mjs"), "--check"], { encoding: "utf8", timeout: 20000 });
   assert.equal(result.status, 0, result.stderr);

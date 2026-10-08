@@ -105,3 +105,24 @@ export const WORKSPACE_MODULES = {
     "circuit-course-figures.js",
   ],
 };
+
+// For each lazy part of the circuit editor (results: result-views.js, see results-loader.js): the same, beyond the first screen.
+export const LAZY_MODULES = {
+  "results": [
+    "result-views.js",
+    "phasor-view.js",
+    "scope-view.js",
+    "measure-view.js",
+    "phasor-practice.js",
+    "analysis-runner.js",
+    "node-readout-model.js",
+    "phasor-format.js",
+    "cursor-delta-model.js",
+    "wave-measure-model.js",
+    "analysis-worker-client.js",
+    "sweep-runner.js",
+    "measure-model.js",
+    "analysis-worker.js",
+    "port-analysis.js",
+  ],
+};

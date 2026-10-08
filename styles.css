@@ -294,6 +294,18 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .value-sheet.is-phone .value-sheet-stepper { min-width: 52px; min-height: 48px; font-size: 18px; }
 .value-sheet.is-phone .value-sheet-slide input[type="range"] { height: 44px; }
 .value-sheet.is-phone .value-sheet-prefixes button { min-height: 44px; font-size: 16px; }
+/* Phone handle: tap or drag up to open, drag down to fold. Folded (.is-collapsed): one row ◀ name·value·unit ▶, no slider or chips. */
+.value-sheet-handle { display: none; }
+.value-sheet.is-phone .value-sheet-handle { display: grid; place-items: center; height: 20px; margin: -8px -10px -4px; cursor: grab; touch-action: none; }
+.value-sheet-handle i { width: 40px; height: 4px; border-radius: 2px; background: var(--muted); opacity: .6; }
+.value-sheet.is-phone.is-collapsed { grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 6px; }
+.value-sheet.is-phone.is-collapsed .value-sheet-handle { grid-column: 1 / -1; }
+.value-sheet.is-phone.is-collapsed .value-sheet-step { display: contents; }
+.value-sheet.is-phone.is-collapsed .value-sheet-head { grid-column: 2; grid-row: 2; }
+.value-sheet.is-phone.is-collapsed .value-sheet-stepper { grid-row: 2; min-width: 44px; min-height: 44px; }
+.value-sheet.is-phone.is-collapsed [data-step="-1"] { grid-column: 1; }
+.value-sheet.is-phone.is-collapsed [data-step="1"] { grid-column: 3; }
+.value-sheet.is-phone.is-collapsed :is(.value-sheet-slide, .value-sheet-prefixes, .value-sheet-series) { display: none; }
 
 /* Side panel: properties | results. */
 .side-tabs { display: flex; gap: 4px; padding: 6px 8px 0; border-bottom: 1px solid var(--line-soft); flex: 0 0 auto; }

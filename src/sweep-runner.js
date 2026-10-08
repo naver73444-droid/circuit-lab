@@ -5,17 +5,8 @@ import { currentReferenceSign } from "./current-direction.js";
 /** Whole-sweep wall-clock guard on top of the engine's own per-run budget. */
 export const SWEEP_TIME_LIMIT_MS = 60000;
 
-/** Sweep slice of the shared state: the inspector form, the running flag and the finished overlay. */
-export function createSweepState() {
-  return {
-    form: { open: false, componentId: null, from: "", to: "", count: "5", scale: "log", probeKey: "" },
-    running: false,
-    progress: "",
-    message: "",
-    messageKind: "",
-    overlay: null,
-  };
-}
+// The sweep state lives with the rest of the run state (run-state.js, loaded on the first screen); re-exported for older callers.
+export { createSweepState } from "./run-state.js";
 
 /**
  * Parameter sweep controller. It runs N analyses one after another through the shared worker client under ONE cancellable job

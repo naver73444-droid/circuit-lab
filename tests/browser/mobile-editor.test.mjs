@@ -186,6 +186,90 @@ describe("phone editor", { timeout: 300000 }, () => {
     assert.equal((await component("V1")).props.dc, "12");
   });
 
+  test("390x844 value sheet folds: dragging the canvas or tapping another part leaves only the value row with ◀ ▶, the handle opens it again, and a part under the sheet slides into view", async () => {
+    await phone("/?example=divider", PHONES[0]);
+    await until(`${L}.getState().result?.analysis === "dc"`, "the first automatic DC result");
+    const shown = (selector) => ev(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); return Boolean(e && e.getClientRects().length && getComputedStyle(e).display !== "none"); })()`);
+    // An empty spot of the canvas above the sheet (a swipe there pans).
+    const emptySpot = () => ev(`(() => {
+      const canvas = document.getElementById("circuit-canvas"), r = canvas.getBoundingClientRect(), sheet = document.getElementById("value-sheet");
+      const bottom = Math.min(r.bottom, sheet.hidden ? innerHeight : sheet.getBoundingClientRect().top) - 12;
+      for (let y = r.top + 80; y < bottom; y += 12) for (let x = r.left + 16; x < r.right - 16; x += 12) {
+        const hit = document.elementFromPoint(x, y);
+        if (hit && canvas.contains(hit) && !hit.closest(".component, .wire-hit, [data-wire-id], [data-junction-id]")) return { x, y };
+      }
+      return null;
+    })()`);
+    const swipe = async (dy) => { const at = await emptySpot(); assert.ok(at, "an empty canvas spot"); await touchDragPoints(at, { x: at.x, y: at.y + dy }, { steps: 8 }); };
+    await tap(await partPoint("R1"));
+    let info = await sheet();
+    assert.equal(info.visible && !info.collapsed && info.id === "R1", true, `the sheet opens unfolded the first time (${JSON.stringify(info)})`);
+    const unfolded = await rectOf("#value-sheet");
+    assert.equal(await shown("#value-sheet-slider"), true);
+    // Dragging the canvas folds it: value row + ◀ ▶, no slider, no prefix chips, at least 60 px less of the canvas covered.
+    await swipe(30);
+    info = await sheet();
+    assert.equal(info.visible && info.collapsed && info.id === "R1", true, `a canvas drag folds the sheet (${JSON.stringify(info)})`);
+    const folded = await rectOf("#value-sheet");
+    assert.ok(folded.h <= unfolded.h - 60 && folded.top >= unfolded.top + 60, `folded ${folded.h} px vs ${unfolded.h} px`);
+    assert.equal(await shown("#value-sheet-slider"), false, "no slider when folded");
+    assert.equal(await shown(".value-sheet-prefixes"), false, "no prefix chips when folded");
+    assert.equal(await shown("#value-sheet-input"), true, "the value field stays");
+    for (const step of ["-1", "1"]) {
+      const r = await rectOf(`.value-sheet [data-step="${step}"]`);
+      assert.ok(r && r.w >= 44 && r.h >= 44 && r.top >= folded.top, `◀ ▶ stay as full touch targets (${JSON.stringify(r)})`);
+    }
+    const depth = await historyDepth();
+    await tapSelector('.value-sheet [data-step="1"]');
+    assert.equal(await valueOf("R1"), "1.2k", "▶ still steps when folded");
+    assert.equal(await historyDepth(), depth + 1);
+    // The handle: a tap opens, a drag down folds, a drag up opens.
+    await tapSelector(".value-sheet-handle");
+    assert.equal((await sheet()).collapsed, false, "a tap on the handle opens the sheet");
+    assert.equal(await shown("#value-sheet-slider"), true);
+    let handle = await rectOf(".value-sheet-handle");
+    await touchDragPoints(handle, { x: handle.x, y: handle.y + 60 }, { steps: 6 });
+    assert.equal((await sheet()).collapsed, true, "dragging the handle down folds it");
+    handle = await rectOf(".value-sheet-handle");
+    await touchDragPoints(handle, { x: handle.x, y: handle.y - 80 }, { steps: 6 });
+    assert.equal((await sheet()).collapsed, false, "dragging the handle up opens it");
+    // Tapping another part folds it, and it stays folded for the next part (also after ✕).
+    await tap(await partPoint("V1"));
+    info = await sheet();
+    assert.equal(info.visible && info.collapsed && info.id === "V1", true, `another part folds the sheet (${JSON.stringify(info)})`);
+    await tapSelector('.value-sheet [data-sheet-action="close"]');
+    await tap(await partPoint("R1"));
+    info = await sheet();
+    assert.equal(info.visible && info.collapsed && info.id === "R1", true, `the folded state is kept (${JSON.stringify(info)})`);
+    await shot("after-390x844-value-sheet-folded");
+    // A part that ends up under the unfolded sheet slides up into view when the handle opens it.
+    const target = folded.top - 24; // R2's bottom just above the folded sheet, well under the unfolded one
+    const r2 = await rectOf('.component[data-id="R2"]');
+    await swipe(target - r2.bottom);
+    await tap(await partPoint("R2"));
+    let part = await rectOf('.component[data-id="R2"]');
+    let top = (await rectOf("#value-sheet")).top;
+    assert.ok((await sheet()).collapsed && part.bottom <= top, `R2 is above the folded sheet (${part.bottom} <= ${top})`);
+    assert.ok(part.bottom > unfolded.top, `R2 would be under the unfolded sheet (${part.bottom} > ${unfolded.top})`);
+    const viewBefore = (await state()).canvasView;
+    await tapSelector(".value-sheet-handle");
+    await settle();
+    part = await rectOf('.component[data-id="R2"]');
+    top = (await rectOf("#value-sheet")).top;
+    assert.equal((await sheet()).collapsed, false);
+    assert.ok(part.bottom <= top + 1, `opening the sheet slides R2 into view (${part.bottom} <= ${top})`);
+    assert.notDeepEqual((await state()).canvasView, viewBefore, "the canvas moved up");
+    // Choosing a part that sits under the open sheet: the circuit slides up as well.
+    await tapSelector('.value-sheet [data-sheet-action="close"]');
+    const again = await rectOf('.component[data-id="R2"]');
+    await swipe(unfolded.top + 40 - again.bottom);
+    await tap(await partPoint("R2"));
+    part = await rectOf('.component[data-id="R2"]');
+    top = (await rectOf("#value-sheet")).top;
+    assert.equal((await sheet()).collapsed, false, "the sheet was left open");
+    assert.ok(part.bottom <= top + 1, `R2 is shown above the sheet (${part.bottom} <= ${top})`);
+  });
+
   test("390x844 touch: a long press picks up a part that was not selected (one undo entry); a quick swipe on it still pans", async () => {
     await phone("/?example=divider", PHONES[0]);
     const r2 = await component("R2");
