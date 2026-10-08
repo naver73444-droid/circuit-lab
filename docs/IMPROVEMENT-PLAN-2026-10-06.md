@@ -58,6 +58,6 @@
 
 ## 5. 남은 판단 (사용자 확인 필요)
 - 배포: 이 작업본을 learning 사이트(현재 v4)에 올릴지. 올리면 v4에서 빠진 Y–Δ 계산기 처리도 함께 결정.
-- 원본 Codex 저장소(`C:\Users\alswn\.codex\.chatgpt-projects\...`)에 반영할지 — 손대지 않았다.
+- 원본 Codex 저장소에 반영할지 — 손대지 않았다.
 - Worker 재사용은 하지 않음(요청마다 생성·종료). 필요 시 별도 작업.
 - 경고로 남은 큰 파일: circuit-engine.js(약 1660줄), editor-input.js(약 1010줄).
