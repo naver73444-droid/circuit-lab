@@ -97,7 +97,7 @@ export const SIGNALS_STYLE = `
 .sg-bubble{position:fixed;left:0;top:0;z-index:30;max-width:calc(100vw - 16px);padding:6px 10px;pointer-events:none;box-shadow:0 4px 14px rgb(0 0 0 / .35)}
 .sg-bubble{border:1px solid var(--accent);border-radius:10px;background:var(--panel);color:var(--text);font:600 15px/1.3 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:700px){
-.sg-tabs{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:8px}.sg-ref select{font-size:16px}
+.sg-tabs{grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:8px}.sg-ref select{font-size:16px}
 .sg-tabs button{min-height:36px;padding:2px 2px;font-size:12px}
 .sg-head{display:none}
 .sg-controls{display:block;padding:6px 10px 8px}
@@ -137,5 +137,20 @@ export const SIGNALS_STYLE = `
 .sg input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:var(--line)}
 .sg input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:var(--accent);border:3px solid var(--canvas)}
 .sg input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+}
+/* Sound-spectrum lesson: start/stop bar over the plot, the k | f | 이론 | 측정 table under it. */
+.sg-sound-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:10px 12px 0}
+.sg-sound-bar button{min-height:38px;padding:4px 16px;border-radius:10px;font-weight:650}
+.sg-sound-bar button[aria-pressed=true]{background:var(--selection);border-color:var(--accent)}
+.sg-sound-status{margin:0;flex:1 1 240px;min-width:0;font-size:13px;color:var(--muted)}
+.sg-sound-table{padding:2px 12px 12px;overflow-x:auto}
+.sg-sound-caption{margin:6px 0 4px;font-size:12px;color:var(--muted)}
+.sg-sound-table table{border-collapse:collapse;min-width:100%;font:13px/1.4 var(--mono)}
+.sg-sound-table th,.sg-sound-table td{padding:4px 10px;border-bottom:1px solid var(--line-soft);text-align:right;white-space:nowrap}
+.sg-sound-table thead th{color:var(--muted);font-weight:600;font-family:system-ui,"Malgun Gothic",sans-serif}
+.sg-sound-table tbody th{text-align:center;color:var(--muted)}
+@media(max-width:700px){
+.sg-sound-bar{padding:8px 8px 0}.sg-sound-bar button{min-height:44px;flex:1 1 100%}
+.sg-sound-table{padding:2px 6px 8px}.sg-sound-table table{font-size:12px}.sg-sound-table th,.sg-sound-table td{padding:4px 6px}
 }
 `;

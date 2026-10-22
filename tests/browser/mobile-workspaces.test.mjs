@@ -139,7 +139,7 @@ describe("phone study workspaces", { timeout: 600000 }, () => {
     test(`${tag} 신호 및 시스템: every lesson tab is touch sized; the plot comes before the controls and starts on the first screen`, async () => {
       await phone("/?workspace=signals", size);
       await until(`${L}.getSignalsCourseState()?.active === true && Boolean(${visibleSvg})`, "the signals workspace");
-      for (const lesson of ["time", "ops", "lti", "convolution", "series", "fourier", "freq", "reference"]) {
+      for (const lesson of ["time", "ops", "lti", "convolution", "series", "fourier", "freq", "sound", "reference"]) {
         await openSignalsLesson(lesson);
         await assertTouchFriendly("signals", `${tag} ${lesson}`);
         const order = await ev(`(() => { const svg = ${visibleSvg}.getBoundingClientRect(), controls = document.querySelector(".sg-controls").getBoundingClientRect(); return { plotTop: svg.top, plotBottom: svg.bottom, controlsTop: controls.top, inner: innerHeight }; })()`);

@@ -265,9 +265,9 @@ test('symbols: duty cycle is d (not D), the convolution integration step is Δλ
   assert.deepEqual([theta.label, theta.unit], ['θ 위상', 'π rad']);
 });
 
-test('tab row: seven course lessons plus one "참고 ▾" tab that stands for the later lessons (ids, registry and order of the lessons are unchanged)', () => {
-  assert.deepEqual(SIGNALS_TABS.map((t) => t.id), ['time', 'ops', 'lti', 'convolution', 'series', 'fourier', 'freq', 'reference']);
-  assert.equal(SIGNALS_TABS.length, 8, 'eight tabs: 4×2 on a phone');
+test('tab row: eight course lessons plus one "참고 ▾" tab that stands for the later lessons (ids, registry and order of the lessons are unchanged)', () => {
+  assert.deepEqual(SIGNALS_TABS.map((t) => t.id), ['time', 'ops', 'lti', 'convolution', 'series', 'fourier', 'freq', 'sound', 'reference']);
+  assert.equal(SIGNALS_TABS.length, 9, 'nine tabs: 3×3 on a phone (DESIGN.md)');
   assert.deepEqual(SIGNALS_TABS.filter((t) => t.group).map((t) => t.id), ['reference']);
   assert.equal(SIGNALS_TABS.at(-1).tab, '참고 ▾');
   assert.deepEqual(SIGNALS_REFERENCE.lessons, ['roc', 'sampling']);

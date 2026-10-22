@@ -4170,14 +4170,15 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.match(await live(), /y=5x\(t\) · 이론 판정: 선형, 시불변/, "y=5x is linear whichever α");
   });
 
-  test("signals on a phone (390x844): the eight tabs (seven lessons + 참고 ▾) are visible in a 4×2 grid, the two choice selects of the frequency-response lesson share a line, nothing scrolls sideways", async () => {
+  test("signals on a phone (390x844): the nine tabs (eight lessons + 참고 ▾) are visible in a 3×3 grid, the two choice selects of the frequency-response lesson share a line, nothing scrolls sideways", async () => {
     await openSignals("freq", { width: 390, height: 844, mobile: true });
     const tabs = await ev(`[...document.querySelectorAll(".sg-tabs button")].map((button) => { const r = button.getBoundingClientRect(); return { id: button.dataset.signalsLesson ?? "reference", left: r.left, right: r.right, top: Math.round(r.top), width: r.width, height: r.height }; })`);
-    assert.deepEqual(tabs.map((tab) => tab.id), ["time", "ops", "lti", "convolution", "series", "fourier", "freq", "reference"], "seven lessons in course order, then the reference tab");
+    assert.deepEqual(tabs.map((tab) => tab.id), ["time", "ops", "lti", "convolution", "series", "fourier", "freq", "sound", "reference"], "eight lessons in course order, then the reference tab");
     for (const tab of tabs) assert.ok(tab.width > 40 && tab.height > 20 && tab.left >= 0 && tab.right <= 390, `${tab.id}: the tab is fully on screen (${tab.left}..${tab.right})`);
     const rows = [...new Set(tabs.map((tab) => tab.top))];
-    assert.equal(rows.length, 2, `two rows of tabs (${rows})`);
-    for (const top of rows) assert.equal(tabs.filter((tab) => tab.top === top).length, 4, "four tabs per row");
+    // 2026-10-22: the sound-spectrum lesson made it nine tabs, so the phone grid is 3×3 (DESIGN.md "레슨 탭 9개는 폰에서 3×3")
+    assert.equal(rows.length, 3, `three rows of tabs (${rows})`);
+    for (const top of rows) assert.equal(tabs.filter((tab) => tab.top === top).length, 3, "three tabs per row");
     assert.equal(await ev(`document.querySelector("[data-signals-reference]").closest("[hidden]") !== null`), true, "the reference select only shows inside a reference lesson");
     assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth + 1 && document.getElementById("signals-workspace").scrollWidth <= innerWidth + 1`), true, "no horizontal scrolling");
     const choices = await ev(`[...document.querySelectorAll("select[data-signals-param]")].map((select) => { const r = select.getBoundingClientRect(); return { key: select.dataset.signalsParam, left: r.left, right: r.right, top: Math.round(r.top) }; })`);

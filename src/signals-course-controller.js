@@ -21,6 +21,7 @@ import { samplingLesson } from './signals-sampling-model.js';
 import { opsLesson } from './signals-ops-model.js';
 import { ltiLesson } from './signals-lti-model.js';
 import { freqLesson } from './signals-freq-model.js';
+import { soundLesson } from './signals-sound-model.js';
 import { createTimeView } from './signals-time-view.js';
 import { createConvolutionView } from './signals-convolution-view.js';
 import { createSeriesView } from './signals-series-view.js';
@@ -30,6 +31,7 @@ import { createSamplingView } from './signals-sampling-view.js';
 import { createOpsView } from './signals-ops-view.js';
 import { createLtiView } from './signals-lti-view.js';
 import { createFreqView } from './signals-freq-view.js';
+import { createSoundView } from './signals-sound-view.js';
 import { createWorkspaceSession, storedNumber, storedObject } from './workspace-session.js';
 
 // id -> [lesson (pure model), createView]; the order of SIGNALS_LESSONS is the tab order.
@@ -41,6 +43,7 @@ export const SIGNALS_REGISTRY = {
   series: [seriesLesson, createSeriesView],
   fourier: [transformLesson, createTransformView],
   freq: [freqLesson, createFreqView],
+  sound: [soundLesson, createSoundView],
   roc: [rocLesson, createRocView],
   sampling: [samplingLesson, createSamplingView],
 };
@@ -393,8 +396,10 @@ export function createSignalsCourseController(host) {
     return views.get(id);
   }
 
+  // Views may implement suspend(): called when their lesson, the workspace or the page goes away (the sound lesson stops audio).
   function showLesson(id) {
     stopPlayback();
+    if (id !== lessonId) views.get(lessonId)?.suspend?.();
     lessonId = id;
     const state = current();
     ensureView(id);
@@ -679,7 +684,7 @@ export function createSignalsCourseController(host) {
     event.preventDefault();
   }
 
-  const onVisibility = () => { if (doc.hidden) stopPlayback(); else autoPlay(); };
+  const onVisibility = () => { if (doc.hidden) { stopPlayback(); views.get(lessonId)?.suspend?.(); } else autoPlay(); };
   const onBlur = () => stopPlayback();
   const onFocus = () => autoPlay();
   // Turning "reduce motion" on stops a running animation and keeps it stopped.
@@ -728,6 +733,7 @@ export function createSignalsCourseController(host) {
     deactivate() {
       if (destroyed) return;
       stopPlayback();
+      views.get(lessonId)?.suspend?.();
       session?.flush();
       if (frame) { win.cancelAnimationFrame(frame); frame = 0; }
       active = false;

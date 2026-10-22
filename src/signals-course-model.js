@@ -13,6 +13,7 @@ export const SIGNALS_LESSONS = [
   { id: 'series', tab: '푸리에 급수', title: '푸리에 급수 · 회전 페이저' },
   { id: 'fourier', tab: '푸리에 변환', title: '푸리에 변환 · 시간 ↔ 주파수' },
   { id: 'freq', tab: '주파수 응답', title: '주파수 응답 H(ω) · 정상상태 응답' },
+  { id: 'sound', tab: '소리 스펙트럼', title: '소리 스펙트럼 · 스피커와 마이크로 보는 고조파' },
   { id: 'roc', tab: 'Laplace / Z (참고)', short: 'Laplace / Z', title: '극점과 수렴영역(ROC) · 이후 진도(참고)', later: true },
   { id: 'sampling', tab: '표본화 (참고)', short: '표본화', title: '표본화와 aliasing · 이후 진도(참고)', later: true },
 ];

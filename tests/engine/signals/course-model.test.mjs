@@ -14,8 +14,9 @@ const integral = (fn, lo, hi, N = 30000) => {
   return sum * d;
 };
 
-test('nine lessons in course order with short tab labels; roc and sampling are marked as later material', () => {
-  assert.deepEqual(SIGNALS_LESSONS.map((l) => l.id), ['time', 'ops', 'lti', 'convolution', 'series', 'fourier', 'freq', 'roc', 'sampling']);
+test('ten lessons in course order with short tab labels; roc and sampling are marked as later material', () => {
+  // 'sound' (소리 스펙트럼, 2026-10-22) follows the frequency response: a lab on the Fourier-series harmonics with real sound.
+  assert.deepEqual(SIGNALS_LESSONS.map((l) => l.id), ['time', 'ops', 'lti', 'convolution', 'series', 'fourier', 'freq', 'sound', 'roc', 'sampling']);
   for (const lesson of SIGNALS_LESSONS) {
     assert.ok(lesson.tab.length <= 18 && lesson.title.length > 3);
   }
