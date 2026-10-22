@@ -160,6 +160,7 @@ export function createSignalsCourseController(host) {
       if (stored.playing === false) state.playing = false;
       if (lesson.guide) {
         if (lesson.guide.steps.some((s) => s.id === stored.lastGuide)) state.lastGuide = stored.lastGuide;
+        else state.lastGuide = lesson.guide.stepOf(state.family); // a step on screen is also the one to come back to
         if (lesson.families?.some((f) => f.value === stored.lastFree)) state.lastFree = stored.lastFree;
       }
       // A typed convolution input is parsed (and its cursor checked) when the lesson is shown.
