@@ -15,6 +15,7 @@ export function createSoundView({ doc, parent }) {
   const win = doc.defaultView;
   const view = createPanesView({ doc, parent, label: '소리 스펙트럼 그래프 (파형, 스펙트럼)', maxPanes: 2 });
   const { root } = view;
+  root.classList.add('sg-sound'); // phone CSS moves the start/stop bar under the plot so the plot starts on the first screen
   const engine = createSoundEngine(win);
   const reduced = win.matchMedia?.('(prefers-reduced-motion: reduce)');
 

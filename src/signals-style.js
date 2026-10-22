@@ -122,10 +122,12 @@ export const SIGNALS_STYLE = `
 .sg{display:flex;flex-direction:column}
 .sg>*{min-width:0}
 .sg-stage{order:1}.sg-hint{order:2}.sg-live{order:3}.sg-controls{order:4;margin-top:8px}.sg-read{order:5}.sg-status{order:6}.sg-details{order:7}
+/* Nine tabs make three rows on a phone, so the reference-lesson picker also goes under the plot, with the other controls. */
+.sg-ref{order:4;margin:8px 0 0}
 .sg-tabs button,.sg-scrub>button,.sg-details>summary{min-height:44px}
 .sg-details>summary{padding:12px 2px}
-/* Guided mode on a phone: the step bar stays on top, the presets follow the controls, the explanation sits above the read line. */
-.sg-steps{gap:4px;margin-bottom:6px}.sg-steps button{min-height:44px;padding:2px;font-size:12px}
+/* Guided mode on a phone: the plot first, the step bar right under it, the presets after the controls, the explanation above the read line. */
+.sg-steps{order:2;gap:4px;margin:8px 0 0}.sg-steps button{min-height:44px;padding:2px;font-size:12px}
 .sg-chips{order:4}.sg-chips button{min-height:44px}
 .sg-guide-body{order:5;margin:10px 0 0;font-size:13.5px}
 .sg-ctl select,.sg-ref select,.sg-advanced input[type=text]{min-height:44px;font-size:16px}
@@ -150,6 +152,7 @@ export const SIGNALS_STYLE = `
 .sg-sound-table thead th{color:var(--muted);font-weight:600;font-family:system-ui,"Malgun Gothic",sans-serif}
 .sg-sound-table tbody th{text-align:center;color:var(--muted)}
 @media(max-width:700px){
+.sg-sound{display:flex;flex-direction:column}.sg-sound>.sg-sound-bar{order:1}.sg-sound>.sg-legend{order:2}.sg-sound>.sg-sound-table{order:3}
 .sg-sound-bar{padding:8px 8px 0}.sg-sound-bar button{min-height:44px;flex:1 1 100%}
 .sg-sound-table{padding:2px 6px 8px}.sg-sound-table table{font-size:12px}.sg-sound-table th,.sg-sound-table td{padding:4px 6px}
 }

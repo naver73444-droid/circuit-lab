@@ -136,7 +136,7 @@ describe("signals: Fourier-transform guided mode", { timeout: 300000 }, () => {
     assert.equal((await sg()).guideStep, "train");
   });
 
-  test("phone 390 px: step bar on top, the plot before the controls, presets after them, 44 px targets, no sideways scroll", async () => {
+  test("phone 390 px: the plot first (high on the screen), the step bar under it, presets after the controls, 44 px targets, no sideways scroll", async () => {
     await openFourier({ mobile: true });
     await change("[data-signals-mode]", "guide");
     await settle();
@@ -147,8 +147,9 @@ describe("signals: Fourier-transform guided mode", { timeout: 300000 }, () => {
     const controls = await box(".sg-controls");
     const chips = await box("[data-signals-chips]");
     const body = await box("[data-signals-guide-body]");
-    assert.ok(steps.bottom <= stage.top + 1, "steps above the plot");
-    assert.ok(stage.bottom <= controls.top + 1, "plot above the controls");
+    assert.ok(stage.top < 844 * 0.4, `the plot starts high on the first screen (${stage.top})`);
+    assert.ok(stage.bottom <= steps.top + 1, "the step bar right under the plot");
+    assert.ok(steps.bottom <= controls.top + 1, "steps above the controls");
     assert.ok(controls.bottom <= chips.top + 1, "presets right after the controls");
     assert.ok(chips.bottom <= body.top + 1, "explanation after the presets");
     const small = await ev(`[...document.querySelectorAll("[data-signals-step], [data-signals-chip]")].filter((b) => b.getBoundingClientRect().height < 43.5).map((b) => b.textContent)`);
