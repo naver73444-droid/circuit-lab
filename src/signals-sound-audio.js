@@ -5,6 +5,9 @@
 //   mic only (2):  microphone → analyser
 // The microphone is asked for without echo cancellation, noise suppression or automatic gain: those would remove or
 // reshape exactly the tone the lesson wants to measure.
+// start(config, current) may wait a long time (the microphone prompt). `current()` tells it whether the caller still wants
+// this start; when it no longer does (stopped, lesson left, another input chosen), whatever arrived late is let go at once
+// (every track stopped) and start() resolves to false without touching the graph of a newer start.
 import { harmonicLimit, pulseWaveCoefficients, LOOPBACK, MIC_ONLY } from './signals-sound-model.js';
 
 export const FFT_SIZE = 16384;
@@ -25,6 +28,16 @@ export function createSoundEngine(win) {
   let source = null;
   let mode = null;
   let wave = null; // the oscillator's current waveform key, so a periodic wave is only rebuilt when it changes
+  let starts = 0;  // start() calls still waiting (a stop's fade must not put the context to sleep under them)
+  let sleeping = null; // the ctx.suspend() still under way: a start waits for it, then resumes (state reads 'running' until it ends)
+
+  const stopTracks = (media) => { if (media) for (const track of media.getTracks()) track.stop(); };
+  function sleep() {
+    const done = ctx.suspend().catch(() => {});
+    sleeping = done;
+    done.then(() => { if (sleeping === done) sleeping = null; });
+    return done;
+  }
 
   function applyWave(config) {
     const key = config.family === 'pulse' ? `pulse:${config.d}` : config.family;
@@ -43,17 +56,35 @@ export function createSoundEngine(win) {
     if (osc) { try { osc.stop(); } catch { /* already stopped */ } osc.disconnect(); osc = null; }
     gain?.disconnect(); gain = null;
     source?.disconnect(); source = null;
-    if (stream) { for (const track of stream.getTracks()) track.stop(); stream = null; }
+    stopTracks(stream); stream = null;
     wave = null;
     mode = null;
   }
 
-  async function start(config) {
+  async function start(config, current = () => true) {
     if (!support.audio) throw new Error('이 브라우저는 Web Audio를 지원하지 않아 소리를 낼 수 없습니다.');
     if (config.input !== LOOPBACK && !support.mic) throw new Error('이 브라우저에서는 마이크를 쓸 수 없습니다. 입력을 루프백으로 바꿔 보세요.');
     releaseNodes();
+    starts += 1;
+    let done = false;
+    try {
+      done = await open(config, current);
+      return done;
+    } finally {
+      starts -= 1;
+      // a start given up while waiting leaves nothing sounding: let the device sleep unless another start is still waiting
+      if (!done && !starts && mode === null && ctx?.state === 'running') sleep();
+    }
+  }
+
+  async function open(config, current) {
     ctx ||= new support.Context();
+    // A suspend begun before this start (the fade of the last 소리 끄기) finishes first; only then is the state worth reading.
+    // No new one can begin meanwhile: the fade and a given-up start only suspend while no start is waiting (`starts`).
+    if (sleeping) await sleeping;
+    if (!ctx) return false; // closed meanwhile
     if (ctx.state !== 'running') await ctx.resume();
+    if (!current() || !ctx) return false; // stopped (or closed) while the context woke up
     if (!analyser) {
       analyser = ctx.createAnalyser();
       analyser.fftSize = FFT_SIZE;
@@ -67,29 +98,43 @@ export function createSoundEngine(win) {
       analyser.connect(sink);
       sink.connect(ctx.destination);
     }
+    let media = null;
     if (config.input !== LOOPBACK) {
       try {
-        stream = await win.navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        media = await win.navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       } catch (error) {
         const denied = error?.name === 'NotAllowedError' || error?.name === 'SecurityError';
         throw new Error(denied ? '마이크 권한이 없어 들을 수 없습니다. 브라우저에서 마이크를 허용하거나 루프백으로 보세요.' : `마이크를 열 수 없습니다 (${error?.name ?? '오류'}). 루프백으로 보세요.`);
       }
-      source = ctx.createMediaStreamSource(stream);
-      source.connect(analyser);
+      // The prompt was answered after this start was given up: the microphone goes off again at once.
+      if (!current() || !ctx) { stopTracks(media); return false; }
     }
-    if (config.input !== MIC_ONLY) {
-      osc = ctx.createOscillator();
-      gain = ctx.createGain();
-      gain.gain.value = 0;
-      osc.frequency.value = config.f0;
-      applyWave(config);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      if (config.input === LOOPBACK) gain.connect(analyser);
-      osc.start();
-      gain.gain.setTargetAtTime(config.gain / 100, ctx.currentTime, RAMP);
+    // No await from here on: the graph is built in one go, and torn down again if any part of it fails.
+    try {
+      if (media) {
+        stream = media;
+        source = ctx.createMediaStreamSource(stream);
+        source.connect(analyser);
+      }
+      if (config.input !== MIC_ONLY) {
+        osc = ctx.createOscillator();
+        gain = ctx.createGain();
+        gain.gain.value = 0;
+        osc.frequency.value = config.f0;
+        applyWave(config);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        if (config.input === LOOPBACK) gain.connect(analyser);
+        osc.start();
+        gain.gain.setTargetAtTime(config.gain / 100, ctx.currentTime, RAMP);
+      }
+    } catch (error) {
+      stopTracks(media);
+      releaseNodes();
+      throw error;
     }
     mode = config.input;
+    return true;
   }
 
   // Slider changes while sounding: frequency, waveform and volume follow at once; another input mode needs a restart.
@@ -107,15 +152,16 @@ export function createSoundEngine(win) {
 
   async function stop() {
     if (gain && ctx) gain.gain.setTargetAtTime(0, ctx.currentTime, RAMP);
-    const nodes = { osc, gain, source, stream };
+    const nodes = { osc, gain };
+    // The microphone goes off at once (it never reaches the speakers, so there is nothing to fade).
+    source?.disconnect();
+    stopTracks(stream);
     osc = null; gain = null; source = null; stream = null; mode = null; wave = null;
-    // let the ramp finish, then tear the graph down and let the device sleep
+    // let the ramp finish, then tear the graph down and let the device sleep (unless a new start came meanwhile)
     await new Promise((done) => win.setTimeout(done, 80));
     if (nodes.osc) { try { nodes.osc.stop(); } catch { /* already stopped */ } nodes.osc.disconnect(); }
     nodes.gain?.disconnect();
-    nodes.source?.disconnect();
-    if (nodes.stream) for (const track of nodes.stream.getTracks()) track.stop();
-    if (ctx && ctx.state === 'running' && mode === null) await ctx.suspend().catch(() => {});
+    if (ctx && ctx.state === 'running' && mode === null && !starts) await sleep();
   }
 
   return {
@@ -133,7 +179,7 @@ export function createSoundEngine(win) {
     async close() {
       releaseNodes();
       const old = ctx;
-      ctx = null; analyser = null;
+      ctx = null; analyser = null; sleeping = null;
       if (old && old.state !== 'closed') await old.close().catch(() => {});
     },
   };

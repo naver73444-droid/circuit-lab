@@ -114,6 +114,12 @@ function refine(db, i, width) {
   return { hz: (i + shift) * width, db: b - 0.25 * (a - c) * shift };
 }
 
+// An AnalyserNode bin holds |(1/N)·Σ w[n]·x[n]·e^(−j2πkn/N)| with the Blackman window (mean 0.42), so a sine of amplitude
+// A peaks at A·0.42/2 (−13.6 dB for a full-scale sine). sineLevelDb gives the sine amplitude in dBFS (full scale = 0 dB).
+// It is exact for a tone on a bin and within about 1 dB between bins; the relative levels (rel) need no correction at all.
+export const SINE_DB_CORRECTION = 20 * Math.log10(2 / 0.42);
+export const sineLevelDb = (db) => db + SINE_DB_CORRECTION;
+
 // Median of the finite bins: a robust "noise floor" for a spectrum that is mostly empty between the harmonics.
 export function noiseFloor(db) {
   const values = Array.from(db).filter(Number.isFinite).sort((x, y) => x - y);

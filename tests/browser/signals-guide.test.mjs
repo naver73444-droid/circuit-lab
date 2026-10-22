@@ -167,5 +167,26 @@ describe("signals: Fourier-transform guided mode", { timeout: 300000 }, () => {
     await clickEl('[data-signals-step="shift"]');
     assert.equal(await text("[data-signals-hint]"), "● 시간 파형을 끌어 이동");
     assert.equal(await shown("[data-signals-hint]"), true);
+    // ③ the t₀ label keeps clear of the time pane's title; ④ the height label sits above the pulse, not on its edge.
+    const firstPane = `[...document.querySelectorAll(".sg-stage svg")].find((s) => s.getClientRects().length > 0).querySelector(".sg-pane")`;
+    const label = (start) => `[...${firstPane}.querySelectorAll("text.sg-note")].find((t) => t.textContent.startsWith(${JSON.stringify(start)})).getBoundingClientRect()`;
+    const shiftGap = await ev(`${label("t₀ =")}.top - ${firstPane}.querySelector(".sg-title").getBoundingClientRect().bottom`);
+    assert.ok(shiftGap >= 4, `③ t₀ label vs the pane title: ${shiftGap} px apart`);
+    await clickEl('[data-signals-step="impulse"]');
+    const impulse = await ev(`(() => { const l = ${label("높이 1/a")}, a = ${firstPane}.querySelector("path.fl.c1").getBoundingClientRect(), t = ${firstPane}.querySelector(".sg-title").getBoundingClientRect(); return { labelTop: l.top, labelBottom: l.bottom, pulseTop: a.top, titleBottom: t.bottom }; })()`);
+    assert.ok(impulse.labelBottom <= impulse.pulseTop + 1, `④ the height label is above the pulse (${JSON.stringify(impulse)})`);
+    assert.ok(impulse.labelTop >= impulse.titleBottom + 4, `④ and below the pane title (${JSON.stringify(impulse)})`);
+    // The step bar stays one 44 px line on every step (one-word labels on a phone; the full name is the title).
+    const heights = [];
+    for (const id of ["train", "pulse", "shift", "impulse", "exp"]) {
+      await clickEl(`[data-signals-step="${id}"]`);
+      heights.push(Math.round((await box("[data-signals-steps]")).height));
+    }
+    assert.ok(heights.every((h) => h === heights[0] && h <= 46), `the step bar keeps one line (${heights})`);
+    const tops = await ev(`[...document.querySelectorAll("[data-signals-step]")].map((b) => Math.round(b.getBoundingClientRect().top))`);
+    assert.equal(new Set(tops).size, 1, `all five steps on one line (${tops})`);
+    assert.equal(await ev(`document.querySelector('[data-signals-step="train"]').innerText.trim()`), "① 급수");
+    assert.equal(await ev(`document.querySelector('[data-signals-step="train"]').title`), "① 펄스열에서 펄스 하나로");
+    assert.equal(await ev(`document.documentElement.scrollWidth <= innerWidth`), true, "still no sideways scroll");
   });
 });

@@ -84,6 +84,65 @@ test('step 3 (Ex 4.13): a shift leaves |X| alone and turns the phase by −2πf 
   }
 });
 
+test('step 3 formula: the straight line is β = −2πf t₀, θ adds ±π where the sinc is negative and is folded into (−π, π] — as drawn', () => {
+  // t0 = 0, f = 1.5 Hz: the sinc is negative there, so the drawn phase is ±π although β = 0.
+  const v = guideSpectrum('shift', { t0: 0 }, 1.5);
+  close(Math.abs(Math.atan2(v.im, v.re)), Math.PI, 1e-12, 't0=0, f=1.5: |θ| = π');
+  for (const axis of [0, 1]) {
+    const sym = axis ? 'ω' : 'f';
+    const sinc = axis ? 'sinc(ωτ/(2π))' : 'sinc(fτ)';
+    const lines = guideFormula('shift', { t0: 0, axis }).split('\n');
+    assert.ok(lines.includes(axis ? 'β(ω) = −ω t₀' : 'β(f) = −2πf t₀'), `${sym}: β line`);
+    assert.ok(lines.includes(`${sinc} > 0: θ(${sym}) = wrap(β(${sym}))`), `${sym}: θ = wrap(β) where the sinc is positive`);
+    assert.ok(lines.includes(`${sinc} < 0: θ(${sym}) = wrap(β(${sym}) ± π)`), `${sym}: θ = wrap(β ± π) where it is negative`);
+    assert.ok(lines.includes('wrap(φ) = φ + 2πm, −π < wrap(φ) ≤ π'), `${sym}: wrap folds into (−π, π]`);
+    // θ is never written as the straight line alone (that read 0 at t0 = 0 while the plot showed ±π)
+    assert.ok(!lines.some((line) => /^θ\([fω]\) = −/.test(line)), `${sym}: no "θ = −…" line`);
+    assert.match(lines.at(-1), /^지금: t₀ = 0 s → β 기울기 /);
+    assert.match(lines.at(-1), axis ? /6\.28~12\.6 rad\/s/ : /1~2 Hz/, `${sym}: the first negative-sinc band`);
+    // t0 = 0: θ = 0 in the main lobe and π (not 0) at f = 1.5 Hz
+    assert.match(lines.at(-1), axis ? /ω = 1\.5π rad\/s에서 β = 0, θ = 0 · ω = 3π rad\/s에서 β = 0, θ = π$/ : /f = 0\.75 Hz에서 β = 0, θ = 0 · f = 1\.5 Hz에서 β = 0, θ = π$/);
+    // the graph says the same: the dashed line is β, the solid one the folded θ
+    const frame = guideFrame('shift', { t0: 0, axis });
+    const legend = frame.legend.map((entry) => entry.text);
+    assert.ok(legend.includes('θ 위상 (접힘)'), `${sym}: legend θ`);
+    assert.ok(legend.includes(axis ? 'β = −ω t₀ 직선' : 'β = −2πf t₀ 직선'), `${sym}: legend β`);
+    assert.match(frame.panes[2].title, new RegExp(`^θ\\(${sym}\\) \\[rad\\]: 점선 = 직선 β, 실선 = θ`));
+  }
+  // t0 = 1, f = 0.75 Hz: β = −3π/2 but the sinc is positive and the drawn phase is folded: θ = +π/2 (graph and formula agree)
+  const one = guideSpectrum('shift', { t0: 1 }, 0.75);
+  close(Math.atan2(one.im, one.re), Math.PI / 2, 1e-9, 't0=1, f=0.75: the plotted θ');
+  close(wrap(-TAU * 0.75 * 1), Math.PI / 2, 1e-12, 'wrap(β) = π/2');
+  for (const axis of [0, 1]) {
+    const now = guideFormula('shift', { t0: 1, axis }).split('\n').at(-1);
+    assert.match(now, axis ? /ω = 1\.5π rad\/s에서 β = −1\.5π, θ = 0\.5π/ : /f = 0\.75 Hz에서 β = −1\.5π, θ = 0\.5π/, `axis ${axis}: ${now}`);
+    assert.match(now, axis ? /ω = 3π rad\/s에서 β = −3π, θ = 0$/ : /f = 1\.5 Hz에서 β = −3π, θ = 0$/, `axis ${axis}: ${now}`);
+  }
+  assert.match(guideText('shift').body, /β\(f\)=−2πf·t₀/);
+  assert.match(guideText('shift').body, /θ\(f\)=β\(f\)±π/);
+});
+
+test('step labels: one-word phone labels; the ③ t₀ label has headroom under the title, the ④ height label sits above the pulse', () => {
+  for (const step of GUIDE_STEPS) {
+    assert.ok(step.tiny && !/\s.*\s/.test(step.tiny), `${step.id}: "${step.tiny}" is the number and one word`);
+    assert.ok([...step.tiny].length <= [...step.short].length, `${step.id}: tiny is not longer than short`);
+    assert.equal(step.tiny[0], step.title[0], `${step.id}: same step number`);
+  }
+  for (const t0 of [-2, -0.5, 0, 0.5, 2]) {
+    const pane = guideFrame('shift', { t0 }).panes[0];
+    const label = pane.texts[0];
+    // at least 0.25 of the pane height between the label's anchor and the top edge (the title sits above that edge)
+    assert.ok((pane.y[1] - label.y) / (pane.y[1] - pane.y[0]) >= 0.25, `t0=${t0}: headroom ${JSON.stringify(pane.y)}`);
+  }
+  for (const a of [0.05, 0.1, 1, 2]) {
+    const pane = guideFrame('impulse', { a }).panes[0];
+    const label = pane.texts[0];
+    assert.deepEqual([label.x, label.y], [0, 1 / a], `a=${a}: centred on the pulse's top edge`);
+    assert.ok(label.dy < 0, `a=${a}: drawn above it`);
+    assert.ok((pane.y[1] - label.y) / (pane.y[1] - pane.y[0]) >= 0.2, `a=${a}: room for the label under the title`);
+  }
+});
+
 test('step 4 (Ex 4.14): the unit-area pulse q_a has Q(0) = 1 and its first zero at 1/a, which runs away as a → 0', () => {
   for (const a of [2, 1, 0.2, 0.1]) {
     const x = (t) => (Math.abs(t) < a / 2 ? 1 / a : 0);

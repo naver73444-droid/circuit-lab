@@ -17,12 +17,13 @@ export const SHIFTED = { A: 1, tau: 1 };
 // Step 5 draws the exponentials on |ω| <= 10 rad/s so that the corner ω = a (0.25 ... 4) is always inside.
 export const EXP_OMEGA_SPAN = 10;
 
+// short: the step bar's label; tiny: the one-word label of a phone, where the five buttons share one line.
 export const GUIDE_STEPS = [
-  { id: 'train', title: '① 펄스열에서 펄스 하나로', short: '① 급수→변환' },
-  { id: 'pulse', title: '② 펄스 하나: 넓이와 폭 (Ex 4.12)', short: '② 넓이·폭' },
-  { id: 'shift', title: '③ 옮기면 위상만 바뀜 (Ex 4.13)', short: '③ 이동·위상' },
-  { id: 'impulse', title: '④ 폭을 0으로: δ(t) ↔ 1 (Ex 4.14)', short: '④ 임펄스' },
-  { id: 'exp', title: '⑤ 지수 신호: 복소수와 실수 (Ex 4.15·4.16)', short: '⑤ 지수' },
+  { id: 'train', title: '① 펄스열에서 펄스 하나로', short: '① 급수→변환', tiny: '① 급수' },
+  { id: 'pulse', title: '② 펄스 하나: 넓이와 폭 (Ex 4.12)', short: '② 넓이·폭', tiny: '② 넓이' },
+  { id: 'shift', title: '③ 옮기면 위상만 바뀜 (Ex 4.13)', short: '③ 이동·위상', tiny: '③ 이동' },
+  { id: 'impulse', title: '④ 폭을 0으로: δ(t) ↔ 1 (Ex 4.14)', short: '④ 임펄스', tiny: '④ 임펄스' },
+  { id: 'exp', title: '⑤ 지수 신호: 복소수와 실수 (Ex 4.15·4.16)', short: '⑤ 지수', tiny: '⑤ 지수' },
 ];
 export const guideStepIndex = (id) => GUIDE_STEPS.findIndex((s) => s.id === id);
 
@@ -242,6 +243,7 @@ export function guideFrame(stepId, raw) {
       split: true,
       panes: [
         timePane('shift', p, SHIFTED.A, 'x(t − t₀): 폭 1 s 펄스를 t₀만큼 이동 · t [s]', {
+          y: [-0.25 * SHIFTED.A, 1.75 * SHIFTED.A], // extra headroom: the t₀ arrow and its label stay clear of the pane title on a phone
           segments: Math.abs(p.t0) > 0.04 ? [{ cls: 'c4', x1: 0, y1: 1.2, x2: p.t0, y2: 1.2 }] : [],
           texts: [{ cls: 'c4', x: p.t0 / 2, y: 1.2, text: `t₀ = ${formatQuantity(p.t0, 's')}`, dy: -6 }],
         }),
@@ -250,11 +252,14 @@ export function guideFrame(stepId, raw) {
           areas: [{ cls: 'c2', pts: magnitude }], lines: [{ cls: 'c2', pts: magnitude }],
         },
         {
-          title: `θ(${sym}) [rad]: 점선 = −2π f t₀, 실선 = −π~π로 접은 위상`, x: win.x, y: [-Math.PI * 1.15, Math.PI * 1.15], xTicks: win.xTicks, yTicks: PHASE_TICKS,
+          title: `θ(${sym}) [rad]: 점선 = 직선 β, 실선 = θ (−π~π로 접힘)`, x: win.x, y: [-Math.PI * 1.15, Math.PI * 1.15], xTicks: win.xTicks, yTicks: PHASE_TICKS,
           lines: [{ cls: 'c4 dash', pts: line }, { cls: 'c3 thin', pts: phase }],
         },
       ],
-      legend: [{ cls: 'c1', text: 'x(t − t₀)' }, { cls: 'c2', text: `|X(${sym})| 크기` }, { cls: 'c3', text: 'θ 위상 (접힘)' }, { cls: 'c4 dash', text: '−2π f t₀ 직선' }],
+      legend: [
+        { cls: 'c1', text: 'x(t − t₀)' }, { cls: 'c2', text: `|X(${sym})| 크기` }, { cls: 'c3', text: 'θ 위상 (접힘)' },
+        { cls: 'c4 dash', text: isOmega(axis) ? 'β = −ω t₀ 직선' : 'β = −2πf t₀ 직선' },
+      ],
     };
   }
 
@@ -267,7 +272,7 @@ export function guideFrame(stepId, raw) {
       split: true,
       panes: [
         timePane('impulse', p, top, 'q_a(t) = (1/a)Π(t/a): 넓이는 항상 1 · t [s]', {
-          texts: [{ cls: 'c1', x: Math.min(TIME_RANGES.impulse[1] - 0.6, p.a / 2 + 0.55), y: top * 0.85, text: `높이 1/a = ${formatNumber(top)}`, dy: 0 }],
+          texts: [{ cls: 'c1', x: 0, y: top, text: `높이 1/a = ${formatNumber(top)}`, dy: -8 }], // above the top edge, like step ②: beside the pulse it ran into the edge on a phone
         }),
         {
           title: `Q(${sym}) = sinc(fa) · ${sym} [${unit}]`, x: win.x, y: [-0.3, 1.32], xTicks: win.xTicks, yTicks: [0, 1],
@@ -305,7 +310,7 @@ export function guideFrame(stepId, raw) {
 const BODIES = {
   train: '주기 신호는 선 스펙트럼(푸리에 급수), 펄스 하나는 연속 스펙트럼(푸리에 변환)입니다. 펄스열의 주기 T₀를 늘리면 선 간격 f₀=1/T₀가 좁아지는데, 선 높이에 T₀를 곱한 T₀·c_k는 늘 같은 점선 위에 놓입니다. T₀→∞이면 선이 빈틈없이 차서 점선 X(f) 자체가 됩니다.',
   pulse: '펄스 하나의 푸리에 변환은 sinc 모양의 실수 함수입니다. f=0에서의 높이 X(0)는 펄스의 넓이 Aτ와 같고, 첫 영점은 1/τ에 있습니다. 그래서 시간에서 좁은 펄스일수록 주파수에서는 넓게 퍼집니다.',
-  shift: '펄스를 t₀만큼 옮겨도 크기 |X|는 바뀌지 않고, 위상만 −2πf·t₀로 주파수에 비례해 기울어집니다. sinc가 음수인 구간에서는 위상에 ±π가 더해지고(교재 오류로 표시된 부분), −π~π로 접어서 그리기 때문에 위상 그래프가 톱니처럼 보입니다.',
+  shift: '펄스를 t₀만큼 옮겨도 크기 |X|는 바뀌지 않고, 위상의 직선 부분 β(f)=−2πf·t₀만 주파수에 비례해 기울어집니다. sinc가 음수인 구간에서는 θ(f)=β(f)±π가 되고(교재 오류로 표시된 부분), −π~π로 접어서 그리기 때문에 위상 그래프가 톱니처럼 보입니다.',
   impulse: '넓이를 1로 유지한 채 폭 a를 줄이면 펄스는 점점 높고 좁아져 임펄스 δ(t)가 됩니다. 스펙트럼 sinc(fa)의 첫 영점 1/a는 바깥으로 밀려나서, a→0이면 모든 주파수에서 1인 평평한 스펙트럼이 됩니다.',
   exp: {
     0: 'e^(−at)u(t)처럼 한쪽으로 치우친 신호의 변환은 복소수입니다. 실수부는 좌우 대칭(우함수), 허수부는 반대칭(기함수)이고, ω=a에서 크기가 X(0)의 1/√2, 위상이 −π/4입니다. RC 저역통과 H(ω)=1/(1+jωRC)와 같은 모양이라 다음 레슨 "주파수 응답"으로 이어집니다.',
@@ -343,7 +348,7 @@ export function guideObserve(stepId, raw = {}) {
     const slopeText = isOmega(axis) ? `−t₀ = ${formatNumber(-p.t0)} s` : `−2πt₀ = ${formatNumber(slope)} rad/Hz`;
     return Math.abs(p.t0) < 1e-9
       ? '가운데 놓인 펄스는 우함수라 위상이 0 또는 ±π(sinc가 음수인 구간)뿐입니다. 이제 옮겨 보세요.'
-      : `t₀ = ${formatQuantity(p.t0, 's')}: |X|는 그대로, 위상 기울기 ${slopeText}. 위상이 ±π를 넘을 때마다 접혀서 톱니가 됩니다.`;
+      : `t₀ = ${formatQuantity(p.t0, 's')}: |X|는 그대로, 직선 β의 기울기 ${slopeText}. 위상이 ±π를 넘을 때마다 접혀서 톱니가 됩니다.`;
   }
   if (stepId === 'impulse') {
     const zero = 1 / p.a;
@@ -353,6 +358,14 @@ export function guideObserve(stepId, raw = {}) {
   const corner = isOmega(axis) ? `ω = a = ${formatNumber(p.a)} rad/s` : `f = a/2π = ${formatNumber(p.a / TAU)} Hz`;
   if (p.shape === 1) return `순실수: 허수부 0. X(0) = 2/a = ${formatNumber(2 / p.a)}, ${corner}에서 X = 1/a = ${formatNumber(1 / p.a)} (절반).`;
   return `복소수: X(0) = 1/a = ${formatNumber(1 / p.a)}, ${corner}에서 |X| = ${formatNumber(1 / (Math.SQRT2 * p.a))} (1/√2배), 위상 −π/4. 허수부 극값 ∓1/(2a) = ∓${formatNumber(1 / (2 * p.a))}.`;
+}
+
+// An angle as a multiple of π ("0", "π", "−1.5π").
+function piText(angle, n) {
+  const k = angle / Math.PI;
+  if (Math.abs(k) < 1e-9) return '0';
+  if (Math.abs(Math.abs(k) - 1) < 1e-9) return k > 0 ? 'π' : '−π';
+  return `${n(k)}π`;
 }
 
 // The formula with the current numbers: math lines (parsed by course-math-view) and Korean "지금" lines (shown as prose).
@@ -376,11 +389,24 @@ export function guideFormula(stepId, raw = {}) {
     ].join('\n');
   }
   if (stepId === 'shift') {
+    // Two sample frequencies for the "지금" line: one in the main lobe (sinc > 0), one in the first negative lobe.
+    const sample = (hz) => {
+      const v = guideSpectrum('shift', p, hz);
+      let theta = Math.atan2(v.im, v.re);
+      if (theta <= -Math.PI + 1e-12) theta += TAU; // atan2 may give −π; the drawn phase lives in (−π, π]
+      return `${w ? `ω = ${piText(TAU * hz, n)} rad/s` : `f = ${n(hz)} Hz`}에서 β = ${piText(-TAU * hz * p.t0, n)}, θ = ${piText(theta, n)}`;
+    };
     return [
       w ? 'x(t − t₀) ↔ X(ω)·e^(−jωt₀)' : 'x(t − t₀) ↔ X(f)·e^(−j2πft₀)',
       w ? '|X(ω)| = Aτ·|sinc(ωτ/(2π))|' : '|X(f)| = Aτ·|sinc(fτ)|',
-      w ? 'θ(ω) = −ωt₀' : 'θ(f) = −2πf t₀',
-      `지금: t₀ = ${n(p.t0)} s → 기울기 ${w ? `−t₀ = ${n(-p.t0)} s` : `−2πt₀ = ${n(-TAU * p.t0)} rad/Hz`}, sinc가 음수인 구간은 ±π가 더해짐`,
+      // beta is the straight (dashed) line; theta is the drawn phase: beta (plus pi where the sinc is negative), folded into (-pi, pi]
+      w ? 'β(ω) = −ω t₀' : 'β(f) = −2πf t₀',
+      w ? 'sinc(ωτ/(2π)) > 0: θ(ω) = wrap(β(ω))' : 'sinc(fτ) > 0: θ(f) = wrap(β(f))',
+      w ? 'sinc(ωτ/(2π)) < 0: θ(ω) = wrap(β(ω) ± π)' : 'sinc(fτ) < 0: θ(f) = wrap(β(f) ± π)',
+      'wrap(φ) = φ + 2πm, −π < wrap(φ) ≤ π',
+      w
+        ? `지금: t₀ = ${n(p.t0)} s → β 기울기 −t₀ = ${n(-p.t0)} s, sinc < 0인 구간 ${n(TAU / SHIFTED.tau)}~${n(2 * TAU / SHIFTED.tau)} rad/s 등. 예: ${sample(0.75)} · ${sample(1.5)}`
+        : `지금: t₀ = ${n(p.t0)} s → β 기울기 −2πt₀ = ${n(-TAU * p.t0)} rad/Hz, sinc < 0인 구간 ${n(1 / SHIFTED.tau)}~${n(2 / SHIFTED.tau)} Hz 등. 예: ${sample(0.75)} · ${sample(1.5)}`,
     ].join('\n');
   }
   if (stepId === 'impulse') {

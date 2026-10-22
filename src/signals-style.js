@@ -14,6 +14,7 @@ export const SIGNALS_STYLE = `
 .sg-steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:0 0 8px}
 .sg-steps button{min-height:38px;padding:4px 6px;font-size:13px;line-height:1.25;border-radius:10px;overflow-wrap:anywhere}
 .sg-steps button[aria-current=step]{background:var(--selection);border-color:var(--accent);font-weight:650}
+.sg-step-tiny{display:none}
 .sg-guide-body{margin:0 0 10px;max-width:72ch;font-size:14px;line-height:1.65}
 .sg-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:8px 0 0}
 .sg-chips>.sg-name{font-size:12px;color:var(--muted);margin-right:2px}
@@ -122,12 +123,14 @@ export const SIGNALS_STYLE = `
 .sg{display:flex;flex-direction:column}
 .sg>*{min-width:0}
 .sg-stage{order:1}.sg-hint{order:2}.sg-live{order:3}.sg-controls{order:4;margin-top:8px}.sg-read{order:5}.sg-status{order:6}.sg-details{order:7}
-/* Nine tabs make three rows on a phone, so the reference-lesson picker also goes under the plot, with the other controls. */
-.sg-ref{order:4;margin:8px 0 0}
 .sg-tabs button,.sg-scrub>button,.sg-details>summary{min-height:44px}
 .sg-details>summary{padding:12px 2px}
-/* Guided mode on a phone: the plot first, the step bar right under it, the presets after the controls, the explanation above the read line. */
-.sg-steps{order:2;gap:4px;margin:8px 0 0}.sg-steps button{min-height:44px;padding:2px;font-size:12px}
+/* Guided mode on a phone: the plot first, the step bar right under it, the presets after the controls, the explanation above the read line.
+   The step bar is always one 44 px line (one-word labels; if they still do not fit, the bar scrolls sideways, never the page),
+   so its height does not change from step to step. */
+.sg-steps{order:2;display:flex;flex-wrap:nowrap;gap:4px;margin:8px 0 0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.sg-steps button{flex:1 1 0;min-width:max-content;height:44px;min-height:44px;padding:0 6px;font-size:12px;white-space:nowrap}
+.sg-step-full{display:none}.sg-step-tiny{display:inline}
 .sg-chips{order:4}.sg-chips button{min-height:44px}
 .sg-guide-body{order:5;margin:10px 0 0;font-size:13.5px}
 .sg-ctl select,.sg-ref select,.sg-advanced input[type=text]{min-height:44px;font-size:16px}

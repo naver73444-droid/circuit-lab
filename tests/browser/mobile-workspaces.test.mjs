@@ -142,9 +142,13 @@ describe("phone study workspaces", { timeout: 600000 }, () => {
       for (const lesson of ["time", "ops", "lti", "convolution", "series", "fourier", "freq", "sound", "reference"]) {
         await openSignalsLesson(lesson);
         await assertTouchFriendly("signals", `${tag} ${lesson}`);
-        const order = await ev(`(() => { const svg = ${visibleSvg}.getBoundingClientRect(), controls = document.querySelector(".sg-controls").getBoundingClientRect(); return { plotTop: svg.top, plotBottom: svg.bottom, controlsTop: controls.top, inner: innerHeight }; })()`);
+        const order = await ev(`(() => { const svg = ${visibleSvg}.getBoundingClientRect(), controls = document.querySelector(".sg-controls").getBoundingClientRect(), ref = document.querySelector(".sg-ref"), r = ref.hidden ? null : ref.getBoundingClientRect(); return { plotTop: svg.top, plotBottom: svg.bottom, controlsTop: controls.top, inner: innerHeight, refTop: r ? r.top : null, refBottom: r ? r.bottom : null }; })()`);
         assert.ok(order.plotBottom <= order.controlsTop + 1, `${lesson}: the plot is above the sliders (${JSON.stringify(order)})`);
-        assert.ok(order.plotTop < order.inner * 0.4, `${lesson}: the plot starts high on the first screen (${JSON.stringify(order)})`);
+        // A reference lesson keeps its Laplace/Z ↔ 표본화 picker above the plot (switching between the two stays on the first
+        // screen, 2026-10-22), so its plot may start lower by that row (+ its 10 px margin).
+        const room = lesson === "reference" ? order.refBottom - order.refTop + 10 : 0;
+        if (lesson === "reference") assert.ok(order.refBottom !== null && order.refBottom <= order.plotTop + 1 && order.refBottom < order.inner * 0.4, `reference: the picker sits above the plot on the first screen (${JSON.stringify(order)})`);
+        assert.ok(order.plotTop < order.inner * 0.4 + room, `${lesson}: the plot starts high on the first screen (${JSON.stringify(order)})`);
         const ranges = await ev(`[...document.querySelectorAll("#signals-workspace input[type=range]")].filter((e) => e.getClientRects().length).map((e) => Math.round(e.getBoundingClientRect().height))`);
         assert.ok(ranges.every((h) => h >= 44), `${lesson}: sliders have a 44 px touch band (${ranges})`);
       }

@@ -4,8 +4,8 @@
 import { createPanesView } from './signals-panes-view.js';
 import { createSoundEngine } from './signals-sound-audio.js';
 import {
-  MIC_ONLY, MICROPHONE, PLOT_HARMONICS, TABLE_HARMONICS, measureHarmonics, soundFrame, spectrumCurve, strongestPeak, theoryRows,
-  waveWindow,
+  MIC_ONLY, MICROPHONE, PLOT_HARMONICS, TABLE_HARMONICS, measureHarmonics, sineLevelDb, soundFrame, spectrumCurve, strongestPeak,
+  theoryRows, waveWindow,
 } from './signals-sound-model.js';
 import { formatNumber } from './signals-util.js';
 
@@ -50,10 +50,13 @@ export function createSoundView({ doc, parent }) {
   let measured = null;  // the latest harmonic rows (kept after stopping until something changes)
   let raf = 0;
   let ticks = 0;
-  let busy = false;     // a start is in flight
-  let generation = 0;   // bumped by every stop, so a start that resolves after a stop does not keep sounding
+  // Bumped by every start, restart, stop and suspend: a start or restart that is still waiting (the microphone prompt, the
+  // fade of a restart) goes on only while its number is the current one; the engine lets go of anything that arrives later.
+  let generation = 0;
+  let pendingInput = null; // the input the waiting start asked for
 
   const config = (state) => ({ family: state.family, f0: state.params.f0, d: state.params.d ?? 0.25, gain: state.params.gain, input: state.params.input });
+  const sounding = () => root.dataset.signalsSound === 'running' || root.dataset.signalsSound === 'starting';
 
   function setMode(mode, text) {
     root.dataset.signalsSound = mode;
@@ -65,36 +68,42 @@ export function createSoundView({ doc, parent }) {
   }
   setMode('off', '소리 켜기를 누르면 테스트 음을 내고 스펙트럼을 잽니다. 처음에는 작은 소리로 시작합니다.');
 
+  // A newer start, a stop or suspend() bumps the generation; the flow that bumped it owns the engine from then on, so a
+  // stale flow only returns (the engine has already stopped whatever it received too late).
   async function start() {
-    if (!last || busy) return;
-    busy = true;
-    const mine = generation;
+    if (!last) return;
+    const mine = ++generation;
+    const current = () => mine === generation;
+    const wanted = config(last);
+    pendingInput = wanted.input;
     setMode('starting', '준비 중…');
     try {
-      await engine.start(config(last));
-      if (mine !== generation) { await engine.stop(); return; } // stopped (lesson left) while the microphone prompt was open
+      if (!(await engine.start(wanted, current)) || !current()) return;
       live = null;
+      // the sliders may have moved while the microphone prompt was open
+      if (engine.update(config(last))) { restart(); return; }
       setMode('running', last.params.input === MIC_ONLY ? '마이크를 듣는 중입니다.' : '재생 중입니다.');
       loop();
     } catch (error) {
+      if (!current()) return;
       await engine.stop();
-      setMode('error', error.message);
-    } finally {
-      busy = false;
+      if (current()) setMode('error', error.message);
     }
   }
 
   async function stop(text = '소리를 껐습니다. 표에는 마지막 측정이 남아 있습니다.') {
     generation += 1;
     if (raf) { win.cancelAnimationFrame(raf); raf = 0; }
-    const was = engine.running || root.dataset.signalsSound === 'starting';
-    await engine.stop();
+    if (sounding()) setMode('off', text);
+    const fade = engine.stop(); // the microphone tracks stop right here; the tone fades out over 80 ms
     live = null;
-    if (was) setMode('off', text);
     draw();
+    await fade;
+    root.dataset.signalsSoundContext = engine.contextState; // asleep now, unless a new start woke it again
   }
 
-  button.addEventListener('click', () => { if (engine.running) stop(); else start(); });
+  // "소리 끄기" is shown while running and while starting (the microphone prompt may be open): both stop.
+  button.addEventListener('click', () => { if (sounding()) stop(); else start(); });
 
   function loop() {
     if (raf) win.cancelAnimationFrame(raf);
@@ -120,16 +129,17 @@ export function createSoundView({ doc, parent }) {
       const peak = strongestPeak(spectrum, spec);
       const audible = peak && peak.db > -100;
       live = { curve: spectrumCurve(spectrum, spec, MIC_ONLY_SPAN, audible ? peak.db : -60), wave: waveWindow(wave, spec.sampleRate, audible ? peak.hz : 200), rows: [] };
-      status.textContent = audible ? `가장 센 성분 ${formatNumber(peak.hz, 4)} Hz (${formatNumber(peak.db, 3)} dBFS)` : '소리가 거의 들어오지 않습니다.';
+      status.textContent = audible ? `가장 센 성분 ${formatNumber(peak.hz, 4)} Hz (진폭 ${formatNumber(sineLevelDb(peak.db), 3)} dBFS)` : '소리가 거의 들어오지 않습니다.';
       root.dataset.signalsSoundPeakHz = audible ? String(peak.hz) : '';
     } else {
       const m = measureHarmonics(spectrum, spec, p.f0, PLOT_HARMONICS);
       measured = m.rows;
       live = { curve: spectrumCurve(spectrum, spec, (PLOT_HARMONICS + 0.5) * p.f0, m.fundamental), wave: waveWindow(wave, spec.sampleRate, p.f0), rows: m.rows };
       const weak = !Number.isFinite(m.fundamental) || m.fundamental < m.floor + 12;
+      // The fundamental as a sine amplitude (window-corrected); the noise floor only relative to it (noise would need another correction).
       status.textContent = weak && p.input === MICROPHONE
         ? '마이크에 테스트 음이 거의 안 들립니다: 이어폰을 빼고 스피커 음량을 올려 보세요.'
-        : `재생 중 · 기본파 ${formatNumber(m.fundamental, 3)} dBFS · 잡음 바닥 ${formatNumber(m.floor, 3)} dBFS`;
+        : `재생 중 · 기본파 진폭 ${formatNumber(sineLevelDb(m.fundamental), 3)} dBFS · 잡음 바닥 기본파 대비 ${formatNumber(m.floor - m.fundamental, 3)} dB`;
     }
     draw();
   }
@@ -159,9 +169,18 @@ export function createSoundView({ doc, parent }) {
     root.dataset.signalsSoundContext = engine.contextState;
   }
 
+  // Another input while sounding: fade the old graph out, then start the new one — unless something else (소리 끄기,
+  // leaving the lesson, another start) took over during the fade. Shown as "starting", so 소리 끄기 cancels it too.
   async function restart() {
-    await stop('입력이 바뀌어 다시 시작합니다.');
-    await start();
+    const mine = ++generation;
+    if (raf) { win.cancelAnimationFrame(raf); raf = 0; }
+    pendingInput = last.params.input;
+    setMode('starting', '입력이 바뀌어 다시 시작합니다.');
+    const fade = engine.stop();
+    live = null;
+    draw();
+    await fade;
+    if (mine === generation) start();
   }
 
   return {
@@ -176,16 +195,21 @@ export function createSoundView({ doc, parent }) {
           if (engine.update(config(state))) { restart(); return; }
           measured = null; // the old rows belong to the old tone; the next sample (≈50 ms) refills them
           if (live) live = { ...live, rows: [] };
+        } else {
+          if (!first) measured = null;
+          // Another input while a start is still waiting (e.g. the microphone prompt is open): ask again for the new one.
+          // The old request is given up; its tracks are stopped as soon as they arrive. Other changes are applied on arrival.
+          if (root.dataset.signalsSound === 'starting' && state.params.input !== pendingInput) start();
         }
-        else if (!first) measured = null;
       }
       draw();
     },
-    // Controller hook: the lesson, the workspace or the page went away.
+    // Controller hook: the lesson, the workspace or the page went away. Always cancels a start or restart still waiting.
     suspend() {
-      if (engine.running || root.dataset.signalsSound === 'starting') stop('다른 화면으로 옮겨 소리를 껐습니다.');
+      stop('다른 화면으로 옮겨 소리를 껐습니다.');
     },
     destroy() {
+      generation += 1;
       if (raf) win.cancelAnimationFrame(raf);
       engine.close();
       view.destroy();

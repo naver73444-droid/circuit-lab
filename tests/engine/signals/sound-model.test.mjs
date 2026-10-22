@@ -5,8 +5,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DB_FLOOR, INPUT_MODES, MIC_ONLY, MICROPHONE, SOUND_FAMILIES, harmonicLimit, harmonicRatio, levelDb, measureHarmonics, noiseFloor,
-  peakNear, pulseWaveCoefficients, soundFrame, soundLesson, spectrumCurve, strongestPeak, theoryRows, waveWindow,
+  DB_FLOOR, INPUT_MODES, MIC_ONLY, MICROPHONE, SINE_DB_CORRECTION, SOUND_FAMILIES, harmonicLimit, harmonicRatio, levelDb,
+  measureHarmonics, noiseFloor, peakNear, pulseWaveCoefficients, sineLevelDb, soundFrame, soundLesson, spectrumCurve, strongestPeak,
+  theoryRows, waveWindow,
 } from '../../../src/signals-sound-model.js';
 
 const TAU = 2 * Math.PI;
@@ -147,6 +148,22 @@ test('measurement: the harmonic picker reads relative levels within ±0.5 dB and
     }
     assert.ok(m.floor < m.fundamental - 60, `${f0}: the floor is far below the tone`);
   }
+});
+
+test('absolute level: sineLevelDb turns the windowed bin level back into the sine amplitude in dBFS; relative levels need no correction', () => {
+  const width = SPEC.sampleRate / SPEC.fftSize;
+  for (const amplitude of [1, 0.3, 0.05]) {
+    const f0 = 150 * width; // on a bin: exact
+    const m = measureHarmonics(analyserDb(tone([amplitude, 0, amplitude / 3], f0, SPEC.sampleRate, SPEC.fftSize, 0)), SPEC, f0, 3);
+    close(m.fundamental, 20 * Math.log10(amplitude * 0.21), 0.01, `A=${amplitude}: the raw bin is 13.6 dB under the amplitude`);
+    close(sineLevelDb(m.fundamental), 20 * Math.log10(amplitude), 0.01, `A=${amplitude}: corrected to dBFS`);
+    close(m.rows[2].rel, 20 * Math.log10(1 / 3), 0.05, `A=${amplitude}: k=3 relative level unchanged`);
+  }
+  // half a bin off: the Blackman main lobe loses 1.1 dB, the parabola through the neighbours wins most of it back
+  const off = measureHarmonics(analyserDb(tone([0.3], 150.5 * width, SPEC.sampleRate, SPEC.fftSize, 0)), SPEC, 150.5 * width, 1);
+  const error = sineLevelDb(off.fundamental) - 20 * Math.log10(0.3);
+  assert.ok(Math.abs(error) < 1.2, `half a bin off: ${error} dB`);
+  close(SINE_DB_CORRECTION, 13.555, 1e-3, 'the correction 20·log10(2/0.42)');
 });
 
 test('measurement helpers: strongest peak, peak refinement, median floor, the plotted curve and the wave window', () => {
