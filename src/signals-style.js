@@ -11,6 +11,14 @@ export const SIGNALS_STYLE = `
 .sg-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:0 0 8px}
 .sg-head h2{margin:0;font-size:18px;font-weight:650}
 .sg-head span{color:var(--muted);font-size:12px}
+.sg-steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:0 0 8px}
+.sg-steps button{min-height:38px;padding:4px 6px;font-size:13px;line-height:1.25;border-radius:10px;overflow-wrap:anywhere}
+.sg-steps button[aria-current=step]{background:var(--selection);border-color:var(--accent);font-weight:650}
+.sg-guide-body{margin:0 0 10px;max-width:72ch;font-size:14px;line-height:1.65}
+.sg-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:8px 0 0}
+.sg-chips>.sg-name{font-size:12px;color:var(--muted);margin-right:2px}
+.sg-chips button{min-height:34px;padding:3px 12px;border-radius:999px;font-size:13px}
+.sg-chips button[aria-pressed=true]{background:var(--selection);border-color:var(--accent)}
 .sg-dyn{display:contents}
 .sg-controls{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:flex-end;padding:10px 14px 12px;border:1px solid var(--line-soft);border-radius:12px;background:var(--panel)}
 .sg-ctl{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:0 10px;flex:1 1 230px;min-width:0}
@@ -116,6 +124,10 @@ export const SIGNALS_STYLE = `
 .sg-stage{order:1}.sg-hint{order:2}.sg-live{order:3}.sg-controls{order:4;margin-top:8px}.sg-read{order:5}.sg-status{order:6}.sg-details{order:7}
 .sg-tabs button,.sg-scrub>button,.sg-details>summary{min-height:44px}
 .sg-details>summary{padding:12px 2px}
+/* Guided mode on a phone: the step bar stays on top, the presets follow the controls, the explanation sits above the read line. */
+.sg-steps{gap:4px;margin-bottom:6px}.sg-steps button{min-height:44px;padding:2px;font-size:12px}
+.sg-chips{order:4}.sg-chips button{min-height:44px}
+.sg-guide-body{order:5;margin:10px 0 0;font-size:13.5px}
 .sg-ctl select,.sg-ref select,.sg-advanced input[type=text]{min-height:44px;font-size:16px}
 .sg-ctl.sg-choice select{min-height:44px}
 .sg-ctl>input[type=range]{height:44px}

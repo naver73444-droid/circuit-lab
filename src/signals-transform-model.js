@@ -3,6 +3,7 @@
 // Models describe a "frame" (curves, spans, arrows) that signals-panes-view draws.
 import { breakWraps, formatNumber, formatQuantity, jumpList, midpointRect, niceTicks, sampleCurve } from './signals-util.js';
 import { freqAxisControl, freqSlider, isOmega, toAxis, axisSymbol, axisUnit } from './signals-axis.js';
+import { GUIDE_STEPS, guideChips, guideControls, guideFormula, guideObserve, guideText } from './signals-transform-guide.js';
 
 export const TRANSFORM_FAMILIES = [
   { value: 'rect', label: '직사각 AΠ → sinc (Ex 4.12)' },
@@ -566,15 +567,50 @@ function readFor(family, params = {}) {
   return null;
 }
 
+// Guided mode ("따라가기", signals-transform-guide.js): its five steps ride on the family mechanism as the families
+// "guide:<step>", so tab memory, per-family slider memory and the control strip work unchanged. The free examples stay in
+// TRANSFORM_FAMILIES (the 예시 select); the controller shows the steps as a step bar instead.
+export const GUIDE_PREFIX = 'guide:';
+export const guideFamily = (stepId) => `${GUIDE_PREFIX}${stepId}`;
+export function guideStepOf(family) {
+  if (typeof family !== 'string' || !family.startsWith(GUIDE_PREFIX)) return null;
+  const id = family.slice(GUIDE_PREFIX.length);
+  return GUIDE_STEPS.some((step) => step.id === id) ? id : null;
+}
+
+const FREE_READ = '시간에서 좁게 만들수록 주파수에서 넓어지고, 넓게 만들수록 좁아집니다. t₀는 |X|를 그대로 두고 위상만 기울입니다.';
+
 export const transformLesson = {
   id: 'fourier',
   families: TRANSFORM_FAMILIES,
   initialFamily: 'rect',
-  controls: transformControls,
+  controls(family, params = {}) {
+    const step = guideStepOf(family);
+    return step ? guideControls(step, params) : transformControls(family, params);
+  },
   scrub: false,
   read(family, params) {
-    return READS[family] ?? readFor(family, params) ?? '시간에서 좁게 만들수록 주파수에서 넓어지고, 넓게 만들수록 좁아집니다. t₀는 |X|를 그대로 두고 위상만 기울입니다.';
+    const step = guideStepOf(family);
+    if (step) return guideText(step, params).tryText;
+    return READS[family] ?? readFor(family, params) ?? FREE_READ;
   },
-  formula: (family, params = {}) => `X(ω)=∫ x(t) e^(−jωt) dt; x(t)=(1/2π)∫ X(ω) e^(jωt) dω; X(f)=X(ω), ω=2πf; ${(isOmega(params.axis ?? 0) ? FORMULAS_W : FORMULAS_F)[family]}`,
-  describe: ({ family, params }) => describeTransform(family, params),
+  formula(family, params = {}) {
+    const step = guideStepOf(family);
+    if (step) return guideFormula(step, params);
+    return `X(ω)=∫ x(t) e^(−jωt) dt; x(t)=(1/2π)∫ X(ω) e^(jωt) dω; X(f)=X(ω), ω=2πf; ${(isOmega(params.axis ?? 0) ? FORMULAS_W : FORMULAS_F)[family]}`;
+  },
+  describe: ({ family, params }) => {
+    const step = guideStepOf(family);
+    return step ? guideObserve(step, params) : describeTransform(family, params);
+  },
+  guide: {
+    label: '따라가기', // the course order of week 6 (Ch 04-2); kept short so the half-width select fits a phone
+    freeLabel: '자유 실험',
+    steps: GUIDE_STEPS,
+    initialStep: GUIDE_STEPS[0].id,
+    family: guideFamily,
+    stepOf: guideStepOf,
+    chips: guideChips,
+    body: (stepId, params = {}) => guideText(stepId, params).body,
+  },
 };

@@ -8,6 +8,7 @@ import { SIGNALS_LESSONS, SIGNALS_REFERENCE, SIGNALS_TABS } from './signals-cour
 import { ensureCourseStyle } from './course-style.js';
 import { SIGNALS_STYLE } from './signals-style.js';
 import { appendCourseMath } from './course-math-view.js';
+import { createGuideBar } from './signals-guide-bar.js';
 import { clamp, controlDefaults, formatQuantity } from './signals-util.js';
 import { playbackCursor } from './signals-playback.js';
 import { CUSTOM_FIELDS, CUSTOM_HELP, customDefaults, parseCustomInput } from './signals-custom-input.js';
@@ -52,7 +53,7 @@ const DRAG_HINTS = {
   lti: (family) => (family === 'step' ? POINT_HINT : null),
   convolution: () => POINT_HINT,
   series: () => POINT_HINT,
-  fourier: (family) => (['rect', 'tri', 'exp', 'twoexp', 'gauss', 'sinc', 'dt'].includes(family) ? '● 시간 파형을 끌어 이동' : null),
+  fourier: (family) => (['rect', 'tri', 'exp', 'twoexp', 'gauss', 'sinc', 'dt', 'guide:shift'].includes(family) ? '● 시간 파형을 끌어 이동' : null),
   freq: (family) => (family === 'rc' || family === 'rlc' ? POINT_HINT : null),
   roc: () => '● 극점을 끌어 이동',
 };
@@ -89,6 +90,11 @@ export function createSignalsCourseController(host) {
   // ---------------------------------------------------------------- state
   const lessonOf = (id = lessonId) => REGISTRY[id][0];
   const defaultsOf = (lesson, family) => controlDefaults(lesson.controls(family, {}));
+  // A family the lesson knows: one of its examples, or (lessons with a guided mode) one of the guide steps.
+  const isFamily = (lesson, family) => (lesson.families ? lesson.families.some((f) => f.value === family) : family === lesson.initialFamily)
+    || Boolean(lesson.guide?.stepOf(family));
+  // The guide step on screen, or null in the free mode / lessons without a guide.
+  const guideStep = (state = current(), id = lessonId) => lessonOf(id).guide?.stepOf(state.family) ?? null;
   function makeState(id) {
     const lesson = lessonOf(id);
     const state = {
@@ -99,6 +105,9 @@ export function createSignalsCourseController(host) {
       extra: { drafts: customDefaults(), custom: null, customFamily: null, error: '' },
       note: '',
       playing: Boolean(lesson.scrub) && !motion?.matches,
+      // Lessons with a guided mode remember where each mode was left: the last step and the last free example.
+      lastGuide: null,
+      lastFree: null,
     };
     state.cursor = lesson.cursor?.(state.family, state.params, state.extra)?.initial ?? 0;
     return state;
@@ -113,6 +122,7 @@ export function createSignalsCourseController(host) {
     const lessons = {};
     for (const [id, state] of states) {
       lessons[id] = { family: state.family, params: state.params, saved: state.saved, cursor: state.cursor, drafts: state.extra.drafts, playing: state.playing };
+      if (lessonOf(id).guide) Object.assign(lessons[id], { lastGuide: state.lastGuide, lastFree: state.lastFree });
     }
     return { version: 1, lessonId, lastReference, lessons };
   }
@@ -131,7 +141,7 @@ export function createSignalsCourseController(host) {
   function restore(saved) {
     const data = storedObject(saved);
     if (!data || data.version !== 1) return;
-    const known = (lesson, family) => (lesson.families ? lesson.families.some((f) => f.value === family) : family === lesson.initialFamily);
+    const known = (lesson, family) => isFamily(lesson, family);
     for (const [id, state] of states) {
       const stored = storedObject(storedObject(data.lessons)?.[id]);
       if (!stored) continue;
@@ -148,6 +158,10 @@ export function createSignalsCourseController(host) {
       }
       state.cursor = storedNumber(stored.cursor, state.cursor);
       if (stored.playing === false) state.playing = false;
+      if (lesson.guide) {
+        if (lesson.guide.steps.some((s) => s.id === stored.lastGuide)) state.lastGuide = stored.lastGuide;
+        if (lesson.families?.some((f) => f.value === stored.lastFree)) state.lastFree = stored.lastFree;
+      }
       // A typed convolution input is parsed (and its cursor checked) when the lesson is shown.
       if (id === 'convolution' && isCustomFamily(state.family)) state.extra.lastCustomFamily = state.family; // keeps the stored cursor
       else clampCursor(state, id);
@@ -197,7 +211,13 @@ export function createSignalsCourseController(host) {
     for (const id of SIGNALS_REFERENCE.lessons) el('option', { value: id }, ui.referenceSelect, SIGNALS_LESSONS.find((l) => l.id === id).short);
     ui.head = el('div', { class: 'sg-head' }, ui.root);
     ui.title = el('h2', {}, ui.head);
+    // Guided mode (only lessons with `guide`): a step bar and the step's explanation above the controls, quick presets
+    // ("해 보기") right under them. Hidden in the free mode.
+    ui.steps = el('nav', { class: 'sg-steps', 'aria-label': '따라가기 단계', 'data-signals-steps': '', hidden: '' }, ui.root);
+    ui.guideBody = el('p', { class: 'sg-guide-body', 'data-signals-guide-body': '', hidden: '' }, ui.root);
     ui.controls = el('section', { class: 'sg-controls', 'aria-label': '조건 슬라이더' }, ui.root);
+    ui.chips = el('div', { class: 'sg-chips', 'data-signals-chips': '', hidden: '' }, ui.root);
+    ui.guideBar = createGuideBar({ doc, steps: ui.steps, body: ui.guideBody, chips: ui.chips });
     ui.stage = el('div', { class: 'sg-stage' }, ui.root);
     watchTouchDrags();
     ui.read = el('p', { class: 'sg-read', 'data-signals-read': '' }, ui.root);
@@ -274,7 +294,17 @@ export function createSignalsCourseController(host) {
     const state = current();
     ui.controls.replaceChildren();
     ui.sliders = new Map();
-    if (lesson.families) {
+    ui.mode = null;
+    if (lesson.guide) {
+      // 보기: the free examples or the guided steps (a choice, so a select like the other choices)
+      const wrap = el('label', { class: 'sg-ctl sg-choice' }, ui.controls);
+      el('span', { class: 'sg-name' }, wrap, '보기');
+      ui.mode = el('select', { 'data-signals-mode': '', 'aria-label': '보기' }, wrap);
+      el('option', { value: 'free' }, ui.mode, lesson.guide.freeLabel);
+      el('option', { value: 'guide' }, ui.mode, lesson.guide.label);
+      ui.mode.value = guideStep(state) ? 'guide' : 'free';
+    }
+    if (lesson.families && !guideStep(state)) {
       const wrap = el('label', { class: 'sg-ctl' }, ui.controls);
       el('span', { class: 'sg-name' }, wrap, '예시');
       ui.select = el('select', { 'data-signals-family': '' }, wrap);
@@ -376,12 +406,12 @@ export function createSignalsCourseController(host) {
     if (later) { lastReference = id; ui.referenceSelect.value = id; }
     ui.referenceRow.hidden = !later;
     if (later) ui.referenceTab.setAttribute('aria-current', 'step'); else ui.referenceTab.removeAttribute('aria-current');
-    ui.title.textContent = SIGNALS_LESSONS.find((l) => l.id === id).title;
     ui.read.textContent = readText(state);
     ui.advanced.hidden = id !== 'convolution';
     if (id === 'convolution' && isCustomFamily(state.family)) applyCustom();
     clampCursor(state);
     buildControls();
+    syncGuide();
     layoutWidth = 0;
     ui.formulaSource = null;
     ui.status.textContent = state.extra.error;
@@ -389,15 +419,19 @@ export function createSignalsCourseController(host) {
     session?.save();
   }
 
-  function setFamily(family) {
+  // `axis`: the guided mode carries the chosen frequency axis between steps and modes (the 예시 select does not).
+  function setFamily(family, { axis } = {}) {
     const state = current();
     const lesson = lessonOf();
-    if (!lesson.families?.some((f) => f.value === family) || family === state.family) return;
+    if (!isFamily(lesson, family) || family === state.family) return;
     stopPlayback();
     state.saved[state.family] = { params: state.params, cursor: state.cursor };
     state.family = family;
     const restored = state.saved[family];
     state.params = restored?.params ?? defaultsOf(lesson, family);
+    if (Number.isInteger(axis) && Object.hasOwn(state.params, 'axis')) state.params = { ...state.params, axis };
+    const step = lesson.guide?.stepOf(family);
+    if (step) state.lastGuide = step;
     state.note = '';
     if (lessonId === 'convolution' && isCustomFamily(family)) applyCustom();
     const spec = cursorSpec(state);
@@ -410,6 +444,43 @@ export function createSignalsCourseController(host) {
     if (lessonId === 'convolution' && isCustomFamily(family)) ui.advanced.open = true;
     autoPlay();
     schedule();
+  }
+
+  // ---------------------------------------------------------------- guided mode (lessons with `guide`)
+  // 보기 select: the free examples or the guided steps. Each side resumes where it was left; the frequency axis carries over.
+  function setMode(mode) {
+    const lesson = lessonOf();
+    const state = current();
+    if (!lesson.guide || (mode === 'guide') === Boolean(guideStep(state))) return;
+    const axis = state.params.axis;
+    if (mode === 'guide') {
+      state.lastFree = state.family;
+      setFamily(lesson.guide.family(state.lastGuide ?? lesson.guide.initialStep), { axis });
+    } else {
+      setFamily(state.lastFree ?? lesson.initialFamily, { axis });
+    }
+    buildControls();
+    syncGuide();
+  }
+
+  function setGuideStep(stepId) {
+    const lesson = lessonOf();
+    const state = current();
+    if (!lesson.guide?.steps.some((s) => s.id === stepId) || guideStep(state) === stepId) return;
+    setFamily(lesson.guide.family(stepId), { axis: state.params.axis });
+    syncGuide();
+  }
+
+  // Heading plus the guide strip (signals-guide-bar.js); everything guide-only hides in the free mode and in other lessons.
+  function syncGuide() {
+    const lesson = lessonOf();
+    const state = current();
+    const step = guideStep(state);
+    const meta = SIGNALS_LESSONS.find((l) => l.id === lessonId);
+    const stepMeta = step ? lesson.guide.steps.find((s) => s.id === step) : null;
+    const title = stepMeta ? `${meta.tab} 따라가기 · ${stepMeta.title}` : meta.title;
+    if (ui.title.textContent !== title) ui.title.textContent = title;
+    ui.guideBar.sync(lesson.guide ?? null, step, state.params);
   }
 
   // views and the keyboard report changes as patches: { cursor?, params? }
@@ -514,6 +585,7 @@ export function createSignalsCourseController(host) {
     if (ui.read.textContent !== read) ui.read.textContent = read;
     const hint = DRAG_HINTS[lessonId]?.(state.family) ?? '';
     if (ui.hint.textContent !== hint) { ui.hint.textContent = hint; ui.hint.hidden = !hint; }
+    syncGuide();
     const width = Math.floor(ui.stage.clientWidth);
     if (width > 0 && width !== layoutWidth) { layoutWidth = width; view.layout(width); }
     if (!layoutWidth) return;
@@ -562,6 +634,7 @@ export function createSignalsCourseController(host) {
   function onChange(event) {
     if (!active || destroyed) return;
     if (event.target.dataset?.signalsFamily !== undefined) setFamily(event.target.value);
+    else if (event.target.dataset?.signalsMode !== undefined) setMode(event.target.value);
     else if (event.target.dataset?.signalsReference !== undefined && SIGNALS_REFERENCE.lessons.includes(event.target.value)) { showLesson(event.target.value); paint(); }
   }
 
@@ -577,6 +650,12 @@ export function createSignalsCourseController(host) {
     } else if (button.hasAttribute('data-signals-play')) {
       if (playTimer) stopPlayback(true);
       else { current().playing = true; startPlayback(); }
+    } else if (button.dataset.signalsStep) {
+      setGuideStep(button.dataset.signalsStep);
+    } else if (button.dataset.signalsChip !== undefined) {
+      const step = guideStep();
+      const chip = step ? lessonOf().guide.chips(step)[Number(button.dataset.signalsChip)] : null;
+      if (chip) applyPatch({ params: chip.params });
     }
   }
 
@@ -662,6 +741,8 @@ export function createSignalsCourseController(host) {
       return JSON.parse(JSON.stringify({
         active, destroyed, lessonId,
         family: state.family,
+        mode: lesson.guide ? (guideStep(state) ? 'guide' : 'free') : null,
+        guideStep: guideStep(state),
         options: { family: state.family },
         params: state.params,
         drafts: state.extra.drafts,
