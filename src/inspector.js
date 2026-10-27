@@ -8,16 +8,16 @@ import { describeSelection, selectedItems, setSingleSelection } from "./selectio
 import { yDeltaCommandState } from "./y-delta-circuit.js";
 import { acScale, amplitudeText, normalizeAcBasis } from "./ac-basis.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
-import { actualCurrentText, currentReferenceSign, isCurrentReferenceFlipped, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection, signedCurrent } from "./current-direction.js";
+import { actualCurrentText, clampWinding, currentReferenceSign, isCurrentReferenceFlipped, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection, signedCurrent, windingCount } from "./current-direction.js";
 import { selectAllOnUserFocus } from "./field-select.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
-const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기" };
+const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기", THREE_PHASE: "3상 전원 (Y)" };
 
 /** Props that hold text choices, not numbers: they skip the numeric input classification. */
-const TEXT_PROPS = new Set(["ref", "mode", "coupling", "dots"]);
+const TEXT_PROPS = new Set(["ref", "mode", "coupling", "dots", "sequence"]);
 /** Props that must be strictly positive (R, C, L value; coupled-inductor L1/L2; transformer ratio n). */
-const needsPositive = (type, key) => (["R", "C", "L"].includes(type) && key === "value") || (type === "COUPLED_L" && (key === "L1" || key === "L2")) || (type === "XFMR_IDEAL" && key === "n");
+const needsPositive = (type, key) => (["R", "C", "L"].includes(type) && key === "value") || (type === "COUPLED_L" && (key === "L1" || key === "L2")) || (type === "XFMR_IDEAL" && key === "n") || (type === "THREE_PHASE" && key === "frequency");
 
 export function createInspector(deps) {
   const { state, elements, workspace, inputDrafts, phasorView, mutate, currentConnections, synchronizeIntent, cancelScheduledRun, markInputDirty, scheduleAutoRun, renderPhasorLearning,
@@ -189,6 +189,20 @@ export function createInspector(deps) {
       + `<p class="model-note">v1 = L1·di1/dt + M·di2/dt, v2 = M·di1/dt + L2·di2/dt. 전류 방향은 화면 기준으로 고정입니다: i1은 1a→1b, i2는 2a→2b(각각 위 핀으로 들어가 아래 핀으로 나가는 방향). 점 위치는 전류 방향이 아니라 M 항의 부호에만 영향을 줍니다: 점이 같은 쪽(1a, 2a)이면 +M, 반대쪽(1a, 2b)이면 −M. DC에서는 두 코일이 모두 단락이고 AC에서는 jωL1, jωL2, jωM으로 계산합니다. 1차와 2차 회로는 서로 절연되어 각각 GND 기준이 필요합니다. 전류 프로브는 I 프로브 도구로 부품의 왼쪽 절반(I(K.1)) 또는 오른쪽 절반(I(K.2))을 누르세요.</p>`;
   }
 
+  /** Fields of a THREE_PHASE part: phase voltage peak (with the shown-basis conversion), reference phase, sequence and the time-response frequency. */
+  function threePhaseFields(p) {
+    let peakMagnitude = NaN;
+    try { peakMagnitude = parseValue(p.amplitude ?? 0); } catch { /* an invalid draft has no conversion */ }
+    const basisHint = Number.isFinite(peakMagnitude) ? `표시 기준 V (${normalizeAcBasis(state.acBasis)}) = ${amplitudeText(peakMagnitude, state.acBasis)} · 입력 칸은 항상 peak` : "";
+    const acActive = state.settings.analysis === "ac";
+    return `<fieldset class="source-group active-group"><legend>3상 전원 (Y 결선)</legend>`
+      + field("상전압 크기 (Vpk)", "amplitude", p.amplitude ?? "169.7056274847714", basisHint, null, null, true)
+      + field("기준 위상 (°)", "phase", p.phase ?? "0", "a상 위상 · cos 기준", null, null, true)
+      + field("상순서", "sequence", p.sequence === "acb" ? "acb" : "abc", "", [["abc", "abc (정상순, b가 120° 뒤짐)"], ["acb", "acb (역상순, b가 120° 앞섬)"]], null, true)
+      + field("주파수 (Hz)", "frequency", p.frequency ?? "60", acActive ? "AC 해석은 자기 주파수로 풉니다" : "시간응답의 주파수")
+      + `<p class="model-note">핀 1~3은 a·b·c, 핀 4는 중성점 n입니다. 세 개의 AC 전압원이 n을 공통으로 쓰는 것과 같습니다: Van = Vp∠φ, Vbn = Vp∠(φ∓120°), Vcn = Vp∠(φ±120°). DC에서는 세 상 모두 0 V입니다.</p></fieldset>`;
+  }
+
   /** Fields of an XFMR_IDEAL part: turns ratio n = N2/N1 and dot placement; the sign convention follows the lecture table. */
   function transformerFields(p) {
     return field("권수비 n = N2/N1", "n", p.n ?? "2", "1 : n · 2차/1차 권수비 (n > 0)")
@@ -228,12 +242,12 @@ export function createInspector(deps) {
 
   function currentReferenceMarkup(component) {
     if (component.type === "GND") return "";
-    const windings = isMagneticPart(component) ? [1, 2] : [1];
+    const windings = Array.from({ length: windingCount(component) }, (_, index) => index + 1);
     const geometryVersion = circuitGeometryVersion(state.circuit);
     const rows = windings.map((winding) => {
       const reference = referenceDirection(component, geometryVersion, winding);
       const flipped = isCurrentReferenceFlipped(component, winding);
-      const name = windings.length > 1 ? (winding === 2 ? "2차 " : "1차 ") : "";
+      const name = windings.length === 1 ? "" : component.type === "THREE_PHASE" ? `${["a", "b", "c"][winding - 1]}상 ` : (winding === 2 ? "2차 " : "1차 ");
       const value = currentResultText(component, winding);
       return `<div class="current-reference-row"><span>${name}기준 <b>${escapeHtml(reference?.label ?? "")}</b>${flipped ? " · 뒤집음" : ""}`
         + `${value ? `<output class="current-reference-value" data-current-value="${winding}">${escapeHtml(value)}</output>` : ""}</span>`
@@ -298,7 +312,7 @@ export function createInspector(deps) {
       const summary = describeSelection(items);
       const parts = [summary.components && `부품 ${summary.components}`, summary.wires && `배선 ${summary.wires}`, summary.junctions && `접속점 ${summary.junctions}`].filter(Boolean).join(" · ");
       const yDelta = yDeltaCommandState(state.circuit, items);
-      const yDeltaAttributes = yDelta.enabled ? ` title="Y와 Δ 저항망을 서로 바꿉니다 (Y)"` : ` disabled title="${escapeHtml(yDelta.reason)}"`;
+      const yDeltaAttributes = yDelta.enabled ? ` title="Y와 Δ 망(같은 종류 R·L·C 3개)을 서로 바꿉니다 (Y)"` : ` disabled title="${escapeHtml(yDelta.reason)}"`;
       const yDeltaButton = yDelta.visible ? `<button type="button" data-multi-action="ydelta"${yDeltaAttributes}>${yDelta.label}</button>` : "";
       const yDeltaHelp = yDelta.visible && !yDelta.enabled ? `<p class="field-help" data-ydelta-reason>${escapeHtml(yDelta.reason)}</p>` : "";
       elements["selection-label"].textContent = `${items.length}개 선택`;
@@ -390,6 +404,7 @@ export function createInspector(deps) {
     if (isMagneticPart(component)) html += currentReferenceMarkup(component);
     if (component.type === "COUPLED_L") html += couplingFields(p);
     if (component.type === "XFMR_IDEAL") html += transformerFields(p);
+    if (component.type === "THREE_PHASE") html += threePhaseFields(p);
     if (component.type === "GND") html += `<p class="field-help">0 V 기준점입니다.</p>`;
     if (!isMagneticPart(component)) html += currentReferenceMarkup(component);
     html += sweepMarkup(component, state);
@@ -445,7 +460,7 @@ export function createInspector(deps) {
     controlDirection?.addEventListener("change", commitControlReference);
     elements["inspector-content"].querySelectorAll("[data-flip-current]").forEach((button) => button.addEventListener("click", () => {
       if (!isCircuitUiActive()) return;
-      flipCurrentReference?.(selected.id, Number(button.dataset.flipCurrent) === 2 ? 2 : 1);
+      flipCurrentReference?.(selected.id, clampWinding(state.circuit.components.find((item) => item.id === selected.id), Number(button.dataset.flipCurrent)));
       renderInspector();
     }));
     restoreInspectorFocus(savedFocus);

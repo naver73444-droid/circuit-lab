@@ -12,7 +12,7 @@ import {
   snapPoint,
 } from "./circuit-geometry.js";
 import { createRoutingContext, previewRoute } from "./wire-router.js";
-import { actualCurrentDirection, currentArrowGeometry, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection } from "./current-direction.js";
+import { actualCurrentDirection, clampWinding, currentArrowGeometry, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection } from "./current-direction.js";
 import { flowSampleIndex } from "./wire-current-model.js";
 import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
@@ -84,6 +84,14 @@ export function magneticSymbolMarkup(component) {
   const bumps = (sweep) => `a5 5 0 0 ${sweep} 0 10`.repeat(4);
   const core = component.type === "XFMR_IDEAL" ? `<path class="symbol-line" d="M-3-20V20M3-20V20"/>` : `<text class="controlled-pin-label" x="0" y="4" style="text-anchor:middle">M</text>`;
   return `<path class="lead" d="M-40-20H-14M-40 20H-14M14-20H40M14 20H40"/><path class="symbol-line" d="M-14-20${bumps(0)}M14-20${bumps(1)}"/>${core}<circle class="ideal-mark" cx="-31" cy="-12" r="2.8"/><circle class="ideal-mark" cx="31" cy="${opposite ? 12 : -12}" r="2.8"/>`;
+}
+
+/** Balanced three-phase source (Y): a box with the phase pins a, b, c on the right, the neutral n on the left, "3φ" and one sine in the middle. */
+export function threePhaseSymbolMarkup() {
+  const pinName = (text, x, y) => `<text class="controlled-pin-label" x="${x}" y="${y}" style="text-anchor:middle">${text}</text>`;
+  return `<path class="lead" d="M40-40H24M40 0H24M40 40H24M-24 0H-40"/><rect class="body" x="-24" y="-52" width="48" height="104" rx="6"/>`
+    + `<path class="symbol-line" d="M-12 14C-8 2-4 2 0 14S8 26 12 14"/><text class="controlled-pin-label" x="0" y="-8" style="text-anchor:middle">3φ</text>`
+    + pinName("a", 16, -36) + pinName("b", 16, 4) + pinName("c", 16, 44) + pinName("n", -16, 4);
 }
 
 /**
@@ -185,7 +193,7 @@ export function createCanvasRenderer(deps) {
 
   function componentMarkup(component, connection) {
     const ref = escapeHtml(component.props?.ref ?? component.id);
-    const sourceDescriptor = ["V", "I", "VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component, state.settings.analysis) : null;
+    const sourceDescriptor = ["V", "I", "VCVS", "VCCS", "CCCS", "CCVS", "THREE_PHASE"].includes(component.type) ? sourceInlineDescriptor(component, state.settings.analysis) : null;
     const magnetic = component.type === "COUPLED_L" || component.type === "XFMR_IDEAL";
     const valueLabel = magnetic ? magneticValueLabel(component) : formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
     // A source's wording ("DC bias ") is its own tspan, hidden when the labels have to grow (svg[data-text-compact]); textContent is unchanged.
@@ -219,6 +227,7 @@ export function createCanvasRenderer(deps) {
     if (component.type === "CURRENT_SENSOR") symbol = `<path class="lead" d="M-40 0H-19M19 0H40"/><circle class="body" cx="0" cy="0" r="19"/><path class="symbol-line" d="M-11 0H11M5-6l6 6-6 6"/><text class="controlled-pin-label" x="-35" y="-7">p</text><text class="controlled-pin-label" x="28" y="-7">n</text>`;
     if (component.type === "CCCS" || component.type === "CCVS") symbol = `<path class="lead" d="M-40 0H-24M24 0H40"/><path class="body" d="M-24 0L0-24 24 0 0 24Z"/>${component.type === "CCCS" ? `<path class="symbol-line" d="M-11 0H11M5-6l6 6-6 6"/>` : `<path class="symbol-line" d="M-14 0h8M-10-4v8M6 0h8"/>`}<text class="controlled-pin-label" x="-35" y="-7">p</text><text class="controlled-pin-label" x="28" y="-7">n</text>`;
     if (magnetic) symbol = magneticSymbolMarkup(component);
+    if (component.type === "THREE_PHASE") symbol = threePhaseSymbolMarkup();
     const pins = Array.from({ length: pinCount(component.type) }, (_, pin) => {
       const pos = localPin(component.type, pin);
       const pending = state.pendingPin?.componentId === component.id && state.pendingPin?.pin === pin ? " pending" : "";
@@ -237,7 +246,7 @@ export function createCanvasRenderer(deps) {
     const probed = probe ? " probed" : "";
     const color = probe ? ` style="--probe-color:${traceColor(probe.color)}"` : "";
     const arrowSample = currentArrowSample();
-    const directionMarkup = currentProbes.map((item) => currentArrowMarkup(component, item.winding === 2 ? 2 : 1, geometryVersion, arrowSample)).join("");
+    const directionMarkup = currentProbes.map((item) => currentArrowMarkup(component, clampWinding(component, item.winding), geometryVersion, arrowSample)).join("");
     const connectionStatus = connection?.status ?? "solver-check";
     const badgeRotation = -Number(component.rotation ?? 0);
     const connectionMarkup = connectionStatus !== "referenced" ? `<rect class="connection-halo status-${escapeHtml(connectionStatus)}" x="-47" y="-47" width="94" height="94" rx="3"/><g class="connection-badge status-${escapeHtml(connectionStatus)}" data-show-connection="${escapeHtml(component.id)}" role="button" tabindex="0" aria-label="${ref} 연결 상태 보기" transform="translate(-35 -34) rotate(${badgeRotation})"><title>${escapeHtml(connection?.label ?? "연결 상태 보기")} · 클릭하여 설명</title><circle r="11"/><text y="4">${escapeHtml(connection?.badge ?? "?")}</text></g>` : "";
@@ -245,9 +254,11 @@ export function createCanvasRenderer(deps) {
     const deleteMarkup = selected && selectedKeys(state).size === 1 ? deleteButtonMarkup(component) : "";
     const upright = -Number(component.rotation ?? 0);
     const vertical = Math.abs(Math.sin(Number(component.rotation ?? 0) * Math.PI / 180)) > .7;
-    const labelX = vertical ? 30 : 0;
-    const labelY = vertical ? -7 : -29;
-    const valueY = vertical ? 12 : 35;
+    // The three-phase source is taller than the other parts (its box spans ±52), so its labels sit further out.
+    const tall = component.type === "THREE_PHASE";
+    const labelX = vertical ? (tall ? 60 : 30) : 0;
+    const labelY = vertical ? -7 : (tall ? -58 : -29);
+    const valueY = vertical ? 12 : (tall ? 64 : 35);
     const anchor = vertical ? "start" : "middle";
     // Label groups are scaled around their anchor so they keep a readable screen size (see syncHitSizes): the name grows up from its
     // baseline, the value block hangs from its top edge (text-before-edge, where the 12-unit text's top always was) and grows down, away
@@ -315,7 +326,7 @@ export function createCanvasRenderer(deps) {
     const middle = { x: (arrow.start.x + arrow.end.x) / 2, y: (arrow.start.y + arrow.end.y) / 2 };
     // A winding arrow runs beside its coil, between two pins and above the value label: its text goes on the outer side of the arrow.
     // Other parts put it past the tip (their sides hold the ref and value labels); "0 A" sits where the reference tip would be.
-    const outward = isMagneticPart(component) ? { x: Math.sign(middle.x) || 1, y: 0 } : null;
+    const outward = component.type === "THREE_PHASE" ? { x: 1, y: 0 } : isMagneticPart(component) ? { x: Math.sign(middle.x) || 1, y: 0 } : null;
     const label = outward ? arrowTextMarkup(component, { x: middle.x + outward.x * 2, y: middle.y }, outward, text, "current-value")
       : arrowTextMarkup(component, arrow.end, arrow.unit, text, "current-value");
     const key = `${mode}|${direction?.label ?? reference.label}|${text}|${component.rotation ?? 0}`;
@@ -337,7 +348,7 @@ export function createCanvasRenderer(deps) {
         const component = byId.get(group.dataset.currentFor);
         if (!component) continue;
         const holder = document.createElementNS("http://www.w3.org/2000/svg", "g");
-        holder.innerHTML = currentArrowMarkup(component, Number(group.dataset.winding) === 2 ? 2 : 1, geometryVersion, sample);
+        holder.innerHTML = currentArrowMarkup(component, clampWinding(component, Number(group.dataset.winding)), geometryVersion, sample);
         const next = holder.firstElementChild;
         // An unchanged arrow is left alone (no DOM write while the cursor moves over a flat stretch or the DC point is re-shown).
         if (next?.dataset.currentKey === group.dataset.currentKey) continue;

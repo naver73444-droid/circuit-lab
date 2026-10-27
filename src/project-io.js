@@ -106,6 +106,8 @@ export function createProjectIO(deps) {
       diode: [{ kind: "voltage", componentId: "R1", pin: 0 }], opamp: [{ kind: "voltage", componentId: "U1", pin: 2 }],
       "coupled-coils": [{ kind: "current", componentId: "K1" }, { kind: "current", componentId: "K1", winding: 2 }, { kind: "current", componentId: "R1" }],
       "ideal-transformer": [{ kind: "current", componentId: "T1" }, { kind: "voltage", componentId: "R2", pin: 0 }],
+      "three-phase-yy": [{ kind: "current", componentId: "RLa" }, { kind: "current", componentId: "RLb" }, { kind: "current", componentId: "RLc" }],
+      "three-phase-y-delta": [{ kind: "current", componentId: "Sa" }, { kind: "current", componentId: "Sb" }, { kind: "current", componentId: "RAB" }],
     };
     mutate(() => {
       resetProjectSession();
@@ -121,7 +123,7 @@ export function createProjectIO(deps) {
       state.probes = (defaults[id] ?? []).map((probe, index) => {
         const component = state.circuit.components.find((item) => item.id === probe.componentId);
         if (probe.kind === "voltage") return { ...probe, key: `V:${probe.componentId}:${probe.pin}`, label: `V(${component.props.ref}.${probe.pin + 1})`, color: PROBE_COLORS[index] };
-        const key = `I:${probe.componentId}${probe.winding === 2 ? ":2" : ""}`;
+        const key = `I:${probe.componentId}${probe.winding > 1 ? `:${probe.winding}` : ""}`;
         return { ...probe, key, label: currentProbeLabel(component, circuitGeometryVersion(state.circuit), probe.winding), color: PROBE_COLORS[index] };
       });
       state.learningId = ["rc-lowpass", "rl", "rlc", "parallel-sine"].includes(id) ? id : null;

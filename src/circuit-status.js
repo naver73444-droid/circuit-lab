@@ -3,7 +3,7 @@ import { endpointKey, junctionKey, parseValue, pinCount, pinKey, validateCircuit
 
 
 function conductiveForAnalysis(component, analysis, frequency) {
-  if (["R", "V", "L", "D", "VCVS", "CURRENT_SENSOR", "CCVS", "COUPLED_L", "XFMR_IDEAL"].includes(component.type)) return true;
+  if (["R", "V", "L", "D", "VCVS", "CURRENT_SENSOR", "CCVS", "COUPLED_L", "XFMR_IDEAL", "THREE_PHASE"].includes(component.type)) return true;
   if (component.type === "C") return analysis === "transient" || (analysis === "ac" && frequency > 0);
   return false;
 }

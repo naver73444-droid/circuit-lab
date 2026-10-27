@@ -83,7 +83,7 @@ const DEFAULTS = {
   COUPLED_L: { ref: "K", L1: "10m", L2: "10m", coupling: "k", k: "0.5", M: "5m", dots: "same", ic1: "0", ic2: "0" },
   XFMR_IDEAL: { ref: "T", n: "2", dots: "same" },
   // 평형 3상 전압원(Y 결선): 핀 a·b·c·n. amplitude는 상전압 peak, phase는 a상 기준 위상(cos 기준, AC 페이저와 같음), sequence는 abc/acb.
-  THREE_PHASE: { ref: "VP", amplitude: "169.7056", frequency: "60", phase: "0", sequence: "abc" },
+  THREE_PHASE: { ref: "VP", amplitude: "169.7056274847714", frequency: "60", phase: "0", sequence: "abc" },
 };
 
 export function componentDefaults(type, index = 1) {

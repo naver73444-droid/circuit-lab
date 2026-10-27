@@ -10,7 +10,7 @@
  * AC 페이저는 표시 기준 방향(부품별로 뒤집을 수 있음, current-direction.js) 기준이다.
  * AC는 페이저이며 크기는 peak(최댓값) 기준이다(앱의 AC 설정과 동일).
  */
-import { buildTopology, pinCount, secondaryCurrentKey } from "./circuit-engine.js";
+import { buildTopology, phaseCurrentKey, pinCount, secondaryCurrentKey } from "./circuit-engine.js";
 import { actualCurrentDirection, currentReferenceSign, pointCurrentScale, referenceDirection, signedCurrent } from "./current-direction.js";
 import { acMagnitudeLevel, acPhaseDegrees } from "./plot-format.js";
 import { averagePowerLabel, normalizeAcBasis, scaleComplex } from "./ac-basis.js";
@@ -19,7 +19,7 @@ import { engineering, nearestSampleIndex } from "./scope-model.js";
 const TYPE_NAMES = {
   R: "저항", C: "커패시터", L: "인덕터", V: "전압원", I: "전류원", D: "다이오드", GND: "접지",
   OPAMP: "OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "VCVS", VCCS: "VCCS", CURRENT_SENSOR: "전류 센서", CCCS: "CCCS", CCVS: "CCVS",
-  COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기",
+  COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기", THREE_PHASE: "3상 전원",
 };
 
 const isComplex = (value) => value !== null && typeof value === "object" && Number.isFinite(value.re) && Number.isFinite(value.im);
@@ -226,6 +226,42 @@ function magneticReadout({ base, component, point, pins, ref, title, sample, acB
   return { ...base, current, voltage, current2, voltage2, power, lines, text: `${title} — ${lines.join(" · ")}` };
 }
 
+/**
+ * 3상 전원 호버: 상 a·b·c 전류(엔진 기준 a→n, b→n, c→n)와 상전압 V(a)−V(n) 등. `current`/`voltage`는 a상, `current2`/`voltage2`는 b상,
+ * `current3`/`voltage3`는 c상. DC·시간응답에서는 세 상의 합 전력 Σ v·i도 준다(음수면 공급).
+ */
+function threePhaseReadout({ base, component, point, pins, ref, title, sample, acBasis = "peak" }) {
+  const scale = sample.mode === "ac" ? 0 : pointCurrentScale(point?.componentCurrents);
+  const names = ["a", "b", "c"];
+  const phases = names.map((name, index) => {
+    const raw = own(point?.componentCurrents, phaseCurrentKey(component.id, index + 1));
+    const a = pins[index].nodeId === null ? null : nodeValue(point, pins[index].nodeId);
+    const n = pins[3].nodeId === null ? null : nodeValue(point, pins[3].nodeId);
+    const across = a === null || n === null ? null : isComplex(a) ? csub(a, n) : a - n;
+    return {
+      raw, across,
+      current: currentEntry(component, raw, { winding: index + 1, acBasis, scale }),
+      voltage: across === null ? null : { ...quantity(across, "V", acBasis), label: `V(${ref}.${name}) − V(${ref}.n)` },
+    };
+  });
+  let power = null;
+  if (sample.mode !== "ac" && phases.every((phase) => Number.isFinite(phase.raw) && Number.isFinite(phase.across))) {
+    const value = phases.reduce((sum, phase) => sum + phase.across * phase.raw, 0);
+    power = { value, unit: "W", text: engineering(Math.abs(value), "W"), label: Math.abs(value) < 1e-15 ? "전력" : value > 0 ? "흡수 전력(3상 합)" : "공급 전력(3상 합)", kind: Math.abs(value) < 1e-15 ? "none" : value > 0 ? "absorbed" : "supplied", signed: value };
+  }
+  const lines = [];
+  phases.forEach((phase, index) => {
+    if (phase.current) lines.push(`${names[index]}상 전류 ${phase.current.text}${phase.current.direction ? ` (${phase.current.direction})` : ""}`);
+    if (phase.voltage) lines.push(`${names[index]}상 전압 ${phase.voltage.text}`);
+  });
+  if (power) lines.push(`${power.label} ${power.text}`);
+  lines.push(sample.xText);
+  return {
+    ...base, current: phases[0].current, voltage: phases[0].voltage, current2: phases[1].current, voltage2: phases[1].voltage, current3: phases[2].current, voltage3: phases[2].voltage,
+    power, lines, text: `${title} — ${lines.join(" · ")}`,
+  };
+}
+
 /** 부품 호버: 전류, 양단 전압, (저항·2단자 소자) 전력, 핀별 전압. */
 export function componentReadout({ circuit, result, componentId, index, x, acBasis = "peak" } = {}) {
   const sample = resolveSample(result, { index, x });
@@ -247,6 +283,7 @@ export function componentReadout({ circuit, result, componentId, index, x, acBas
     return { ...base, current: null, voltage: quantity(sample.mode === "ac" ? { re: 0, im: 0 } : 0, "V", acBasis), power: null, lines: ["기준 전위 0 V", sample.xText], text: `${title} — 기준 전위 0 V` };
   }
 
+  if (component.type === "THREE_PHASE") return threePhaseReadout({ base, component, point, pins, ref, title, sample, acBasis });
   if (component.type === "COUPLED_L" || component.type === "XFMR_IDEAL") return magneticReadout({ base, component, point, pins, ref, title, sample, acBasis });
 
   const rawCurrent = own(point?.componentCurrents, component.id);

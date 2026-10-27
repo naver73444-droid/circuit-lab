@@ -10,7 +10,7 @@ import { createSelectionCommands } from "./selection-commands.js";
 import { createCanvasNotices } from "./canvas-notices.js";
 import { stepSeriesText } from "./value-series.js";
 import { probeKeysForTarget } from "./ui-model.js";
-import { isMagneticPart, magneticWindingAt } from "./current-direction.js";
+import { currentWindingAt } from "./current-direction.js";
 import { advanceCursorPointerSession, isTapGesture } from "./cursor-label-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
@@ -23,7 +23,7 @@ const PALETTE = [
   ["V", "V±", "전압원", true], ["I", "I↑", "전류원", true], ["D", "▷|", "다이오드", true], ["OPAMP", "▷", "간략 OP AMP", true], ["OPAMP_IDEAL", "▷∞", "이상 OP AMP", true],
   ["VCVS", "◇V", "전압 제어 전압원", false], ["VCCS", "◇I", "전압 제어 전류원", false],
   ["CURRENT_SENSOR", "S→", "0 V 전류 센서", false], ["CCCS", "◇β", "전류 제어 전류원", false], ["CCVS", "◇R", "전류 제어 전압원", false],
-  ["COUPLED_L", "K", "결합 인덕터", false], ["XFMR_IDEAL", "1:n", "이상 변압기", false],
+  ["COUPLED_L", "K", "결합 인덕터", false], ["XFMR_IDEAL", "1:n", "이상 변압기", false], ["THREE_PHASE", "3~", "3상 전원 (Y)", false],
 ];
 
 /**
@@ -33,9 +33,9 @@ const PALETTE = [
  */
 export const NEW_PART_ROTATION = Object.freeze({ V: 90, I: 270 });
 
-/** A current probe on a coupled inductor / ideal transformer measures the winding on the pressed side (left half: 1, right half: 2). */
+/** A current probe on a coupled inductor / ideal transformer measures the winding on the pressed side (left half: 1, right half: 2); on a three-phase source, the phase pressed (a, b, c from the top). */
 function currentProbeWinding(component, point) {
-  return component && point && isMagneticPart(component) ? magneticWindingAt(component, point) : 1;
+  return currentWindingAt(component, point);
 }
 
 /** Tool, wiring and pointer slice of the shared state. */

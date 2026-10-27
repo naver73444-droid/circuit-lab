@@ -12,12 +12,15 @@
  *  connectivity and probes on the corners survive. Voltage probes on a removed outer pin move to its anchor; probes that only existed
  *  on removed parts (centre, resistor current) are dropped.
  */
-import { CIRCUIT_LIMITS, buildTopology, componentDefaults, endpointKey, pinCount, validateCircuitStructure } from "./circuit-engine.js";
+import { CIRCUIT_LIMITS, buildTopology, componentDefaults, endpointKey, parseValue, pinCount, validateCircuitStructure } from "./circuit-engine.js";
 import { UnionFind } from "./union-find.js";
 import { GRID_SIZE, circuitGeometryVersion, pinPosition, snapPoint } from "./circuit-geometry.js";
 import { createIdAllocator } from "./id-allocator.js";
 import { endpointPairKey, referenceForCopy } from "./circuit-edit.js";
-import { convertDeltaToY, convertYToDelta, parseResistance, resistanceCircuitText, resistanceText } from "./y-delta-model.js";
+import { Y_DELTA_ELEMENTS, convertDeltaToYOf, convertYToDeltaOf, elementText, parseResistance, resistanceCircuitText } from "./y-delta-model.js";
+
+/** The kinds of part a Y/Δ can be made of: three resistors, three inductors or three capacitors (never mixed). */
+const YDELTA_TYPES = Object.keys(Y_DELTA_ELEMENTS);
 
 const refOf = (component) => component?.props?.ref ?? component?.id;
 const isEnd = (end, other) => endpointKey(end) === endpointKey(other);
@@ -61,9 +64,21 @@ export function detectYDelta(circuit, resistorIds) {
   if (!Array.isArray(resistorIds) || new Set(resistorIds).size !== 3) return none("저항 3개를 선택하세요.");
   const parts = circuit.components.filter((component) => resistorIds.includes(component.id));
   if (parts.length !== 3) return none("선택한 부품을 회로에서 찾을 수 없습니다.");
-  if (parts.some((component) => component.type !== "R")) return none("Y–Δ 변환은 저항 3개에만 쓸 수 있습니다.");
+  if (parts.some((component) => !YDELTA_TYPES.includes(component.type))) return none("Y–Δ 변환은 저항·인덕터·커패시터 3개에만 쓸 수 있습니다.");
+  const element = parts[0].type;
+  if (parts.some((component) => component.type !== element)) {
+    return none(`${parts.map((part) => `${refOf(part)}(${Y_DELTA_ELEMENTS[part.type].name})`).join(", ")}처럼 종류가 섞여 있어 변환할 수 없습니다. `
+      + "같은 종류 3개(저항 3개, 인덕터 3개 또는 커패시터 3개)일 때만 Y–Δ 등가가 성립합니다: 저항·인덕터는 임피던스 식, 커패시터는 어드미턴스(서셉턴스) 쌍대식을 씁니다.");
+  }
+  const noun = Y_DELTA_ELEMENTS[element].name;
   for (const part of parts) {
-    try { parseResistance(part.props?.value, refOf(part)); } catch (error) { return none(`${refOf(part)}의 저항값이 올바르지 않습니다. ${error.message}`); }
+    try { parseResistance(part.props?.value, refOf(part)); } catch (error) { return none(`${refOf(part)}의 ${noun}값이 올바르지 않습니다. ${error.message}`); }
+    if (element !== "R") {
+      // Y and Δ of reactive parts agree for the AC steady state and for a start from rest only: a stored initial current/voltage has no equivalent on the other side.
+      let initial = 0;
+      try { initial = parseValue(part.props?.ic ?? 0, `${refOf(part)} 초기값`); } catch { return none(`${refOf(part)}의 초기값(IC)이 올바르지 않습니다.`); }
+      if (initial !== 0) return none(`${refOf(part)}의 초기값(IC)이 0이 아닙니다. 초기 ${element === "L" ? "전류" : "전압"}가 있으면 Y–Δ 등가 변환이 시간응답에서 같지 않으므로 IC를 0으로 두고 변환하세요.`);
+    }
   }
   const resolver = createNetResolver(circuit);
   const nets = parts.map((part) => [resolver.pin(part.id, 0), resolver.pin(part.id, 1)]);
@@ -85,7 +100,7 @@ export function detectYDelta(circuit, resistorIds) {
     }
     if (crowded.length) return none(`중심 노드에 다른 부품(${[...new Set(crowded)].slice(0, 3).join(", ")})이 연결돼 있어 Y→Δ로 바꿀 수 없습니다.`);
     return {
-      kind: "Y", resistors: parts.map((part) => part.id), center, outer,
+      kind: "Y", element, resistors: parts.map((part) => part.id), center, outer,
       arms: parts.map((part, index) => ({ id: part.id, centerPin: nets[index][0] === center ? 0 : 1, outerPin: nets[index][0] === center ? 1 : 0 })),
     };
   }
@@ -95,19 +110,22 @@ export function detectYDelta(circuit, resistorIds) {
     const a = nets[0].find((net) => net !== shared);
     const c = nets[1].find((net) => net !== shared);
     return {
-      kind: "Δ", resistors: parts.map((part) => part.id), nodes: [a, shared, c],
+      kind: "Δ", element, resistors: parts.map((part) => part.id), nodes: [a, shared, c],
       edges: parts.map((part, index) => ({ id: part.id, pinAt: { [nets[index][0]]: 0, [nets[index][1]]: 1 } })),
     };
   }
   return none("세 저항이 한 점에서 만나는 Y 또는 삼각형 Δ로 이어져 있어야 합니다. 직렬·혼합 연결은 변환할 수 없습니다.");
 }
 
-/** For the editor selection: the three resistor ids when exactly three parts are selected and all are resistors, else null. */
+/**
+ * For the editor selection: the three part ids when exactly three parts are selected and all are resistors, inductors or capacitors, else null.
+ * (A mixed triple is returned too: detectYDelta says why it cannot be converted.) The name is kept from the resistor-only version.
+ */
 export function selectedResistorIds(circuit, items) {
   const ids = items.filter((item) => item.kind === "component").map((item) => item.id);
   if (ids.length !== 3) return null;
   const byId = new Map(circuit.components.map((component) => [component.id, component]));
-  return ids.every((id) => byId.get(id)?.type === "R") ? ids : null;
+  return ids.every((id) => YDELTA_TYPES.includes(byId.get(id)?.type)) ? ids : null;
 }
 
 /** Inspector state of the command: { visible, enabled, kind, label, reason }. */
@@ -327,10 +345,12 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
   const [first, second, third] = detected.resistors.map(valueOf);
   let anchors, values, names;
 
+  const element = detected.element ?? "R";
+  const letter = Y_DELTA_ELEMENTS[element].letter;
   if (detected.kind === "Y") {
-    const converted = convertYToDelta({ RA: first, RB: second, RC: third });
-    names = ["RAB", "RBC", "RCA"];
-    values = { RAB: converted.RAB, RBC: converted.RBC, RCA: converted.RCA };
+    const converted = convertYToDeltaOf(element, [first, second, third]);
+    names = [`${letter}AB`, `${letter}BC`, `${letter}CA`];
+    values = Object.fromEntries(names.map((name, index) => [name, converted[index]]));
     // The centre holds nothing else (checked by detectYDelta): its wires and junctions disappear with the arms.
     const resolver = createNetResolver(circuit);
     for (const wire of circuit.wires) {
@@ -343,9 +363,9 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
       return anchor;
     });
   } else {
-    const converted = convertDeltaToY({ RAB: first, RBC: second, RCA: third });
-    names = ["RA", "RB", "RC"];
-    values = { RA: converted.RA, RB: converted.RB, RC: converted.RC };
+    const converted = convertDeltaToYOf(element, [first, second, third]);
+    names = [`${letter}A`, `${letter}B`, `${letter}C`];
+    values = Object.fromEntries(names.map((name, index) => [name, converted[index]]));
     anchors = detected.nodes.map((net) => {
       const pins = detected.edges.filter((edge) => Object.hasOwn(edge.pinAt, net)).map((edge) => ({ componentId: edge.id, pin: edge.pinAt[net] }));
       const anchor = detachPins(work, pins, allocator, reserved, removedWires, repointed);
@@ -366,9 +386,9 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
   const added = [];
   const usedRefs = new Set(circuit.components.map(refOf).filter((ref) => typeof ref === "string"));
   const newResistor = (index, center, from, to) => {
-    const id = allocator.next("R", reserved.components);
-    const ref = referenceForCopy("R", "", id, usedRefs);
-    return { id, type: "R", x: center.x, y: center.y, rotation: rotationFor(from, to), props: { ...componentDefaults("R", 1), ref, value: resistanceCircuitText(values[names[index]]) } };
+    const id = allocator.next(element, reserved.components);
+    const ref = referenceForCopy(element, "", id, usedRefs);
+    return { id, type: element, x: center.x, y: center.y, rotation: rotationFor(from, to), props: { ...componentDefaults(element, 1), ref, value: resistanceCircuitText(values[names[index]]) } };
   };
   const connect = (component, pin, end) => work.wires.push({ id: allocator.next("W", reserved.wires), a: { componentId: component.id, pin }, b: structuredClone(end), waypoints: [] });
   if (detected.kind === "Y") {
@@ -397,7 +417,7 @@ export function convertYDeltaInCircuit(circuit, resistorIds, { allocator = creat
   if (rejection) return { ok: false, reason: rejection };
 
   const kind = detected.kind === "Y" ? "Y→Δ" : "Δ→Y";
-  const texts = Object.fromEntries(names.map((name) => [name, resistanceText(values[name])]));
+  const texts = Object.fromEntries(names.map((name) => [name, elementText(element, values[name])]));
   const kept = retargetProbes(probes, circuit, removedIds, new Set(work.wires.map((item) => item.id)), removedJunctions, anchorOfPin);
   const pinAnchors = [...anchorOfPin].map(([key, to]) => {
     const split = key.lastIndexOf(":");

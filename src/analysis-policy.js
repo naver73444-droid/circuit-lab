@@ -11,7 +11,9 @@ export function suggestAnalysis(circuit, previous, intent = "auto") {
   const capacitors = circuit.components.filter((component) => component.type === "C").map((component) => number(component.props?.value)).filter((value) => value > 0);
   const inductors = circuit.components.filter((component) => component.type === "L").map((component) => number(component.props?.value)).filter((value) => value > 0);
   const resistors = circuit.components.filter((component) => component.type === "R").map((component) => number(component.props?.value)).filter((value) => value > 0);
-  const timeSources = sources.filter((component) => ["SIN", "PULSE"].includes(component.props?.mode));
+  // A three-phase source is three sine sources of its own frequency.
+  const threePhase = circuit.components.filter((component) => component.type === "THREE_PHASE").map((component) => ({ ...component, props: { mode: "SIN", frequency: component.props?.frequency ?? "60" } }));
+  const timeSources = [...sources, ...threePhase].filter((component) => ["SIN", "PULSE"].includes(component.props?.mode));
   const analysis = intent === "auto" ? (timeSources.length || capacitors.length || inductors.length ? "transient" : "dc") : intent;
   const settings = { ...previous, analysis };
   if (analysis === "dc") return { settings, reason: `${intent === "auto" ? "자동: " : ""}DC 동작점 (C 개방 · L 단락)` };

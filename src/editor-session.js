@@ -1,7 +1,7 @@
 import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geometry.js";
 import { endpointExists } from "./circuit-edit.js";
 import { classifyCircuitConnections, connectionFrequency } from "./circuit-status.js";
-import { currentProbeLabel, isMagneticPart, toggleCurrentReference } from "./current-direction.js";
+import { clampWinding, currentProbeLabel, toggleCurrentReference, windingCount } from "./current-direction.js";
 import { nextAvailableProbeColor, removeProbeByKey } from "./ui-model.js";
 import { allocatorFor } from "./id-allocator.js";
 import { componentDefaults, pinCount } from "./circuit-engine.js";
@@ -196,12 +196,12 @@ export function createEditorSession(deps) {
   function addCurrentProbe(componentId, winding = 1) {
     const component = state.circuit.components.find((item) => item.id === componentId);
     if (!component || component.type === "GND") return;
-    // Only the two magnetic parts carry a second winding current.
-    const second = winding === 2 && isMagneticPart(component);
-    const key = second ? `I:${componentId}:2` : `I:${componentId}`;
+    // Only the magnetic parts (2 windings) and the three-phase source (3 phases) carry more than one current.
+    const which = clampWinding(component, winding);
+    const key = which > 1 ? `I:${componentId}:${which}` : `I:${componentId}`;
     if (state.probes.some((probe) => probe.key === key)) return;
     recordProbeEdit();
-    state.probes.push({ key, kind: "current", componentId, ...(second ? { winding: 2 } : {}), label: currentProbeLabel(component, circuitGeometryVersion(state.circuit), second ? 2 : 1), color: nextAvailableProbeColor(PROBE_COLORS, state.probes) });
+    state.probes.push({ key, kind: "current", componentId, ...(which > 1 ? { winding: which } : {}), label: currentProbeLabel(component, circuitGeometryVersion(state.circuit), which), color: nextAvailableProbeColor(PROBE_COLORS, state.probes) });
     refreshProbeViews();
     committed();
   }
@@ -212,7 +212,7 @@ export function createEditorSession(deps) {
    */
   function flipCurrentReference(componentId, winding = 1) {
     const component = state.circuit.components.find((item) => item.id === componentId);
-    if (!component || component.type === "GND" || (winding === 2 && !isMagneticPart(component))) return;
+    if (!component || component.type === "GND" || winding > windingCount(component)) return;
     recordProbeEdit();
     toggleCurrentReference(component, winding);
     refreshProbeViews();

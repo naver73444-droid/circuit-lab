@@ -87,6 +87,41 @@ export function convertDeltaToY(input) {
   return { ...values, text: textsOf(values) };
 }
 
+// ---- L and C (editor selection command) ---------------------------------------------------------------------------------------
+//
+// Three parts of the SAME kind form a Y or a Δ. Resistors and inductors are impedance-like (Z = R, jωL): the resistor formulas hold for L
+// unchanged. A capacitor is admittance-like (Y = jωC), so the dual formulas hold, found by writing Z = 1/Y in the resistor ones:
+//   Y→Δ  C_AB = C_A·C_B/(C_A + C_B + C_C)   (cyclic)
+//   Δ→Y  C_A  = (C_AB·C_BC + C_BC·C_CA + C_CA·C_AB)/C_BC   (C_B = …/C_CA, C_C = …/C_AB)
+// They keep the AC steady state (and the transient from rest, zero initial values); a mixed R/L/C triple has no such form.
+
+export const Y_DELTA_ELEMENTS = Object.freeze({ R: { unit: "Ω", name: "저항", letter: "R" }, L: { unit: "H", name: "인덕터", letter: "L" }, C: { unit: "F", name: "커패시터", letter: "C" } });
+
+/** Y arms [A, B, C] → equivalent Δ edges [AB, BC, CA] for parts of `type` ("R", "L" or "C"); positive finite numbers, log domain like the resistor version. */
+export function convertYToDeltaOf(type, arms) {
+  if (type !== "C") {
+    const delta = convertYToDelta({ RA: arms[0], RB: arms[1], RC: arms[2] });
+    return [delta.RAB, delta.RBC, delta.RCA];
+  }
+  const [a, b, c] = arms.map((value, index) => Math.log(parseResistance(value, `C_${"ABC"[index]}`)));
+  const total = logSumExp([a, b, c]);
+  return [representable(a + b - total, "C_AB"), representable(b + c - total, "C_BC"), representable(c + a - total, "C_CA")];
+}
+
+/** Δ edges [AB, BC, CA] → equivalent Y arms [A, B, C] for parts of `type`. */
+export function convertDeltaToYOf(type, edges) {
+  if (type !== "C") {
+    const star = convertDeltaToY({ RAB: edges[0], RBC: edges[1], RCA: edges[2] });
+    return [star.RA, star.RB, star.RC];
+  }
+  const [ab, bc, ca] = edges.map((value, index) => Math.log(parseResistance(value, `C_${["AB", "BC", "CA"][index]}`)));
+  const pairs = logSumExp([ab + bc, bc + ca, ca + ab]);
+  return [representable(pairs - bc, "C_A"), representable(pairs - ca, "C_B"), representable(pairs - ab, "C_C")];
+}
+
+/** SI text with the unit of the kind for display: 3e-6 F → "3 µF". */
+export const elementText = (type, value) => engineering(value, Y_DELTA_ELEMENTS[type]?.unit ?? "Ω", 4);
+
 const SI_SUFFIX = new Map([[-12, "p"], [-9, "n"], [-6, "u"], [-3, "m"], [0, ""], [3, "k"], [6, "meg"], [9, "g"], [12, "t"]]);
 
 /**

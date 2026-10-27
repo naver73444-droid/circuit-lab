@@ -86,7 +86,10 @@ function cloneWithoutExternalLoads(circuit, validated) {
 
 function zeroIndependentDC(circuit) {
   const clone = structuredClone(circuit);
-  for (const component of clone.components) if (component.type === "V" || component.type === "I") component.props = { ...component.props, dc: "0" };
+  for (const component of clone.components) {
+    if (component.type === "V" || component.type === "I") component.props = { ...component.props, dc: "0" };
+    if (component.type === "THREE_PHASE") component.props = { ...component.props, amplitude: "0" };
+  }
   return clone;
 }
 

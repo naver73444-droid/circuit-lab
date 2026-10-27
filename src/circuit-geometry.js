@@ -30,6 +30,8 @@ export function normalizePoints(points) {
 export function localPin(type, pin, geometryVersion = CURRENT_GEOMETRY_VERSION) {
   // 자기결합 부품: 핀 1a, 1b는 왼쪽(위·아래), 2a, 2b는 오른쪽(위·아래). 점은 1a와 2a(위쪽).
   if (type === "COUPLED_L" || type === "XFMR_IDEAL") return [{ x: -40, y: -20 }, { x: -40, y: 20 }, { x: 40, y: -20 }, { x: 40, y: 20 }][pin];
+  // 3상 전원: 핀 a, b, c는 오른쪽(위·가운데·아래), 중성점 n은 왼쪽 가운데. 전원을 왼쪽에 두고 선로를 오른쪽으로 그리는 교재 배치.
+  if (type === "THREE_PHASE") return [{ x: 40, y: -40 }, { x: 40, y: 0 }, { x: 40, y: 40 }, { x: -40, y: 0 }][pin];
   if (type === "VCVS" || type === "VCCS") return [{ x: -40, y: 0 }, { x: 40, y: 0 }, { x: 0, y: -40 }, { x: 0, y: 40 }][pin];
   if (["CURRENT_SENSOR", "CCCS", "CCVS"].includes(type)) return pin === 0 ? { x: -40, y: 0 } : { x: 40, y: 0 };
   if (geometryVersion === 1) {

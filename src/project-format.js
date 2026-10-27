@@ -112,7 +112,7 @@ export function deserializeProject(text, fallbackSettings = {}) {
         (typeof probe.junctionId === "string" && junctionIds.has(probe.junctionId))
       );
       const validCurrent = probe?.kind === "current" && typeof probe.componentId === "string" && componentIds.has(probe.componentId)
-        && (probe.winding === undefined || (probe.winding === 2 && ["COUPLED_L", "XFMR_IDEAL"].includes(component?.type)));
+        && (probe.winding === undefined || (probe.winding === 2 && ["COUPLED_L", "XFMR_IDEAL", "THREE_PHASE"].includes(component?.type)) || (probe.winding === 3 && component?.type === "THREE_PHASE"));
       const validWire = probe?.wireId === undefined || probe.wireId === null || (typeof probe.wireId === "string" && wireIds.has(probe.wireId));
       if (!validObject || (!validVoltage && !validCurrent) || !validWire) {
         throw new CircuitError("INVALID_FILE", "프로브의 참조, 색 또는 고유 ID가 올바르지 않습니다.");

@@ -8,6 +8,7 @@ export function sourceInlineDescriptor(component, analysis) {
   if (component.type === "VCCS") return { prop: "gm", label: "상호컨덕턴스", unit: "S", value: props.gm ?? "1mS" };
   if (component.type === "CCCS") return { prop: "beta", label: "전류 이득", unit: "A/A", value: props.beta ?? "1" };
   if (component.type === "CCVS") return { prop: "rm", label: "전달저항", unit: "Ω", value: props.rm ?? "1k" };
+  if (component.type === "THREE_PHASE") return { prop: "amplitude", label: "상전압 peak", unit: "Vpk", value: props.amplitude ?? "169.7056274847714" };
   const unit = component.type === "I" ? "A" : "V";
   const mode = props.mode ?? "DC";
   if (analysis === "ac") return { prop: "acMagnitude", label: "AC peak", unit: `${unit}pk`, value: props.acMagnitude ?? "0" };

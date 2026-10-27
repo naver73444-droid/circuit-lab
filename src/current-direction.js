@@ -1,5 +1,5 @@
 import { CURRENT_GEOMETRY_VERSION, localPin } from "./circuit-geometry.js";
-import { secondaryCurrentKey } from "./circuit-engine.js";
+import { phaseCurrentKey } from "./circuit-engine.js";
 import { engineering } from "./scope-model.js";
 
 /**
@@ -24,9 +24,17 @@ const ZERO_RELATIVE = 1e-12;
 /** Coupled inductors and the ideal transformer have two windings, each with its own current (probe.winding 1 or 2). */
 export const isMagneticPart = (component) => MAGNETIC_TYPES.has(component?.type);
 
-/** The key of a current probe's series in a result point's componentCurrents (winding 2 of a magnetic part lives under `<id>#2`). */
+/** How many separate currents ("windings") a part has: 3 for the three-phase source (phases a, b, c), 2 for the magnetic parts, else 1. */
+export const windingCount = (component) => (component?.type === "THREE_PHASE" ? 3 : isMagneticPart(component) ? 2 : 1);
+
+/** The winding number 1..windingCount of a probe/flip request; anything the part does not have becomes 1. */
+export function clampWinding(component, winding) {
+  return Number.isInteger(winding) && winding >= 2 && winding <= windingCount(component) ? winding : 1;
+}
+
+/** The key of a current probe's series in a result point's componentCurrents (winding 2 of a magnetic part lives under `<id>#2`, phase c of a 3-phase source under `<id>#3`). */
 export function probeCurrentKey(probe) {
-  return probe?.winding === 2 ? secondaryCurrentKey(probe.componentId) : probe?.componentId;
+  return probe?.winding === 2 || probe?.winding === 3 ? phaseCurrentKey(probe.componentId, probe.winding) : probe?.componentId;
 }
 
 /** Which winding (1 or 2) a point on the canvas belongs to: the left half of the part in its own frame is winding 1, the right half winding 2. */
@@ -37,14 +45,27 @@ export function magneticWindingAt(component, point) {
   return dx * Math.cos(angle) + dy * Math.sin(angle) > 0 ? 2 : 1;
 }
 
+/** Which current a point on the canvas belongs to: the winding of a magnetic part, the phase whose pin (a, b, c) is nearest on a three-phase source, else 1. */
+export function currentWindingAt(component, point) {
+  if (!component || !point) return 1;
+  if (component.type === "THREE_PHASE") {
+    // the point in the part's own frame; phase pins a, b, c sit at y = −40, 0, 40 on the left
+    const angle = ((component.rotation ?? 0) * Math.PI) / 180;
+    const dx = point.x - component.x, dy = point.y - component.y;
+    const localY = -dx * Math.sin(angle) + dy * Math.cos(angle);
+    return localY < -20 ? 1 : localY > 20 ? 3 : 2;
+  }
+  return isMagneticPart(component) ? magneticWindingAt(component, point) : 1;
+}
+
 // ---- reference flip (display only, stored as optional component fields)
 
 /** The component field that flips a winding's shown reference direction (true = flipped, absent = engine reference). */
-export const currentFlipKey = (winding = 1) => (winding === 2 ? "flipCurrent2" : "flipCurrent");
+export const currentFlipKey = (winding = 1) => (winding === 1 ? "flipCurrent" : `flipCurrent${winding}`);
 
 export function isCurrentReferenceFlipped(component, winding = 1) {
   if (!component || component.type === "GND") return false;
-  if (winding === 2 && !isMagneticPart(component)) return false;
+  if (winding > windingCount(component)) return false;
   return component[currentFlipKey(winding)] === true;
 }
 
@@ -53,7 +74,7 @@ export const currentReferenceSign = (component, winding = 1) => (isCurrentRefere
 
 /** Flip a winding's shown reference in place (an unflipped part carries no field at all). Returns the new state. */
 export function toggleCurrentReference(component, winding = 1) {
-  if (!component || component.type === "GND" || (winding === 2 && !isMagneticPart(component))) return false;
+  if (!component || component.type === "GND" || winding > windingCount(component)) return false;
   const key = currentFlipKey(winding);
   if (component[key] === true) { delete component[key]; return false; }
   component[key] = true;
@@ -64,10 +85,10 @@ export function toggleCurrentReference(component, winding = 1) {
 export function sanitizeCurrentReferences(components) {
   for (const component of components ?? []) {
     if (!component || typeof component !== "object") continue;
-    for (const winding of [1, 2]) {
+    for (const winding of [1, 2, 3]) {
       const key = currentFlipKey(winding);
       if (!Object.hasOwn(component, key)) continue;
-      const allowed = component[key] === true && component.type !== "GND" && (winding === 1 || isMagneticPart(component));
+      const allowed = component[key] === true && component.type !== "GND" && winding <= windingCount(component);
       if (!allowed) delete component[key];
     }
   }
@@ -77,7 +98,7 @@ export function sanitizeCurrentReferences(components) {
 /** The valid flip fields of a part as a fresh object ({} when none): for code that copies only known fields (clipboard text). */
 export function currentReferenceFields(component) {
   const fields = {};
-  for (const winding of [1, 2]) if (isCurrentReferenceFlipped(component, winding)) fields[currentFlipKey(winding)] = true;
+  for (const winding of [1, 2, 3]) if (isCurrentReferenceFlipped(component, winding)) fields[currentFlipKey(winding)] = true;
   return fields;
 }
 
@@ -91,6 +112,7 @@ export function signedCurrent(value, sign = 1) {
 // ---- descriptors (pin pairs and arrows in the part's own frame)
 
 function endpointNames(component, winding) {
+  if (component.type === "THREE_PHASE") return [["a", "b", "c"][clampWinding(component, winding) - 1], "n"];
   if (isMagneticPart(component)) return winding === 2 ? ["2a", "2b"] : ["1a", "1b"];
   if (OPAMP_TYPES.has(component.type)) return ["출력", component.type === "OPAMP_IDEAL" ? "내부 기준 GND" : "기준"];
   if (OUTPUT_PN_TYPES.has(component.type)) return ["p", "n"];
@@ -102,6 +124,12 @@ export function currentDirectionDescriptor(component, geometryVersion = CURRENT_
   if (!component || component.type === "GND") return null;
   const names = endpointNames(component, winding);
   const label = `${names[0]}→${names[1]}`;
+  if (component.type === "THREE_PHASE") {
+    // A short arrow along the lead of the phase pin, pointing into the part: current enters pin a/b/c and leaves through n.
+    const pin = clampWinding(component, winding) - 1;
+    const from = localPin(component.type, pin, geometryVersion);
+    return { kind: "pin-pair", label, names, from, to: { x: from.x - 16, y: from.y }, fromPin: pin, toPin: 3, offset: -8, padding: 1, reversed: false };
+  }
   if (isMagneticPart(component)) {
     const first = winding === 2 ? 2 : 0;
     return {
@@ -202,6 +230,10 @@ export function currentProbeLabel(component, geometryVersion = CURRENT_GEOMETRY_
   const direction = referenceDirection(component, geometryVersion, winding);
   if (!direction) return "";
   const ref = component.props?.ref ?? component.id;
+  if (component.type === "THREE_PHASE") {
+    const name = `${ref}.${["a", "b", "c"][clampWinding(component, winding) - 1]}`;
+    return isCurrentReferenceFlipped(component, winding) ? `I(${name}, 기준 ${direction.label})` : `I(${name})`;
+  }
   if (isMagneticPart(component)) {
     const name = `${ref}.${winding === 2 ? 2 : 1}`;
     // A winding in its default reference (into its dot-side pin a) keeps the short textbook-style name.

@@ -10,8 +10,8 @@ function wire(id, aId, aPin, bId, bPin) {
   return { id, a: { componentId: aId, pin: aPin }, b: { componentId: bId, pin: bPin } };
 }
 
-function circuit(components, wires) {
-  return { version: 1, geometryVersion: CURRENT_GEOMETRY_VERSION, components, wires };
+function circuit(components, wires, junctions) {
+  return { version: 1, geometryVersion: CURRENT_GEOMETRY_VERSION, components, wires, ...(junctions ? { junctions } : {}) };
 }
 
 export const examples = [
@@ -268,6 +268,78 @@ export const examples = [
         { id: "W7", a: { componentId: "T1", pin: 3 }, b: { componentId: "R2", pin: 0 }, waypoints: [{ x: 560, y: 300 }] },
         wire("W8", "R2", 1, "G3", 0),
       ],
+    ),
+  },
+  {
+    id: "three-phase-yy",
+    name: "3상 Y–Y (예제 12.2)",
+    description: "교재 예제 12.2: 평형 3상 Y–Y, 상전압 110 V(rms) abc 순서, 선로 5−j2 Ω + 부하 10+j8 Ω. ω=1 rad/s에 해당하는 f=1/2π Hz로 AC 해석하면 선전류 Ia=I(RLa)=6.81∠−21.8° A, Ib=6.81∠−141.8° A, Ic=6.81∠98.2° A(rms)입니다. 소스 크기는 peak(110·√2)로 저장되고 이 예제는 rms 표시로 열려 교재 숫자가 그대로 보입니다. −j2 Ω은 0.5 F, j8 Ω은 8 H로 둔 값이며, 부하 중성점은 GND에 이어도 평형이라 중성선 전류는 0입니다.",
+    acBasis: "rms",
+    settings: { analysis: "ac", startFrequency: "0.01", endFrequency: "10", pointsPerDecade: "20", phasorFrequency: "0.1591549431" },
+    circuit: circuit(
+      [
+        component("VP1", "THREE_PHASE", 140, 300, { amplitude: String(110 * Math.SQRT2), phase: "0", sequence: "abc", frequency: "0.1591549431", ref: "VP1" }),
+        ...[["a", 100], ["b", 300], ["c", 500]].flatMap(([phase, y]) => [
+          component(`RL${phase}`, "R", 300, y, { value: "5", ref: `RL${phase}` }),
+          component(`CL${phase}`, "C", 420, y, { value: "0.5", ic: "0", ref: `CL${phase}` }),
+          component(`RZ${phase}`, "R", 540, y, { value: "10", ref: `RZ${phase}` }),
+          component(`LZ${phase}`, "L", 660, y, { value: "8", ic: "0", ref: `LZ${phase}` }),
+        ]),
+        component("G1", "GND", 100, 400, { ref: "GND" }),
+        component("G2", "GND", 740, 580, { ref: "GND" }),
+      ],
+      [
+        wire("W1", "VP1", 0, "RLa", 0), wire("W2", "VP1", 1, "RLb", 0), wire("W3", "VP1", 2, "RLc", 0), wire("W4", "VP1", 3, "G1", 0),
+        ...["a", "b", "c"].flatMap((phase) => [
+          wire(`WA${phase}`, `RL${phase}`, 1, `CL${phase}`, 0), wire(`WB${phase}`, `CL${phase}`, 1, `RZ${phase}`, 0), wire(`WC${phase}`, `RZ${phase}`, 1, `LZ${phase}`, 0),
+        ]),
+        { id: "WN1", a: { componentId: "LZa", pin: 1 }, b: { junctionId: "JN1" } },
+        { id: "WN2", a: { componentId: "LZb", pin: 1 }, b: { junctionId: "JN2" } },
+        { id: "WN3", a: { componentId: "LZc", pin: 1 }, b: { junctionId: "JN3" } },
+        { id: "WN4", a: { junctionId: "JN1" }, b: { junctionId: "JN2" } },
+        { id: "WN5", a: { junctionId: "JN2" }, b: { junctionId: "JN3" } },
+        { id: "WN6", a: { junctionId: "JN3" }, b: { componentId: "G2", pin: 0 } },
+      ],
+      [{ id: "JN1", x: 740, y: 100 }, { id: "JN2", x: 740, y: 300 }, { id: "JN3", x: 740, y: 500 }],
+    ),
+  },
+  {
+    id: "three-phase-y-delta",
+    name: "3상 Y–Δ (예제 12.3)",
+    description: "교재 예제 12.3: 평형 3상 Y 전원 Van=100∠10° V(rms) abc 순서, Δ 부하 8+j4 Ω/상. ω=1 rad/s에 해당하는 f=1/2π Hz로 AC 해석하면 상전류 I_AB=I(RAB)=19.36∠13.43° A, 선전류 Ia=I(Sa)=33.53∠−16.57° A(rms)이고 Ib는 −120°, Ic는 +120° 이동합니다. 선전류는 0 V 전류 센서 Sa·Sb·Sc로 잽니다. 소스 크기는 peak(100·√2)로 저장되고 이 예제는 rms 표시로 열립니다. j4 Ω은 4 H로 둔 값입니다.",
+    acBasis: "rms",
+    settings: { analysis: "ac", startFrequency: "0.01", endFrequency: "10", pointsPerDecade: "20", phasorFrequency: "0.1591549431" },
+    circuit: circuit(
+      [
+        component("VP1", "THREE_PHASE", 140, 300, { amplitude: String(100 * Math.SQRT2), phase: "10", sequence: "abc", frequency: "0.1591549431", ref: "VP1" }),
+        component("Sa", "CURRENT_SENSOR", 300, 100, { ref: "Sa" }),
+        component("Sb", "CURRENT_SENSOR", 300, 300, { ref: "Sb" }),
+        component("Sc", "CURRENT_SENSOR", 300, 500, { ref: "Sc" }),
+        // Δ ring A→B→C→A: each side is a resistor (pin 1 on the leading corner) in series with an inductor.
+        component("RAB", "R", 640, 140, { value: "8", ref: "RAB" }, 90),
+        component("LAB", "L", 640, 240, { value: "4", ic: "0", ref: "LAB" }, 90),
+        component("RBC", "R", 640, 340, { value: "8", ref: "RBC" }, 90),
+        component("LBC", "L", 640, 440, { value: "4", ic: "0", ref: "LBC" }, 90),
+        component("RCA", "R", 760, 440, { value: "8", ref: "RCA" }, 270),
+        component("LCA", "L", 760, 340, { value: "4", ic: "0", ref: "LCA" }, 270),
+        component("G1", "GND", 100, 400, { ref: "GND" }),
+      ],
+      [
+        wire("W1", "VP1", 0, "Sa", 0), wire("W2", "VP1", 1, "Sb", 0), wire("W3", "VP1", 2, "Sc", 0), wire("W4", "VP1", 3, "G1", 0),
+        { id: "WA", a: { componentId: "Sa", pin: 1 }, b: { junctionId: "JA" } },
+        { id: "WB", a: { componentId: "Sb", pin: 1 }, b: { junctionId: "JB" } },
+        { id: "WC", a: { componentId: "Sc", pin: 1 }, b: { junctionId: "JC" } },
+        { id: "WAB1", a: { junctionId: "JA" }, b: { componentId: "RAB", pin: 0 } },
+        wire("WAB2", "RAB", 1, "LAB", 0),
+        { id: "WAB3", a: { componentId: "LAB", pin: 1 }, b: { junctionId: "JB" } },
+        { id: "WBC1", a: { junctionId: "JB" }, b: { componentId: "RBC", pin: 0 } },
+        wire("WBC2", "RBC", 1, "LBC", 0),
+        { id: "WBC3", a: { componentId: "LBC", pin: 1 }, b: { junctionId: "JC" } },
+        { id: "WCA1", a: { componentId: "RCA", pin: 0 }, b: { junctionId: "JC" } },
+        wire("WCA2", "RCA", 1, "LCA", 0),
+        { id: "WCA3", a: { componentId: "LCA", pin: 1 }, b: { junctionId: "JA" }, waypoints: [{ x: 760, y: 60 }, { x: 560, y: 60 }] },
+      ],
+      [{ id: "JA", x: 560, y: 100 }, { id: "JB", x: 560, y: 300 }, { id: "JC", x: 560, y: 500 }],
     ),
   },
 ];
