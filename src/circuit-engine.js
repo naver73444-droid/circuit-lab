@@ -27,6 +27,7 @@ const TYPE_PINS = {
   CCVS: 2,
   COUPLED_L: 4,
   XFMR_IDEAL: 4,
+  THREE_PHASE: 4,
 };
 
 const DEFAULTS = {
@@ -81,6 +82,8 @@ const DEFAULTS = {
   // 자기결합: 핀 1a·1b(1차), 2a·2b(2차), 점은 1a와 2a. dots="opposite"이면 2차의 점이 2b로 옮겨진다.
   COUPLED_L: { ref: "K", L1: "10m", L2: "10m", coupling: "k", k: "0.5", M: "5m", dots: "same", ic1: "0", ic2: "0" },
   XFMR_IDEAL: { ref: "T", n: "2", dots: "same" },
+  // 평형 3상 전압원(Y 결선): 핀 a·b·c·n. amplitude는 상전압 peak, phase는 a상 기준 위상(cos 기준, AC 페이저와 같음), sequence는 abc/acb.
+  THREE_PHASE: { ref: "VP", amplitude: "169.7056", frequency: "60", phase: "0", sequence: "abc" },
 };
 
 export function componentDefaults(type, index = 1) {
@@ -189,6 +192,36 @@ function controlledCoefficient(component) {
 /** The solver stores the second winding current of a 4-pin magnetic part next to the first one, under this key. */
 export const secondaryCurrentKey = (componentId) => `${componentId}#2`;
 
+/** The three phase currents of a THREE_PHASE part (a, b, c) live under `<id>`, `<id>#2`, `<id>#3`; each flows from its pin a/b/c through the source to n. */
+export const phaseCurrentKey = (componentId, phase) => (phase === 1 ? componentId : phase === 2 ? secondaryCurrentKey(componentId) : `${componentId}#3`);
+
+/** Phase shift (degrees) of phases a, b, c relative to the reference phase for each sequence. */
+const PHASE_SHIFTS = { abc: [0, -120, 120], acb: [0, 120, -120] };
+
+/**
+ * Parameters of a THREE_PHASE part (balanced Y source, Alexander-Sadiku Ch.12): phase voltage peak `amplitude`, reference phase of the a phase,
+ * sequence abc (b lags a by 120 deg) or acb (b leads), frequency (time response only; an AC analysis runs at its own frequency).
+ * `shifts` are the three phase angles (degrees) and `phasors` the three AC phasors (peak, cos reference), the values used by every analysis.
+ */
+export function threePhaseParameters(component) {
+  const p = component.props ?? {};
+  const label = p.ref ?? component.id;
+  const amplitude = parseValue(p.amplitude ?? "169.7056", `${label} 상전압 크기`);
+  if (amplitude < 0) throw new CircuitError("INVALID_VALUE", `${label}의 상전압 크기는 0 이상이어야 합니다.`);
+  const frequency = positiveValue(p.frequency ?? "60", `${label} 주파수`);
+  const phase = parseValue(p.phase ?? "0", `${label} 기준 위상`);
+  const sequence = p.sequence ?? "abc";
+  if (sequence !== "abc" && sequence !== "acb") throw new CircuitError("INVALID_VALUE", `${label}의 상순서 '${sequence}'을(를) 지원하지 않습니다.`, "abc 또는 acb");
+  const shifts = PHASE_SHIFTS[sequence].map((shift) => phase + shift);
+  const phasors = shifts.map((degrees) => complex(amplitude * Math.cos((degrees * Math.PI) / 180), amplitude * Math.sin((degrees * Math.PI) / 180)));
+  return { amplitude, frequency, phase, sequence, shifts, phasors };
+}
+
+/** Instantaneous voltage of phase 0..2 of a THREE_PHASE part: amplitude·cos(2πft + angle). DC analysis uses 0 V. */
+function threePhaseValue(parameters, phaseIndex, time) {
+  return parameters.amplitude * Math.cos(2 * Math.PI * parameters.frequency * time + (parameters.shifts[phaseIndex] * Math.PI) / 180);
+}
+
 const COUPLING_TOLERANCE = 1e-9;
 
 function dotsSign(component) {
@@ -283,6 +316,7 @@ function validateComponent(component) {
   if (["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type)) controlledCoefficient(component);
   if (component.type === "COUPLED_L") coupledInductorParameters(component);
   if (component.type === "XFMR_IDEAL") idealTransformerParameters(component);
+  if (component.type === "THREE_PHASE") threePhaseParameters(component);
   if (component.type === "V" || component.type === "I") validateSource(component);
 }
 
@@ -583,6 +617,20 @@ export function analyzeIdealVoltageConstraints(circuit, { analysis = "dc", start
       for (const [first, second, pinLabel] of [[0, 1, "1→2"], [2, 3, "3→4"]]) {
         constraints.push({ componentId: component.id, ref: component.props?.ref ?? component.id, type: component.type, pinLabel, a: topology.nodeFor(component.id, first), z: topology.nodeFor(component.id, second), value: 0, input: voltageConstraintInput(component, analysis), role: "DC 결합 코일 단락" });
       }
+      continue;
+    }
+    if (component.type === "THREE_PHASE" && (analysis === "dc" || analysis === "initial")) {
+      if (ignoreConstraintIds.has(component.id)) continue;
+      const parameters = threePhaseParameters(component);
+      ["a", "b", "c"].forEach((phaseName, index) => {
+        const value = analysis === "dc" ? 0 : threePhaseValue(parameters, index, start);
+        constraints.push({
+          componentId: component.id, ref: component.props?.ref ?? component.id, type: component.type, pinLabel: `${phaseName}→n`,
+          a: topology.nodeFor(component.id, index), z: topology.nodeFor(component.id, 3), value,
+          input: `3상 ${phaseName}상 ${parameters.amplitude}·cos(2πf·t + ${Number(parameters.shifts[index].toPrecision(6))}°)`,
+          role: analysis === "dc" ? "3상 전원 DC 0 V" : `t=${Number(start.toPrecision(8))} s 3상 전원`,
+        });
+      });
       continue;
     }
     let value;
@@ -920,6 +968,8 @@ function makeBranchMap(circuit, mode, nodeCount, skippedConstraints = new Set())
     if ((voltageBranch || inductorBranch || initialCapacitorBranch) && !skippedConstraints.has(component.id)) map.set(component.id, index++);
     // XFMR_IDEAL: one unknown (the primary current i1); COUPLED_L: i1 and i2 (none while the transient start state is solved).
     if (component.type === "XFMR_IDEAL") map.set(component.id, index++);
+    // THREE_PHASE: three source branches a→n, b→n, c→n (phaseCurrentKey), in every mode.
+    if (component.type === "THREE_PHASE") for (const phase of [1, 2, 3]) map.set(phaseCurrentKey(component.id, phase), index++);
     if (component.type === "COUPLED_L" && mode !== "initial") { map.set(component.id, index++); map.set(secondaryCurrentKey(component.id), index++); }
   }
   return { map, size: index };
@@ -1046,6 +1096,16 @@ function stampRealIdealTransformer(A, topology, component, branchMap) {
   addBranchEntry(A, branch, n1a, -ratio); addBranchEntry(A, branch, n1b, ratio);
 }
 
+/** Balanced three-phase source: three voltage sources a→n, b→n, c→n sharing pin n. DC is 0 V; the start state and transient use amplitude·cos(ωt + angle). */
+function stampRealThreePhase(A, b, topology, component, branchMap, mode, context) {
+  const parameters = threePhaseParameters(component);
+  const neutral = topology.nodeFor(component.id, 3);
+  for (let index = 0; index < 3; index += 1) {
+    const value = mode === "dc" ? 0 : threePhaseValue(parameters, index, context.time ?? 0);
+    stampVoltage(A, b, topology.nodeFor(component.id, index), neutral, branchMap.get(phaseCurrentKey(component.id, index + 1)), value);
+  }
+}
+
 const DIODE_MAX_FORWARD_VOLTAGE = 0.8;
 
 function diodeParameters(component) {
@@ -1158,6 +1218,7 @@ function solveRealPoint(circuit, topology, mode, context) {
       }
       if (component.type === "COUPLED_L") stampRealCoupledInductor(A, b, topology, component, branchMap, mode, context);
       if (component.type === "XFMR_IDEAL") stampRealIdealTransformer(A, topology, component, branchMap);
+      if (component.type === "THREE_PHASE") stampRealThreePhase(A, b, topology, component, branchMap, mode, context);
       if (["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type)) stampRealControlledSource(A, topology, component, branchMap);
     }
     const candidate = !hasDiode && mode === "transient" && context.luCache
@@ -1242,6 +1303,7 @@ function realPoint(circuit, topology, solved, mode, context) {
       componentCurrents[component.id] = primary;
       componentCurrents[secondaryCurrentKey(component.id)] = -primary / idealTransformerParameters(component).ratio;
     }
+    if (component.type === "THREE_PHASE") for (const phase of [1, 2, 3]) componentCurrents[phaseCurrentKey(component.id, phase)] = solved.solution[solved.branchMap.get(phaseCurrentKey(component.id, phase))] ?? 0;
     if (component.type === "GND") componentCurrents[component.id] = 0;
   }
   return { nodeVoltages, componentCurrents };
@@ -1292,7 +1354,7 @@ function initialSourceDerivative(component, time) {
  * only a common-mode derivative; capacitor voltage differences remain physical.
  */
 function resolveInitialCapacitorCurrents(circuit, topology, point, time) {
-  if (circuit.components.some((component) => ["OPAMP", "OPAMP_IDEAL", "VCVS", "CURRENT_SENSOR", "CCCS", "CCVS", "COUPLED_L", "XFMR_IDEAL"].includes(component.type))) {
+  if (circuit.components.some((component) => ["OPAMP", "OPAMP_IDEAL", "VCVS", "CURRENT_SENSOR", "CCCS", "CCVS", "COUPLED_L", "XFMR_IDEAL", "THREE_PHASE"].includes(component.type))) {
     throw new CircuitError("INITIAL_DERIVATIVE_UNSUPPORTED", "중복 커패시터 초기제약과 이상 제약·전류제어 종속원이 함께 있는 회로의 초기 전류는 아직 지원하지 않습니다.", "임의로 0 A를 표시하지 않고 중단했습니다. 독립 전압원 또는 중복 없는 검증 회로로 나누어 확인하세요.");
   }
   const capacitors = circuit.components.filter((component) => component.type === "C");
@@ -1549,6 +1611,13 @@ function stampComplexCoupledInductor(A, b, topology, component, branchMap, omega
   addComplexEntry(A, b2, b1, 0, -omega * mutual); addComplexEntry(A, b2, b2, 0, -omega * L2);
 }
 
+/** AC counterpart of the three-phase source: three phasor voltage sources a→n, b→n, c→n (peak, cos reference). */
+function stampComplexThreePhase(A, b, topology, component, branchMap) {
+  const { phasors } = threePhaseParameters(component);
+  const neutral = topology.nodeFor(component.id, 3);
+  for (let index = 0; index < 3; index += 1) stampComplexVoltage(A, b, topology.nodeFor(component.id, index), neutral, branchMap.get(phaseCurrentKey(component.id, index + 1)), phasors[index]);
+}
+
 function stampComplexIdealTransformer(A, topology, component, branchMap) {
   const { ratio } = idealTransformerParameters(component);
   const n1a = nodeIndex(topology.nodeFor(component.id, 0)), n1b = nodeIndex(topology.nodeFor(component.id, 1));
@@ -1698,6 +1767,7 @@ function solveACPoint(circuit, topology, frequency, dcBias) {
     }
     if (component.type === "COUPLED_L") stampComplexCoupledInductor(A, b, topology, component, branchMap, omega);
     if (component.type === "XFMR_IDEAL") stampComplexIdealTransformer(A, topology, component, branchMap);
+    if (component.type === "THREE_PHASE") stampComplexThreePhase(A, b, topology, component, branchMap);
     if (["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type)) stampComplexControlledSource(A, topology, component, branchMap);
   }
   return { solution: solveComplex(A, b), branchMap };
@@ -1741,6 +1811,7 @@ function complexPoint(circuit, topology, solved, frequency, dcBias) {
       componentCurrents[component.id] = primary;
       componentCurrents[secondaryCurrentKey(component.id)] = complex(-primary.re / ratio, -primary.im / ratio);
     }
+    if (component.type === "THREE_PHASE") for (const phase of [1, 2, 3]) componentCurrents[phaseCurrentKey(component.id, phase)] = solved.solution[solved.branchMap.get(phaseCurrentKey(component.id, phase))] ?? complex();
     if (component.type === "GND") componentCurrents[component.id] = complex();
   }
   return { nodeVoltages, componentCurrents };
@@ -1803,9 +1874,10 @@ export function simulate(circuit, settings = {}) {
 
 export function serializeCircuit(circuit) {
   validateCircuitStructure(circuit);
+  const hasThreePhase = circuit.components?.some((component) => component.type === "THREE_PHASE");
   const hasMagnetic = circuit.components?.some((component) => ["COUPLED_L", "XFMR_IDEAL"].includes(component.type));
   const hasBranchControlled = circuit.components?.some((component) => ["CURRENT_SENSOR", "CCCS", "CCVS"].includes(component.type));
-  const version = hasMagnetic ? 4 : hasBranchControlled ? 3 : circuit.components?.some((component) => component.type === "VCVS" || component.type === "VCCS") ? 2 : 1;
+  const version = hasThreePhase ? 5 : hasMagnetic ? 4 : hasBranchControlled ? 3 : circuit.components?.some((component) => component.type === "VCVS" || component.type === "VCCS") ? 2 : 1;
   return JSON.stringify({
     version,
     ...(circuit.geometryVersion !== undefined ? { geometryVersion: circuit.geometryVersion } : {}),
@@ -1822,13 +1894,14 @@ export function deserializeCircuit(text) {
   } catch {
     throw new CircuitError("INVALID_FILE", "JSON 파일을 읽을 수 없습니다.");
   }
-  if (![1, 2, 3, 4].includes(parsed?.version) || !Array.isArray(parsed.components) || !Array.isArray(parsed.wires)) {
-    throw new CircuitError("INVALID_FILE", "Circuit Lab 버전 1, 2, 3 또는 4 회로 파일이 아닙니다.");
+  if (![1, 2, 3, 4, 5].includes(parsed?.version) || !Array.isArray(parsed.components) || !Array.isArray(parsed.wires)) {
+    throw new CircuitError("INVALID_FILE", "Circuit Lab 버전 1, 2, 3, 4 또는 5 회로 파일이 아닙니다.");
   }
+  const hasThreePhase = parsed.components.some((component) => component?.type === "THREE_PHASE");
   const hasMagnetic = parsed.components.some((component) => ["COUPLED_L", "XFMR_IDEAL"].includes(component?.type));
   const hasBranchControlled = parsed.components.some((component) => ["CURRENT_SENSOR", "CCCS", "CCVS"].includes(component?.type));
   const hasVoltageControlled = parsed.components.some((component) => component?.type === "VCVS" || component?.type === "VCCS");
-  const requiredVersion = hasMagnetic ? 4 : hasBranchControlled ? 3 : hasVoltageControlled ? 2 : 1;
+  const requiredVersion = hasThreePhase ? 5 : hasMagnetic ? 4 : hasBranchControlled ? 3 : hasVoltageControlled ? 2 : 1;
   if (parsed.version !== requiredVersion) throw new CircuitError("INVALID_FILE", `이 회로 타입 집합은 version ${requiredVersion}로 저장해야 합니다.`);
   validateCircuitStructure(parsed);
   return {

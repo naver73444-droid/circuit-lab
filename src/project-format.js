@@ -42,7 +42,9 @@ export function validateProjectSettings(settings, importedKeys = new Set(Object.
 
 export function serializeProject(project) {
   const components = project.circuit?.components ?? [];
-  const version = components.some((component) => ["COUPLED_L", "XFMR_IDEAL"].includes(component.type))
+  const version = components.some((component) => component.type === "THREE_PHASE")
+    ? 5
+    : components.some((component) => ["COUPLED_L", "XFMR_IDEAL"].includes(component.type))
     ? 4
     : components.some((component) => ["CURRENT_SENSOR", "CCCS", "CCVS"].includes(component.type))
     ? 3
@@ -68,7 +70,7 @@ export function deserializeProject(text, fallbackSettings = {}) {
     throw new CircuitError("INVALID_FILE", "JSON 파일을 읽을 수 없습니다.");
   }
   const wrapped = payload?.format === "circuit-lab";
-  if (wrapped && ![1, 2, 3, 4].includes(payload.version)) throw new CircuitError("INVALID_FILE", "Circuit Lab 버전 1, 2, 3 또는 4 프로젝트 파일이 아닙니다.");
+  if (wrapped && ![1, 2, 3, 4, 5].includes(payload.version)) throw new CircuitError("INVALID_FILE", "Circuit Lab 버전 1, 2, 3, 4 또는 5 프로젝트 파일이 아닙니다.");
   if (wrapped && payload.circuit?.version !== payload.version) throw new CircuitError("INVALID_FILE", "프로젝트와 회로 version이 일치하지 않습니다.");
   if (wrapped && payload.settings !== undefined && !plainObject(payload.settings)) {
     throw new CircuitError("INVALID_FILE", "분석 설정이 올바른 객체가 아닙니다.");
