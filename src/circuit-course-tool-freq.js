@@ -124,7 +124,7 @@ export const RESONANCE_TOOL = {
   fields: [
     choice('circuit', '연결', 'series', [['series', '직렬 RLC'], ['parallel', '병렬 RLC']], { segment: true }),
     choice('solve', '풀이 종류', 'rlc', [['rlc', 'R·L·C → 공진값'], ['f0', 'f0·L·R → C'], ['band', 'ω0·B·R → L·C']]),
-    amp('source', v => (isSeries(v) ? '전원 전압 Vm' : '전원 전류 Im'), v => (isSeries(v) ? 'V' : 'A'), 20 / Math.SQRT2, 1e-12, 1e9, { name: '전원 크기' }),
+    amp('source', v => (isSeries(v) ? '전원 전압 Vm' : '전원 전류 Im'), v => (isSeries(v) ? 'V' : 'A'), 10, 1e-12, 1e9, { name: '전원 크기' }),
     siNum('R', '저항 R', 'Ω', 2, 1e-6, 1e9),
     siNum('L', '인덕턴스 L', 'H', 1e-3, 1e-12, 1e6, { showIf: v => v.solve !== 'band' }),
     siNum('C', '커패시턴스 C', 'F', 0.4e-6, 1e-15, 1e3, { showIf: v => v.solve === 'rlc' }),

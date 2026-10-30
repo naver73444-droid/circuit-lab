@@ -3,7 +3,7 @@
 //   plot = { title, range: [ωlo, ωhi], xLabel, legend, panels: [{ label, series, marks, hlines, band, cursor, phase, yMin, yMax, logY }] }
 //   series = { points: [[ω, y]…], style: 'exact' | 'approx' | 'base' | 'term' }   marks = [{ w, label }]   hlines = [{ y, label }]
 //   band = [ω1, ω2] (shaded)   cursor = ω (vertical line and a dot on every 'exact' series)
-const W = 480, L = 54, R = 12, PANEL = 190, GAP = 34, TOP = 12;
+const W = 400, L = 50, R = 10, PANEL = 170, GAP = 34, TOP = 12;
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const STYLE = {
   exact: 'style="stroke:var(--accent)" stroke-width="2.5" fill="none"',
@@ -56,25 +56,25 @@ function panelSvg(panel, y0, range, xOf, withXLabels) {
       for (let m = 2; m <= 9; m++) { const w = m * 10 ** e; if (w < range[1]) body += '<path d="M' + xOf(w).toFixed(1) + ' ' + y0 + 'v' + PANEL + '" style="stroke:var(--line-soft)" stroke-width="0.6"/>'; }
       const x = xOf(10 ** e).toFixed(1);
       body += '<path d="M' + x + ' ' + y0 + 'v' + PANEL + '" style="stroke:var(--grid)" stroke-width="1.2"/>';
-      if (withXLabels) body += '<text x="' + x + '" y="' + (y0 + PANEL + 18) + '" font-size="14" text-anchor="middle">' + decadeText(10 ** e) + '</text>';
+      if (withXLabels) body += '<text x="' + x + '" y="' + (y0 + PANEL + 18) + '" font-size="15" text-anchor="middle">' + decadeText(10 ** e) + '</text>';
     }
   } else {
     const step = linearStep(range[1] - range[0]);
     for (let w = Math.ceil(range[0] / step) * step; w <= range[1]; w += step) {
       const x = xOf(w).toFixed(1);
       body += '<path d="M' + x + ' ' + y0 + 'v' + PANEL + '" style="stroke:var(--grid)" stroke-width="1"/>';
-      if (withXLabels) body += '<text x="' + x + '" y="' + (y0 + PANEL + 18) + '" font-size="14" text-anchor="middle">' + siText(w) + '</text>';
+      if (withXLabels) body += '<text x="' + x + '" y="' + (y0 + PANEL + 18) + '" font-size="15" text-anchor="middle">' + siText(w) + '</text>';
     }
   }
   for (let y = lo; y <= hi + step / 2; y += step) {
     const py = yOf(y).toFixed(1);
     body += '<path d="M' + L + ' ' + py + 'H' + x1 + '" style="stroke:var(--grid)" stroke-width="' + (Math.abs(y) < step / 2 ? 1.6 : 0.8) + '"/>'
-      + '<text x="' + (L - 6) + '" y="' + (Number(py) + 5) + '" font-size="14" text-anchor="end">' + short(Math.abs(y) < step / 1e6 ? 0 : y) + '</text>';
+      + '<text x="' + (L - 6) + '" y="' + (Number(py) + 5) + '" font-size="15" text-anchor="end">' + short(Math.abs(y) < step / 1e6 ? 0 : y) + '</text>';
   }
   for (const h of panel.hlines ?? []) {
     const py = yOf(h.y).toFixed(1);
     body += '<path d="M' + L + ' ' + py + 'H' + x1 + '" style="stroke:var(--warning)" stroke-width="1.5" stroke-dasharray="5 4"/>'
-      + (h.label ? '<text x="' + (x1 - 4) + '" y="' + (Number(py) - 5) + '" font-size="13" text-anchor="end" style="fill:var(--warning)">' + esc(h.label) + '</text>' : '');
+      + (h.label ? '<text x="' + (x1 - 4) + '" y="' + (Number(py) - 5) + '" font-size="14" text-anchor="end" style="fill:var(--warning)">' + esc(h.label) + '</text>' : '');
   }
   for (const s of panel.series) {
     let d = '', pen = false;
@@ -89,7 +89,7 @@ function panelSvg(panel, y0, range, xOf, withXLabels) {
     if (!(m.w >= range[0] && m.w <= range[1])) return;
     const x = xOf(m.w).toFixed(1);
     body += '<path d="M' + x + ' ' + y0 + 'v' + PANEL + '" style="stroke:var(--success)" stroke-width="1.5" stroke-dasharray="2 3"/>'
-      + (m.label ? '<text x="' + (Number(x) + 3) + '" y="' + (y0 + 15 + 15 * (i % 2)) + '" font-size="13" style="fill:var(--success)">' + esc(m.label) + '</text>' : '');
+      + (m.label ? '<text x="' + (Number(x) + 3) + '" y="' + (y0 + 15 + 15 * (i % 2)) + '" font-size="14" style="fill:var(--success)">' + esc(m.label) + '</text>' : '');
   });
   if (Number.isFinite(panel.cursor) && panel.cursor >= range[0] && panel.cursor <= range[1]) {
     const x = xOf(panel.cursor).toFixed(1);
@@ -99,7 +99,7 @@ function panelSvg(panel, y0, range, xOf, withXLabels) {
       if (Number.isFinite(y)) body += '<circle cx="' + x + '" cy="' + yOf(y).toFixed(1) + '" r="5" style="fill:var(--accent);stroke:var(--text)"/>';
     }
   }
-  body += '<text x="' + (L + 6) + '" y="' + (y0 + PANEL - 8) + '" font-size="14" font-weight="bold">' + esc(panel.label) + '</text>';
+  body += '<text x="' + (L + 6) + '" y="' + (y0 + PANEL - 8) + '" font-size="15" font-weight="bold">' + esc(panel.label) + '</text>';
   return body;
 }
 
@@ -110,7 +110,7 @@ export function freqPlot(plot) {
   const n = plot.panels.length, H = TOP + n * PANEL + (n - 1) * GAP + 44;
   const panels = plot.panels.map((p, i) => panelSvg(p, TOP + i * (PANEL + GAP), range, xOf, true)).join('');
   return '<section class="circuit-course-card cc-freq" data-cc-freq><h3>' + esc(plot.title) + '</h3><svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(plot.title) + '">' + panels
-    + '<text x="' + (W - R) + '" y="' + (H - 6) + '" font-size="14" text-anchor="end">' + esc(plot.xLabel ?? 'ω (rad/s, 로그 눈금)') + '</text></svg>'
+    + '<text x="' + (W - R) + '" y="' + (H - 6) + '" font-size="15" text-anchor="end">' + esc(plot.xLabel ?? 'ω (rad/s, 로그 눈금)') + '</text></svg>'
     + (plot.legend ? '<p class="circuit-course-note">' + esc(plot.legend) + '</p>' : '') + '</section>';
 }
 

@@ -2,7 +2,7 @@
  * One live course tool: every input updates the result at once (no apply button). A value that cannot be used keeps the last valid values and
  * result on screen and says why next to the field. Pure rules: circuit-course-tool-common.js and the tool definition; DOM: circuit-course-tool-view.js.
  */
-import { FIELD_KEPT, dataFields, draftText, evaluateTool, isShown, initialValues, presetValues, reviewDrafts, sliderOf, sliderValue, toDisplay, validateField, verifyExpectations } from './circuit-course-tool-common.js';
+import { FIELD_KEPT, dataFields, draftText, fieldDraft, siDraftText, evaluateTool, isShown, initialValues, presetValues, reviewDrafts, sliderOf, sliderValue, validateField, verifyExpectations } from './circuit-course-tool-common.js';
 import { createCourseToolView } from './circuit-course-tool-view.js';
 
 export function createCourseTool(host, def, env) {
@@ -10,7 +10,7 @@ export function createCourseTool(host, def, env) {
   const fields = new Map(dataFields(def).map(f => [f.key, f]));
   let basis = env.getBasis(), values = initialValues(def), drafts = {}, errors = {}, evalErrors = {}, active = -1, destroyed = false, result;
 
-  function makeDrafts() { for (const f of fields.values()) if (f.kind === 'number') drafts[f.key] = draftText(toDisplay(f, values[f.key], basis)); }
+  function makeDrafts() { for (const f of fields.values()) if (f.kind === 'number') drafts[f.key] = fieldDraft(f, values[f.key], basis); }
   function verification() {
     if (active < 0) return null;
     const preset = def.presets[active], shown = evaluateTool(def, values, preset.basis ?? 'rms');
@@ -55,7 +55,7 @@ export function createCourseTool(host, def, env) {
     const target = event.target, slider = target.dataset?.ccSlider, key = slider ?? target.dataset?.ccKey;
     if (!key || !fields.has(key)) return;
     const f = fields.get(key);
-    if (f.kind === 'number') { drafts[key] = slider ? draftText(sliderValue(sliderOf(f, values), Number(target.value))) : target.value; update(key); }
+    if (f.kind === 'number') { drafts[key] = slider ? (f.si ? siDraftText : draftText)(sliderValue(sliderOf(f, values), Number(target.value))) : target.value; update(key); }
     else update(key, target.value);
     if (f.kind === 'select' && !Object.keys(errors).length) makeDrafts();
     render();

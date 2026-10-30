@@ -3648,7 +3648,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
   const CC_HOST = "#circuit-course-host";
   const ccState = () => ev(`${L}.getCircuitCourseState()`);
   const ccPanel = (id) => `${CC_HOST} [data-circuit-course-tool-panel=${id}]`; // the id is a plain identifier: no quotes, so the selector can sit inside any JS string
-  const CC_TOOLS = ["complex", "three-phase-ext", "loads", "max-power", "coupled", "transformer"];
+  const CC_TOOLS = ["complex", "three-phase-ext", "loads", "max-power", "coupled", "transformer", "bode", "resonance", "filters", "scaling"];
   async function openCircuitCourse(view) {
     await navigate("/", view);
     await click("#circuit-course-workspace-tab");
@@ -3681,7 +3681,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
   test("circuit course tools: all six live tabs open without an apply button and every lecture example passes its check (검산 PASS)", async () => {
     await openCircuitCourse();
     const tabs = await ev(`[...document.querySelectorAll("${CC_HOST} [data-circuit-course-tool]")].map((button) => button.dataset.circuitCourseTool)`);
-    assert.deepEqual([...tabs].sort(), ["y-delta", ...CC_TOOLS].sort(), "the Y–Δ tool and the six live tools are all tabs, filed under their chapters");
+    assert.deepEqual([...tabs].sort(), ["y-delta", ...CC_TOOLS].sort(), "the Y–Δ tool and the ten live tools are all tabs, filed under their chapters");
     for (const id of CC_TOOLS) {
       await ccGo("tool", id);
       assert.equal((await ccState()).tool, id);
@@ -3881,7 +3881,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
 
   test("circuit course navigation on a phone (390x844): chapter row + tab row of one line each, the last chapter/tab is remembered, long example lists start folded with a summary", async () => {
     await openCircuitCourse({ width: 390, height: 844, mobile: true });
-    assert.deepEqual(await ev(`[...document.querySelectorAll("${CC_HOST} [data-circuit-course-chapter]")].map((b) => b.dataset.circuitCourseChapter)`), ["ch9-10", "ch11", "ch12", "ch13", "mine"]);
+    assert.deepEqual(await ev(`[...document.querySelectorAll("${CC_HOST} [data-circuit-course-chapter]")].map((b) => b.dataset.circuitCourseChapter)`), ["ch9-10", "ch11", "ch12", "ch13", "ch14", "mine"]);
     const start = await ccState();
     assert.equal(start.chapter, "ch9-10");
     assert.equal(start.experimentId, "phasor-wave");
@@ -3893,7 +3893,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
       return { open: open.map((row) => row.dataset.circuitCourseItems), chapterHeight: box(chapterRow).height, itemsHeight: open[0] ? box(open[0]).height : 0, lines: new Set(buttons.map((b) => Math.round(box(b).top))).size,
         smallest: Math.min(...buttons.map((b) => box(b).height)), current: document.querySelector("${CC_HOST} [data-circuit-course-chapter][aria-current=true]")?.dataset.circuitCourseChapter ?? null };
     })()`);
-    for (const chapter of ["ch9-10", "ch11", "ch12", "ch13", "mine"]) {
+    for (const chapter of ["ch9-10", "ch11", "ch12", "ch13", "ch14", "mine"]) {
       await click(`${CC_HOST} [data-circuit-course-chapter="${chapter}"]`);
       const row = await rows();
       assert.deepEqual(row.open, [chapter], `${chapter}: only its tab row is visible`);

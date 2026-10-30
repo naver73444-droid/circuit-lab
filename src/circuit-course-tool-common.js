@@ -39,6 +39,15 @@ export function validateValues(def, values) {
 
 // Draft text of a number: ten significant digits, no float noise (0.30000000000000004 → 0.3).
 export const draftText = n => String(Number(n.toPrecision(10)));
+// A field typed with SI prefixes is also shown with one (engineering steps, 'u' for micro so it can be typed back): 2e-6 → "2u", 312.5e-6 → "312.5u".
+const SI_STEPS = ['p', 'n', 'u', 'm', '', 'k', 'M', 'G'];
+export function siDraftText(n) {
+  if (n === 0 || !Number.isFinite(n)) return draftText(n);
+  const e = Math.min(9, Math.max(-12, Math.floor(Math.log10(Math.abs(Number(n.toPrecision(10)))) / 3) * 3));
+  return draftText(n / 10 ** e) + SI_STEPS[e / 3 + 4];
+}
+/** The on-screen text of a number field's value (display basis). */
+export const fieldDraft = (field, value, basis) => (field.si ? siDraftText : draftText)(toDisplay(field, value, basis));
 export const FIELD_KEPT = ' 마지막 유효 값을 쓰고 있습니다.';
 /**
  * Re-read every shown number field from its on-screen text before a calculation. A draft that still equals the text of the stored value is
@@ -49,7 +58,7 @@ export function reviewDrafts(def, values, drafts, basis) {
   const candidate = { ...values }, errors = {};
   for (const field of dataFields(def)) {
     if (field.kind !== 'number' || !isShown(field, candidate) || drafts[field.key] === undefined) continue;
-    if (drafts[field.key] === draftText(toDisplay(field, values[field.key], basis))) continue;
+    if (drafts[field.key] === fieldDraft(field, values[field.key], basis)) continue;
     try { const internal = fromDisplay(field, parseCourseNumber(drafts[field.key], { si: field.si }), basis); validateField(field, internal); candidate[field.key] = internal; } catch (e) { errors[field.key] = e.message + FIELD_KEPT; }
   }
   return { candidate, errors };
