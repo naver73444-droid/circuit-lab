@@ -14,7 +14,8 @@ import { formatPortResult, probeKeysForTarget } from "./ui-model.js";
 import { createSweepRunner } from "./sweep-runner.js";
 import { sweepLegendMarkup, syncSweepStatus } from "./sweep-panel.js";
 import { setSingleSelection } from "./selection-model.js";
-import { pulseWindowHint } from "./scope-model.js";
+import { engineering, pulseWindowHint } from "./scope-model.js";
+import { refinedTransientStep } from "./analysis-policy.js";
 import { presentProbe as presentProbeIn, synchronizeIntent as synchronizeIntentIn } from "./run-state.js";
 
 export { createRunState } from "./run-state.js";
@@ -254,6 +255,9 @@ export function createAnalysisRunner(deps) {
     const serial = ++state.runSerial;
     const circuit = structuredClone(state.circuit);
     const settings = structuredClone(state.settings);
+    // A step too coarse for the circuit's time constant is refined for this run only (the typed settings stay).
+    const refined = settings.analysis === "transient" ? refinedTransientStep(circuit, settings) : null;
+    if (refined) settings.step = String(refined.step);
     const startedAt = requestedAt;
     state.runState = { status: "running", analysis: state.settings.analysis, generation, error: null };
     setStatus(automatic ? "자동 해석 중…" : "해석 중…", "running");
@@ -274,7 +278,7 @@ export function createAnalysisRunner(deps) {
       const points = state.result.points.length;
       elements["result-summary"].textContent = `${state.settings.analysis === "dc" ? "DC 동작점" : state.settings.analysis === "transient" ? "시간응답" : "AC 주파수"} · ${points.toLocaleString()}개 점 · 현재 회로 결과`;
       state.lastRunMs = performance.now() - startedAt;
-      setStatus(`${automatic ? "최신 결과 · 자동" : "해석 완료"} · ${state.lastRunMs.toFixed(0)} ms`, "ready");
+      setStatus(`${automatic ? "최신 결과 · 자동" : "해석 완료"} · ${state.lastRunMs.toFixed(0)} ms${refined ? ` · τ ${engineering(refined.tau, "s", 3)}에 맞춰 간격 ${engineering(refined.step, "s", 3)}` : ""}`, "ready");
       setAutoHint(`완료 · ${state.lastRunMs.toFixed(1)} ms${state.autoUpdate ? " · 자동 갱신" : ""}`);
       renderAll();
       try { onResultReady?.(state.result.analysis); } catch { /* a failing observer must not break the run lifecycle */ }

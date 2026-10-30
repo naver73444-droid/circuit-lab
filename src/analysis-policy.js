@@ -63,3 +63,31 @@ export function suggestAnalysis(circuit, previous, intent = "auto") {
   const limited = warnings.length ? " · 빠른 변화가 표본 한도를 넘었습니다. 구간을 줄이세요" : "";
   return { settings, reason: `${intent === "auto" ? "자동: " : ""}시간응답${focusedStep ? " · 첫 계단응답 중심" : ""} · 회로 값으로 범위 자동 설정${limited}` };
 }
+
+/** The fastest natural time scale of the R, L, C values (R·C, L/R, √(LC)), or 0 when the circuit has none. A heuristic like the one above. */
+export function fastestTimeConstant(circuit) {
+  const values = (type) => circuit.components.filter((component) => component.type === type).map((component) => number(component.props?.value)).filter((value) => value > 0 && Number.isFinite(value));
+  const r = values("R"), c = values("C"), l = values("L");
+  const scales = [];
+  if (r.length && c.length) scales.push(Math.min(...r) * Math.min(...c));
+  if (r.length && l.length) scales.push(Math.min(...l) / Math.max(...r));
+  if (l.length && c.length) scales.push(Math.sqrt(Math.min(...l) * Math.min(...c)));
+  return scales.length ? Math.min(...scales) : 0;
+}
+
+const floor125 = (value) => { const decade = 10 ** Math.floor(Math.log10(value)); return [5, 2, 1].map((m) => m * decade).find((step) => step <= value * (1 + 1e-9)) ?? decade; };
+
+/**
+ * The step a transient run actually uses: the set step, or a finer one when it leaves fewer than 10 samples per fastest time constant
+ * (the curve turns into visible corners and the drawn peak falls short: 1.5 kΩ·47 nF at 10 µs peaks at 2.9 mA, not 3.3 mA). The finer step is
+ * τ/20 on a 1-2-5 grid, never past the solver's 20 000 points. The settings stay as typed; null when nothing changes.
+ */
+export function refinedTransientStep(circuit, settings) {
+  let start, end, step;
+  try { start = parseValue(settings.start ?? 0); end = parseValue(settings.end); step = parseValue(settings.step); } catch { return null; }
+  const tau = fastestTimeConstant(circuit);
+  if (!(tau > 0) || !(end > start) || !(step > tau / 10)) return null;
+  const limit = (end - start) / 19990;
+  const finer = Math.max(floor125(tau / 20), limit);
+  return finer < step * 0.999 ? { step: finer, tau } : null;
+}
