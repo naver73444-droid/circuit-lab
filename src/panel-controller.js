@@ -1,4 +1,8 @@
+import { TABLET_QUERY } from './responsive-editor.js';
+
 /** Fixed editor layout. Desktop: palette | canvas | properties-or-results, waveform below (the "파형 크게" button swaps the split).
+ * Touch tablet held sideways (iPad landscape): the canvas on the left and one panel at a time in the right column, chosen from the same
+ * tab bar (there labelled 부품 · 속성 · 결과 · 파형) placed above that column; nothing scrolls.
  * Phone: one panel at a time under the canvas, chosen from a bottom tab bar (회로 · 속성 · 결과 · 파형). "회로" is the canvas with the
  * part list right under it: from another panel it scrolls back to the canvas, from the canvas it scrolls on to the part list. The
  * highlighted tab follows the scroll position: the open panel's tab while that panel fills the screen, 회로 while the canvas does.
@@ -7,7 +11,9 @@ const PANELS = { palette: 'palette-panel', inspector: 'inspector-panel', results
 const RESULT_PANES = { phasor: 'phasor-panel', port: 'port-panel' };
 
 export function createPanelController({ beforeChange = () => {}, onChange = () => {}, isActive = () => true } = {}) {
-  const mobile = matchMedia('(max-width: 899px)');
+  const mobile = matchMedia('(max-width: 899px)'), tablet = matchMedia(TABLET_QUERY);
+  // Phone and tablet show one panel at a time (phoneView); the desktop shows them all with 속성/결과 sharing the side panel.
+  const single = () => mobile.matches || tablet.matches;
   const workbench = document.getElementById('workbench');
   const side = document.getElementById('side-panel');
   const nodes = Object.fromEntries(Object.entries(PANELS).map(([name, id]) => [name, document.getElementById(id)]));
@@ -23,8 +29,8 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
   const sideShows = (name) => name === 'inspector' || name === 'results';
   function isOpen(name) {
     if (name in RESULT_PANES) return isOpen('results') && resultView === name;
-    if (sideShows(name)) return mobile.matches ? phoneView === name : sideView === name;
-    return mobile.matches ? phoneView === name : name in PANELS;
+    if (sideShows(name)) return single() ? phoneView === name : sideView === name;
+    return single() ? phoneView === name : name in PANELS;
   }
   function notify() {
     if (frame !== null) return;
@@ -36,13 +42,18 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
       const open = isOpen(name);
       nodes[name].hidden = !open; nodes[name].inert = !open || !active;
     }
-    const sideOpen = !mobile.matches || sideShows(phoneView);
+    const sideOpen = !single() || sideShows(phoneView);
     side.hidden = !sideOpen; side.inert = !sideOpen || !active;
     for (const name of Object.keys(RESULT_PANES)) { panes[name].hidden = resultView !== name; }
     for (const button of viewButtons) {
-      const opened = mobile.matches ? phoneView === button.dataset.view : sideView === button.dataset.view;
-      // The "new result" dot only means something on the phone tab bar, and only until that panel is looked at.
-      if (button.dataset.fresh && (!mobile.matches || opened)) { delete button.dataset.fresh; button.setAttribute('aria-label', (button.textContent ?? '').trim()); }
+      // The tab for the canvas and part list is 회로 on the phone (the canvas is above it) and 부품 on the tablet (the canvas is beside it).
+      if (button.dataset.view === 'palette' && tabBar?.contains(button)) {
+        const label = tablet.matches ? '부품' : '회로';
+        if (button.textContent !== label) { button.textContent = label; button.title = tablet.matches ? '부품 목록' : '회로 캔버스와 부품 목록'; }
+      }
+      const opened = single() ? phoneView === button.dataset.view : sideView === button.dataset.view;
+      // The "new result" dot only means something on the phone/tablet tab bar, and only until that panel is looked at.
+      if (button.dataset.fresh && (!single() || opened)) { delete button.dataset.fresh; button.setAttribute('aria-label', (button.textContent ?? '').trim()); }
     }
     current = measureCurrent();
     markTabs();
@@ -52,7 +63,7 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
   function markTabs() {
     for (const button of viewButtons) {
       const onPhoneBar = mobile.matches && tabBar?.contains(button);
-      const selected = onPhoneBar ? current === button.dataset.view : mobile.matches ? phoneView === button.dataset.view : sideView === button.dataset.view;
+      const selected = onPhoneBar ? current === button.dataset.view : single() ? phoneView === button.dataset.view : sideView === button.dataset.view;
       button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1;
     }
   }
@@ -126,7 +137,7 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
   let flashTimer = null;
   function notifyResult(name = 'wave') {
     if (!isActive() || !(name in PANELS)) return;
-    if (mobile.matches) {
+    if (single()) {
       if (isOpen(name)) return;
       for (const button of viewButtons) {
         if (button.dataset.view !== name || button.closest?.('.side-tabs')) continue;
@@ -169,9 +180,10 @@ export function createPanelController({ beforeChange = () => {}, onChange = () =
     sizeButton.title = large ? '회로 영역을 다시 크게' : '파형 영역을 크게 (회로 영역은 작아집니다)';
   });
   mobile.addEventListener('change', () => { beforeChange(); synchronize(); });
+  tablet.addEventListener?.('change', () => { beforeChange(); synchronize(); });
   synchronize();
   return {
     show, showCanvas, isOpen, mobile, synchronize, notifyResult, cancelInteractions: beforeChange,
-    inspect: () => ({ mobile: mobile.matches, side: sideView, view: phoneView, current, result: resultView, fresh: freshViews() }),
+    inspect: () => ({ mobile: mobile.matches, tablet: tablet.matches, side: sideView, view: phoneView, current, result: resultView, fresh: freshViews() }),
   };
 }
