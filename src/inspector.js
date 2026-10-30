@@ -10,6 +10,7 @@ import { acScale, amplitudeText, normalizeAcBasis } from "./ac-basis.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
 import { actualCurrentText, currentReferenceSign, isCurrentReferenceFlipped, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection, signedCurrent } from "./current-direction.js";
 import { selectAllOnUserFocus } from "./field-select.js";
+import { PULSE_DERIVED_KEYS, pulseDerivedValues, pulseEdit } from "./pulse-timing.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
 const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기" };
@@ -17,6 +18,11 @@ const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접�
 /** Props that hold text choices, not numbers: they skip the numeric input classification. */
 const TEXT_PROPS = new Set(["ref", "mode", "coupling", "dots"]);
 /** Props that must be strictly positive (R, C, L value; coupled-inductor L1/L2; transformer ratio n). */
+const isDerived = (key) => PULSE_DERIVED_KEYS.includes(key);
+/** What a field shows when it has no draft: the stored prop, or for 주파수·듀티 the value derived from period and width. */
+const committedValue = (component, key) => (isDerived(key) ? pulseDerivedValues(component?.props ?? {})[key] : component?.props?.[key]);
+/** A 주파수·듀티 entry that reads as a number but is out of range (duty 0 or 100 and over, frequency 0): no period/width follows from it. */
+const unusableDerived = (component, key, value) => isDerived(key) && value !== committedValue(component, key) && !pulseEdit(component.props ?? {}, key, value);
 const needsPositive = (type, key) => (["R", "C", "L"].includes(type) && key === "value") || (type === "COUPLED_L" && (key === "L1" || key === "L2")) || (type === "XFMR_IDEAL" && key === "n");
 
 export function createInspector(deps) {
@@ -78,8 +84,8 @@ export function createInspector(deps) {
       const classified = update.component
         ? controlledSourceInputModel(update.component.type, update.value) ?? classifyNumericInput(update.value, { positive: needsPositive(update.component.type, update.key) })
         : classifyNumericInput(update.value, { positive: update.key !== "start" });
-      if (classified.status === "valid") continue;
-      inputDrafts.set(update.kind, update.id, update.key, update.value, update.object[update.key]);
+      if (classified.status === "valid" && !(update.kind === "prop" && unusableDerived(update.component, update.key, update.value))) continue;
+      inputDrafts.set(update.kind, update.id, update.key, update.value, update.kind === "prop" ? committedValue(update.component, update.key) : update.object[update.key]);
       if (update.kind === "setting") {
         elements["advanced-analysis"].open = true;
         // A draft can belong to a currently hidden analysis. Make it visible before correction.
@@ -99,6 +105,17 @@ export function createInspector(deps) {
       setStatus(`입력 오류 · ${update.id ?? "해석"}.${update.key} · 실행/저장하지 않음`, "error");
       update.control?.focus();
       return false;
+    }
+    // 주파수·듀티 are not stored: an edited one becomes the period/width it implies, unless that field was edited too.
+    for (const [mapKey, update] of [...updates]) {
+      if (update.kind !== "prop" || !isDerived(update.key)) continue;
+      updates.delete(mapKey);
+      inputDrafts.delete("prop", update.id, update.key);
+      if (update.value === committedValue(update.component, update.key)) continue;
+      for (const [key, value] of Object.entries(pulseEdit(update.component.props, update.key, update.value))) {
+        const stored = inputDrafts.key("prop", update.id, key), other = updates.get(stored);
+        if (!other || other.value === String(update.component.props[key] ?? "")) updates.set(stored, { ...update, key, value, control: null });
+      }
     }
     const changed = [...updates.values()].filter((update) => String(update.object[update.key] ?? "") !== update.value);
     for (const update of updates.values()) inputDrafts.delete(update.kind, update.id, update.key);
@@ -359,7 +376,9 @@ export function createInspector(deps) {
         html += field(`오프셋 (${unit})`, "offset", p.offset ?? "0") + field(`진폭 (${unit}pk)`, "amplitude", p.amplitude ?? "0", "", null, null, state.settings.analysis === "transient") + field("주파수 (Hz)", "frequency", p.frequency ?? "60") + field("위상 (°)", "phase", p.phase ?? "0", "sin 기준");
       }
       if (p.mode === "PULSE") {
-        html += field(`낮은 값 (${unit})`, "pulseV1", p.pulseV1 ?? "0") + field(`높은 값 (${unit})`, "pulseV2", p.pulseV2 ?? "0", "", null, null, state.settings.analysis === "transient") + field("지연 (s)", "pulseDelay", p.pulseDelay ?? "0") + field("상승시간 (s)", "pulseRise", p.pulseRise ?? "0") + field("하강시간 (s)", "pulseFall", p.pulseFall ?? "0") + field("펄스 폭 (s)", "pulseWidth", p.pulseWidth ?? "1") + field("주기 (s)", "pulsePeriod", p.pulsePeriod ?? "2");
+        html += field(`낮은 값 (${unit})`, "pulseV1", p.pulseV1 ?? "0") + field(`높은 값 (${unit})`, "pulseV2", p.pulseV2 ?? "0", "", null, null, state.settings.analysis === "transient")
+          + field("주파수 (Hz)", "pulseFrequency", pulseDerivedValues(p).pulseFrequency, "주기 = 1/주파수 · 듀티는 그대로") + field("듀티 (%)", "pulseDuty", pulseDerivedValues(p).pulseDuty, "펄스 폭 = 듀티×주기 (상승·하강 제외)")
+          + field("지연 (s)", "pulseDelay", p.pulseDelay ?? "0") + field("상승시간 (s)", "pulseRise", p.pulseRise ?? "0") + field("하강시간 (s)", "pulseFall", p.pulseFall ?? "0") + field("펄스 폭 (s)", "pulseWidth", p.pulseWidth ?? "1") + field("주기 (s)", "pulsePeriod", p.pulsePeriod ?? "2");
       }
       html += `</fieldset><fieldset class="source-group${acActive ? " active-group" : ""}"><legend>AC 해석</legend>`;
       html += `<p class="source-help">크기가 0이면 AC 자극이 없습니다. RMS = 크기/√2.</p>`;
@@ -402,23 +421,26 @@ export function createInspector(deps) {
         if (!isCircuitUiActive()) return;
         const current = state.circuit.components.find((item) => item.id === selected.id);
         if (!current) return;
-        inputDrafts.set("prop", current.id, control.dataset.prop, control.value, current.props[control.dataset.prop]);
-        if (current.props[control.dataset.prop] === control.value) { inputDrafts.delete("prop", current.id, control.dataset.prop); updateDraftNotice(); scheduleAutoRun(); return; }
+        inputDrafts.set("prop", current.id, control.dataset.prop, control.value, committedValue(current, control.dataset.prop));
+        if (committedValue(current, control.dataset.prop) === control.value) { inputDrafts.delete("prop", current.id, control.dataset.prop); updateDraftNotice(); scheduleAutoRun(); return; }
         if (control.dataset.prop !== "ref") {
           const classified = controlledSourceInputModel(current.type, control.value) ?? classifyNumericInput(control.value, { positive: needsPositive(current.type, control.dataset.prop) });
-          if (classified.status !== "valid" && control.tagName !== "SELECT") {
-            control.classList.add(classified.status === "editing" ? "input-editing" : "input-invalid");
-            setStatus(classified.status === "editing" ? "입력 중" : "잘못된 값", classified.status === "editing" ? "running" : "error");
+          if ((classified.status !== "valid" || unusableDerived(current, control.dataset.prop, control.value)) && control.tagName !== "SELECT") {
+            const editing = classified.status === "editing";
+            control.classList.add(editing ? "input-editing" : "input-invalid");
+            setStatus(editing ? "입력 중" : control.dataset.prop === "pulseDuty" ? "잘못된 값 · 듀티는 0과 100 사이(%)" : "잘못된 값", editing ? "running" : "error");
             elements["csv-button"].disabled = true;
             return;
           }
         }
         inputDrafts.delete("prop", current.id, control.dataset.prop);
-        mutate(() => { current.props[control.dataset.prop] = control.value; });
-        if (control.dataset.prop === "mode" || control.dataset.prop === "coupling") renderInspector();
+        const derivedEdit = isDerived(control.dataset.prop) ? pulseEdit(current.props, control.dataset.prop, control.value) : null;
+        mutate(() => { if (derivedEdit) Object.assign(current.props, derivedEdit); else current.props[control.dataset.prop] = control.value; });
+        // Linked fields show the new values: source mode and coupling change the field set; frequency, duty, width and period move together.
+        if (["mode", "coupling", "pulseFrequency", "pulseDuty", "pulseWidth", "pulsePeriod"].includes(control.dataset.prop)) renderInspector();
       };
       if (control.tagName === "INPUT") control.addEventListener("input", () => {
-        inputDrafts.set("prop", component.id, control.dataset.prop, control.value, component.props[control.dataset.prop]);
+        inputDrafts.set("prop", component.id, control.dataset.prop, control.value, committedValue(component, control.dataset.prop));
         const classified = control.dataset.prop === "ref" ? { status: "valid" } : controlledSourceInputModel(component.type, control.value) ?? classifyNumericInput(control.value, { positive: needsPositive(component.type, control.dataset.prop) });
         control.classList.toggle("input-editing", classified.status === "editing");
         control.classList.toggle("input-invalid", classified.status === "invalid");
