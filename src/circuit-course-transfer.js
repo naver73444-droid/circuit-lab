@@ -89,14 +89,20 @@ export function parseTransfer(text) {
     while (peek() === '+' || peek() === '-') { const op = take().t, right = term(); left = op === '+' ? rAdd(left, right) : rSub(left, right); }
     return left;
   }
+  // An implicit product (200s, s(s+2), (s+1)(s+2)) binds tighter than * and /, the way H is written by hand:
+  // 200s/(s+2)(s+10) is 200s/((s+2)(s+10)) and 1/2s is 1/(2s).
   function term() {
-    let left = unary();
+    let left = implicit();
     for (;;) {
-      if (peek() === '*') { take(); left = rMul(left, unary()); }
-      else if (peek() === '/') { take(); left = rDiv(left, unary()); }
-      else if (startsFactor(peek())) left = rMul(left, power()); // implicit product: 200s, s(s+2), (s+1)(s+2)
+      if (peek() === '*') { take(); left = rMul(left, implicit()); }
+      else if (peek() === '/') { take(); left = rDiv(left, implicit()); }
       else return left;
     }
+  }
+  function implicit() {
+    let left = unary();
+    while (startsFactor(peek())) left = rMul(left, power());
+    return left;
   }
   function unary() {
     if (peek() === '-') { take(); return rNeg(unary()); }
@@ -165,33 +171,50 @@ function polyRoots(p) {
   return z;
 }
 
+const derivative = q => q.slice(1).map((c, i) => c * (i + 1));
+/** Greedy grouping: a root within tol·|r| of a group's mean joins it. */
+function groupRoots(roots, tol) {
+  const groups = [];
+  for (const r of roots) {
+    const g = groups.find(x => cabs(csub({ re: x.sum.re / x.mult, im: x.sum.im / x.mult }, r)) <= tol * Math.max(cabs(r), 1e-300));
+    if (g) { g.sum = { re: g.sum.re + r.re, im: g.sum.im + r.im }; g.mult++; } else groups.push({ sum: { ...r }, mult: 1 });
+  }
+  return groups.map(g => ({ root: { re: g.sum.re / g.mult, im: g.sum.im / g.mult }, mult: g.mult }));
+}
 /**
- * Roots grouped by value: [{ root: {re, im}, mult }]; origin roots come back as root 0. Repeated roots come out of the iteration spread
- * by about ε^(1/m), so roots within a relative 3e-4 of a group's mean are merged; a lone root with |im| ≤ 1e-7·|root| (a merged one:
- * 3e-4) is taken as real. Coursework never has distinct roots that close.
+ * Roots grouped by value: [{ root: {re, im}, mult }]; origin roots come back as root 0. A root of multiplicity m comes out of the
+ * iteration spread by about ε^(1/m) (7e-4 for m = 5, a few 1e-2 for m = 8), often as near-real complex pairs. Grouping starts tight and
+ * widens (3e-4 → 3e-3 → 2e-2 → 6e-2) while a group is left that looks like a split real root (|im| below 1 % of |root|) or has no conjugate
+ * partner; merged roots are then polished by Newton steps on the (m−1)-th derivative. Coursework never has distinct roots that close.
  */
 export function rootsOf(p) {
   const poly = trimPoly(p);
   let origin = 0;
   while (origin < poly.length - 1 && poly[origin] === 0) origin++;
-  const rest = poly.slice(origin);
-  const groups = [];
-  for (const r of polyRoots(rest)) {
-    const g = groups.find(x => cabs(csub({ re: x.sum.re / x.mult, im: x.sum.im / x.mult }, r)) <= 3e-4 * Math.max(cabs(r), 1e-300));
-    if (g) { g.sum = { re: g.sum.re + r.re, im: g.sum.im + r.im }; g.mult++; } else groups.push({ sum: { ...r }, mult: 1 });
+  const rest = poly.slice(origin), raw = polyRoots(rest);
+  let groups, tol;
+  for (tol of [3e-4, 3e-3, 2e-2, 6e-2]) {
+    groups = groupRoots(raw, tol).map(g => ({ ...g, root: Math.abs(g.root.im) <= (g.mult > 1 ? tol : 1e-7) * cabs(g.root) ? { re: g.root.re, im: 0 } : g.root }));
+    const paired = g => g.root.im === 0 || groups.some(h => h !== g && h.mult === g.mult && cabs(csub(h.root, { re: g.root.re, im: -g.root.im })) <= 10 * tol * cabs(g.root));
+    if (groups.every(g => paired(g) && (g.root.im === 0 || Math.abs(g.root.im) > 1e-2 * cabs(g.root)))) break;
   }
-  const base = rest, derivative = q => q.slice(1).map((c, i) => c * (i + 1));
   const out = groups.map(g => {
-    let root = { re: g.sum.re / g.mult, im: g.sum.im / g.mult };
-    // A root of multiplicity m is a simple root of the (m−1)-th derivative: a few Newton steps there recover the digits lost in the spread.
+    let root = g.root;
     if (g.mult > 1) {
-      let q = base;
+      let q = rest;
       for (let i = 1; i < g.mult; i++) q = derivative(q);
       const dq = derivative(q);
       for (let i = 0; i < 8; i++) { const d = polyAt(dq, root); if (cabs(d) === 0) break; const next = csub(root, cdiv(polyAt(q, root), d)); if (!Number.isFinite(next.re + next.im)) break; root = next; }
+      // A polish that wandered off (the group was not one exact multiple root) keeps the group's mean instead.
+      if (cabs(csub(root, g.root)) > 2 * tol * cabs(g.root)) root = g.root;
+      if (g.root.im === 0) root = { re: root.re, im: 0 };
     }
-    return { root: Math.abs(root.im) <= (g.mult > 1 ? 3e-4 : 1e-7) * cabs(root) ? { re: root.re, im: 0 } : root, mult: g.mult };
+    // A pair on the jω axis (s² + ω²) comes back with a rounding-size real part: it is exactly 0.
+    if (root.im !== 0 && Math.abs(root.re) <= 1e-12 * cabs(root)) root = { re: 0, im: root.im };
+    return { root, mult: g.mult };
   });
+  // Conjugate partners carry the same value exactly (the standard form uses the one with im > 0).
+  for (const g of out) if (g.root.im < 0) { const twin = out.find(h => h.root.im > 0 && h.mult === g.mult && cabs(csub(h.root, { re: g.root.re, im: -g.root.im })) <= 2e-2 * cabs(g.root)); if (twin) g.root = { re: twin.root.re, im: -twin.root.im }; }
   if (origin) out.unshift({ root: { re: 0, im: 0 }, mult: origin });
   return out;
 }
@@ -204,7 +227,9 @@ function termsOf(groups, side) {
     const m = cabs(root);
     if (m === 0) terms.push({ kind: 'origin', side, mult, corner: 1, root });
     else if (root.im === 0) terms.push({ kind: 'single', side, mult, corner: m, root, lhp: root.re < 0 });
-    else if (root.im > 0) terms.push({ kind: 'quad', side, mult, corner: m, zeta: -root.re / m, root, lhp: root.re < 0 });
+    else if (groups.some(g => g.mult === mult && g.root.re === root.re && g.root.im === -root.im)) {
+      if (root.im > 0) terms.push({ kind: 'quad', side, mult, corner: m, zeta: -root.re / m + 0, root, lhp: root.re < 0 }); // + 0: never −0
+    } else terms.push({ kind: 'single', side, mult, corner: m, root, lhp: root.re < 0, unpaired: true }); // a split root left without its twin
   }
   return terms;
 }
@@ -212,7 +237,7 @@ function termsOf(groups, side) {
 function cancel(zeros, poles) {
   const cancelled = [];
   for (const z of zeros) for (const p of poles) {
-    const close = cabs(csub(z.root, p.root)) <= 1e-6 * Math.max(cabs(z.root), 1e-9) || (cabs(z.root) === 0 && cabs(p.root) === 0);
+    const close = cabs(csub(z.root, p.root)) <= 1e-9 * Math.max(cabs(z.root), 1e-9) || (cabs(z.root) === 0 && cabs(p.root) === 0);
     if (!close || !z.mult || !p.mult) continue;
     const n = Math.min(z.mult, p.mult);
     z.mult -= n; p.mult -= n; cancelled.push({ root: z.root, mult: n });
@@ -259,17 +284,18 @@ export function analyzeTransfer(h) {
   // A cancelled root r appears as −r·(1 − s/r) on both sides, so the ratio is unchanged.
   const K = ln.c / ld.c;
   const origin = ln.i - ld.i;
-  const at = w => cdiv(polyAt(num, { re: 0, im: w }), polyAt(den, { re: 0, im: w }));
+  // Exactly on a jω-axis pole (ζ = 0) the value is infinite, not NaN.
+  const at = w => { const d = polyAt(den, { re: 0, im: w }); return d.re === 0 && d.im === 0 ? { re: Infinity, im: 0 } : cdiv(polyAt(num, { re: 0, im: w }), d); };
   const magDb = w => 20 * log10(cabs(at(w)));
-  // Continuous phase: the sum of the factor phases (each continuous in ω), not atan2 of the whole value (which jumps by 360°).
+  // Continuous phase: the sum of the phases of every root factor (1 − jω/r), each continuous in ω (it stays in one half plane), not
+  // atan2 of the whole value (which jumps by 360°). Every root group counts with its multiplicity, conjugates separately, so a group
+  // left without its twin is still counted once.
+  const factors = [...c.zeros.map(g => ({ ...g, side: 1 })), ...c.poles.map(g => ({ ...g, side: -1 }))].filter(g => cabs(g.root) > 0);
   function phaseDeg(w) {
     let ph = (K < 0 ? 180 : 0) + 90 * origin;
-    for (const t of terms) {
-      if (t.kind === 'origin') continue;
-      let p;
-      if (t.kind === 'single') p = Math.atan2(-w / t.root.re, 1) * DEG; // factor (1 − jω/r)
-      else { const u = w / t.corner; p = Math.atan2(2 * t.zeta * u, 1 - u * u) * DEG; if (t.zeta === 0 && u > 1) p = 180; }
-      ph += t.side * t.mult * p;
+    for (const { root, mult, side } of factors) {
+      const m2 = root.re * root.re + root.im * root.im;
+      ph += side * mult * Math.atan2(0 - w * root.re / m2, 1 - w * root.im / m2) * DEG;
     }
     return ph;
   }
@@ -329,8 +355,9 @@ export function polyText(p) {
   return parts.join('') || '0';
 }
 export const rootText = r => (r.im === 0 ? g4(r.re) : g4(r.re) + (r.im < 0 ? ' − j' : ' + j') + g4(Math.abs(r.im)));
-/** ζ class with the general definition (ζ<1 underdamped, =1 critical, >1 overdamped). */
-export const zetaClass = zeta => (Math.abs(zeta - 1) < 1e-6 ? '임계감쇠 (ζ=1)' : zeta < 1 ? '부족감쇠 (ζ<1)' : '과감쇠 (ζ>1)');
+/** ζ class with the general definition (0<ζ<1 underdamped, =1 critical, >1 overdamped; 0 undamped, <0 right half plane). */
+export const zetaClass = zeta => (zeta < 0 ? '음의 감쇠 (ζ<0, 오른쪽 반평면)' : zeta === 0 ? '무감쇠 (ζ=0, jω축 위)' : Math.abs(zeta - 1) < 1e-6 ? '임계감쇠 (ζ=1)'
+  : zeta < 1 ? '부족감쇠 (ζ<1)' : '과감쇠 (ζ>1)');
 
 // ---- filter reading ----------------------------------------------------------------------------------------------------------------
 /** H(0) and H(∞) as numbers (0, finite or Infinity). */

@@ -2,7 +2,7 @@
 // filters and scaling. Expected numbers are closed forms written out here (not the modules under test) or the lecture example values.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTransfer, analyzeTransfer, standardFormText, rootsOf, polyMul, classifyFilter, reduceRational, rational } from '../../../src/circuit-course-transfer.js';
+import { parseTransfer, analyzeTransfer, standardFormText, rootsOf, polyMul, polyAt, classifyFilter, reduceRational, rational, zetaClass } from '../../../src/circuit-course-transfer.js';
 import { resonance, capacitorForResonance, designFromBand } from '../../../src/circuit-course-resonance.js';
 import { FILTER_CIRCUITS, buildFilter, scaledLadder, SCALING_BASES, scaleElement } from '../../../src/circuit-course-filters.js';
 import { freqPlot, logGrid, niceStep } from '../../../src/circuit-course-freq-plot.js';
@@ -24,6 +24,13 @@ test('parser: s, jω, jw, implicit products and integer powers give the same pol
     [0, 10, 1, 0.6, 0.05].forEach((c, i) => near(got[i], c, 1e-12, f));
   }
   assert.deepEqual(parseTransfer('2.533e-4s').num, [0, 2.533e-4], 'e-notation followed by s');
+  // A product written without * binds tighter than / (the way H is written by hand).
+  for (const [loose, strict] of [['200s/(s+2)(s+10)', '200s/((s+2)(s+10))'], ['10/s(s+1)', '10/(s(s+1))'], ['1/2s', '1/(2s)'], ['2*-s(s+1)', '-2s^2-2s']]) {
+    const a = parseTransfer(loose), b = parseTransfer(strict), x = { re: 0.3, im: 1.7 }, va = polyAt(a.num, x), vb = polyAt(b.num, x), da = polyAt(a.den, x), db = polyAt(b.den, x);
+    const ra = { re: (va.re * da.re + va.im * da.im) / (da.re ** 2 + da.im ** 2), im: (va.im * da.re - va.re * da.im) / (da.re ** 2 + da.im ** 2) };
+    const rb = { re: (vb.re * db.re + vb.im * db.im) / (db.re ** 2 + db.im ** 2), im: (vb.im * db.re - vb.re * db.im) / (db.re ** 2 + db.im ** 2) };
+    near(Math.hypot(ra.re - rb.re, ra.im - rb.im), 0, 1e-12, loose);
+  }
   assert.deepEqual(parseTransfer('−(s−1)×2').num, [2, -2], 'unicode minus and times');
   for (const [bad, why] of [['x+1', /읽을 수 없는 글자/], ['(s+1', /괄호/], ['s+1)', /괄호/], ['ω+1', /j를 붙이거나/], ['', /입력하세요/], ['1/(s-s)', /0으로 나누는/], ['s^1.5', /정수 지수/], ['s^13', /정수 지수/],
     ['s-s', /0입니다/], ['2*', /식이 끝났습니다/]]) assert.throws(() => parseTransfer(bad), why, bad);
@@ -91,6 +98,24 @@ test('second-order peak and damping class follow the closed forms; repeated root
   const c = of('(s+1)/((s+1)(s+3))');
   assert.equal(c.terms.length, 1); assert.equal(c.cancelled.length, 1); near(c.K, 1 / 3, 1e-12);
   assert.deepEqual(reduceRational(rational([0, 0, 1], [0, 1, 1])), rational([0, 1], [1, 1]), 'a shared s is removed exactly');
+  // Higher multiplicities (roots spread by ε^(1/m)) still give the right count, standard form, lines and phase.
+  const atan = x => Math.atan(x) * 180 / Math.PI;
+  for (const [text, form, poles, phase, line] of [['1/(s+1)^5', 'H(ω) = 1 / [(1 + jω)⁵]', 5, w => -5 * atan(w), -600],
+    ['1/((s+1)^4(s+10))', 'H(ω) = 0.1 / [(1 + jω)⁴(1 + jω/10)]', 5, w => -4 * atan(w) - atan(w / 10), -20 - 480 - 100],
+    ['1/(s+1)^8', 'H(ω) = 1 / [(1 + jω)⁸]', 8, w => -8 * atan(w), -960], ['1/((s+1)^4(s+1000)^4)', 'H(ω) = 1e-12 / [(1 + jω)⁴(1 + jω/1000)⁴]', 8, w => -4 * atan(w) - 4 * atan(w / 1000), -240 - 480 - 240]]) {
+    const a = of(text);
+    assert.equal(standardFormText(a), form);
+    assert.equal(a.poles.reduce((n, p) => n + p.mult, 0), poles, text + ' pole count');
+    for (const w of [0.5, 3, 1e5]) near(a.phaseDeg(w), phase(w), 1e-6, text + ' phase at ' + w);
+    near(a.approxDb(1e6), line, 1e-6, text + ' straight line at ω = 10⁶');
+  }
+  // A very sharp notch (Q ≈ 5·10⁶) keeps its zeros and poles apart.
+  const sharp = classifyFilter(buildFilter(FILTER_CIRCUITS.find(c => c.id === 'rlc-bs'), { R: 0.00034, L: 13.45, C: 3.88e-6 }).h);
+  assert.equal(sharp.type, 'bandstop');
+  // ζ = 0 and ζ < 0 are named for what they are; a jω-axis pole is infinite there, not NaN.
+  assert.equal(zetaClass(0), '무감쇠 (ζ=0, jω축 위)'); assert.match(zetaClass(-0.1), /음의 감쇠/); assert.match(zetaClass(0.5), /부족감쇠/); assert.match(zetaClass(1), /임계감쇠/); assert.match(zetaClass(3), /과감쇠/);
+  const undamped = of('1/(s^2+1)');
+  assert.equal(undamped.terms[0].zeta, 0); assert.equal(undamped.magDb(1), Infinity); near(undamped.phaseDeg(2), -180, 1e-9); near(undamped.phaseDeg(0.5), 0, 1e-9);
 });
 
 test('scaled circuits keep their tiny high-power coefficients (no trimming by size): 4th-order Butterworth at 50 kHz', () => {

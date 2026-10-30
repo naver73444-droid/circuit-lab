@@ -3678,7 +3678,7 @@ describe("browser smoke", { timeout: 600000 }, () => {
   }
   const ccOverflow = () => ev(`document.documentElement.scrollWidth <= innerWidth + 1 && document.getElementById("circuit-course-workspace").scrollWidth <= innerWidth + 1 && document.querySelector(".circuit-course").scrollWidth <= innerWidth + 1`);
 
-  test("circuit course tools: all six live tabs open without an apply button and every lecture example passes its check (검산 PASS)", async () => {
+  test("circuit course tools: all ten live tabs open without an apply button and every lecture example passes its check (검산 PASS)", async () => {
     await openCircuitCourse();
     const tabs = await ev(`[...document.querySelectorAll("${CC_HOST} [data-circuit-course-tool]")].map((button) => button.dataset.circuitCourseTool)`);
     assert.deepEqual([...tabs].sort(), ["y-delta", ...CC_TOOLS].sort(), "the Y–Δ tool and the ten live tools are all tabs, filed under their chapters");

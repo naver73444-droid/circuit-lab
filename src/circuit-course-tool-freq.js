@@ -30,7 +30,7 @@ function termRow(t) {
 
 export const BODE_TOOL = {
   id: 'bode', title: '14 · 전달함수 · 보드선도', tab: 'Ch.14',
-  lead: 'H(s)를 s 또는 jω로 쓰면 표준형, 영점·극점, 항별 직선 근사(표 14.3)와 정확 곡선이 바로 나옵니다. 괄호 곱은 생략해도 되고 ^는 정수 지수입니다. 아래 ω 커서를 끌어 한 점의 값을 읽으세요.',
+  lead: 'H(s)를 s 또는 jω로 쓰면 표준형, 영점·극점, 항별 직선 근사(표 14.3)와 정확 곡선이 바로 나옵니다. 곱셈 기호는 생략해도 되고(생략한 곱은 / 보다 먼저 묶여 200s/(s+2)(s+10)은 분모 전체), ^는 정수 지수입니다. 아래 ω 커서를 끌어 한 점의 값을 읽으세요.',
   fields: [
     textField('expression', '전달함수 H(s)', '200s/((s+2)(s+10))'),
     siNum('cursor', 'ω 커서', 'rad/s', 2, 1e-9, 1e12, { slider: v => { const [lo, hi] = bodeRange(v.expression); return LOG_SLIDER(lo, hi); } }),
@@ -65,7 +65,8 @@ export const BODE_TOOL = {
     const h = parseTransfer(v.expression), a = analyzeTransfer(h), [lo, hi] = a.range;
     const grid = [...new Set([...logGrid(lo, hi, 80), ...a.corners.flatMap(c => [c / 10, c, c * 10]).filter(w => w >= lo && w <= hi)])].sort((x, y) => x - y);
     const w = v.cursor, m = a.at(w), magnitude = Math.hypot(m.re, m.im), exact = dB(magnitude), approx = a.approxDb(w), phase = a.phaseDeg(w), approxPhase = a.approxPhase(w);
-    const peak = peakOf(a, lo, hi), slopeHigh = 20 * (h.num.length - h.den.length);
+    // A pole pair on the jω axis (ζ = 0) has no finite peak: the reading says so instead of a huge or undefined number.
+    const axisPole = a.poles.find(p => p.root.re === 0 && p.root.im > 0), peak = axisPole ? { w: axisPole.root.im, mag: Infinity } : peakOf(a, lo, hi), slopeHigh = 20 * (h.num.length - h.den.length);
     const termSeries = v.lines === 'terms' ? a.terms.filter(t => t.kind !== 'origin').map(t => {
       const single = analyzeTransfer({ num: t.side > 0 ? factorPoly(t) : [1], den: t.side > 0 ? [1] : factorPoly(t) });
       return { style: 'term', points: grid.map(x => [x, single.approxDb(x)]) };
@@ -94,8 +95,8 @@ export const BODE_TOOL = {
           series: [...(termSeries.length ? [...kOnly, ...termSeries] : []), { style: 'approx', points: grid.map(x => [x, a.approxDb(x)]) }, { style: 'exact', points: grid.map(x => [x, a.magDb(x)]), cursorValue: exact }] },
         { label: '∠H (°)', phase: true, cursor: w, marks: a.corners.map(c => ({ w: c })),
           series: [{ style: 'approx', points: grid.map(x => [x, a.approxPhase(x)]) }, { style: 'exact', points: grid.map(x => [x, a.phaseDeg(x)]), cursorValue: phase }] }] }],
-      metrics: [metric('ω 커서', fmt(w), 'rad/s'), metric('정확 |H(jω)|', short(magnitude) + ' = ' + short(exact), 'dB'), metric('정확 ∠H(jω)', short(phase), '°'), metric('직선 근사', short(approx), 'dB'),
-        metric('근사 위상', short(approxPhase), '°'), metric('정확 − 근사', signed(exact - approx, ''), 'dB'), metric('|H| 최댓값 (그림 범위)', short(dB(peak.mag)) + ' dB @ ω=' + short(peak.w)), metric('고주파 기울기', signed(slopeHigh, ''), 'dB/dec')],
+      metrics: [metric('ω 커서', fmt(w), 'rad/s'), metric('정확 |H(jω)|', Number.isFinite(magnitude) ? short(magnitude) + ' = ' + short(exact) : '∞', Number.isFinite(magnitude) ? 'dB' : ''), metric('정확 ∠H(jω)', short(phase), '°'), metric('직선 근사', short(approx), 'dB'),
+        metric('근사 위상', short(approxPhase), '°'), metric('정확 − 근사', signed(exact - approx, ''), 'dB'), metric('|H| 최댓값 (그림 범위)', (axisPole ? '∞ (ζ=0 극점)' : short(dB(peak.mag)) + ' dB') + ' @ ω=' + short(peak.w)), metric('고주파 기울기', signed(slopeHigh, ''), 'dB/dec')],
       tables: [{ title: '항 분해 (표 14.3 형식)', headers: ['항', '꺾임 ω (rad/s)', '크기 직선', '위상 직선'], rows: termRows },
         { title: '영점 · 극점 (s 평면)', headers: ['종류', '위치', '중복도'], rows: rootRows.length ? rootRows : [['—', '영점·극점 없음 (상수)', '—']] },
         { title: '다항식 꼴', headers: ['', 'H(s)'], rows: [['분자 N(s)', polyText(h.num)], ['분모 D(s)', polyText(h.den)]] }],
