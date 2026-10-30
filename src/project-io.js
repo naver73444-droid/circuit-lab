@@ -9,6 +9,7 @@ import { PROBE_COLORS, defaultSettings, newProjectId } from "./editor-session.js
 import { createAutosave, describeSavedAt, isEmptyProject } from "./persistence.js";
 import { buildShareUrl, decodeProjectFromHash, encodeProjectToHash, hasShareHash } from "./share-url.js";
 import { createCanvasNotices } from "./canvas-notices.js";
+import { attachNetlistDialog } from "./netlist-dialog.js";
 
 /**
  * Whole-project operations: example loading, new circuit, JSON save/open, CSV export, autosave + restore offer and share links.
@@ -328,8 +329,26 @@ export function createProjectIO(deps) {
       }, { autosave: false }); // a new circuit keeps the previous autosave until the next real edit
   }
 
-  /** Register the toolbar listeners for new, example, save, open, CSV and share link. */
+  /**
+   * A laid-out netlist (netlist-import.js) opens through the same validation as a JSON file: serialized, read back, then openProject().
+   * Probes get their keys, labels and colors here, as an example's do. Returns false when the user kept the current drafts.
+   */
+  function openNetlist(layout) {
+    const probes = layout.probes.map((probe, index) => {
+      const component = layout.circuit.components.find((item) => item.id === probe.componentId);
+      if (probe.kind === "voltage") return { ...probe, key: `V:${probe.componentId}:${probe.pin}`, label: `V(${component.props.ref}.${probe.pin + 1})`, color: PROBE_COLORS[index] };
+      return { ...probe, key: `I:${probe.componentId}`, label: currentProbeLabel(component, CURRENT_GEOMETRY_VERSION), color: PROBE_COLORS[index] };
+    });
+    const settings = { ...defaultSettings(), ...(layout.settings ?? {}) };
+    const project = deserializeProject(serializeProject({ title: layout.title, subtitle: layout.subtitle, circuit: layout.circuit, settings, probes }), defaultSettings());
+    if (!openProject(project, { fallbackTitle: layout.title, fallbackSubtitle: "", resultText: "넷리스트에서 회로를 만들었습니다. 해석 실행으로 계산하세요." })) return false;
+    setStatus("넷리스트 불러오기 완료", "ready");
+    return true;
+  }
+
+  /** Register the toolbar listeners for new, example, save, open, CSV, share link and the netlist dialog. */
   function attach() {
+    attachNetlistDialog(document, { onOpen: openNetlist });
     elements["new-button"].addEventListener("click", newCircuit);
     elements["example-select"].addEventListener("change", () => loadExample(elements["example-select"].value));
     elements["save-button"].addEventListener("click", saveProject);
@@ -351,5 +370,5 @@ export function createProjectIO(deps) {
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushAutosave(); });
   }
 
-  return { loadExample, saveProject, loadProject, openProject, exportCSV, newCircuit, offerRestore, copyShareLink, openShareHash, registerLaunch, noteCommitted, retireForBoundary, flushAutosave, autosaveStatus: () => autosave.getStatus(), attach };
+  return { loadExample, saveProject, loadProject, openProject, openNetlist, exportCSV, newCircuit, offerRestore, copyShareLink, openShareHash, registerLaunch, noteCommitted, retireForBoundary, flushAutosave, autosaveStatus: () => autosave.getStatus(), attach };
 }

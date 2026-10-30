@@ -68,6 +68,7 @@
 <link rel="modulepreload" href="src/csv-format.js"/>
 <link rel="modulepreload" href="src/project-format.js"/>
 <link rel="modulepreload" href="src/persistence.js"/>
+<link rel="modulepreload" href="src/netlist-dialog.js"/>
 <link rel="modulepreload" href="src/value-adjust.js"/>
 <link rel="modulepreload" href="src/union-find.js"/>
 <link rel="modulepreload" href="src/editor-guide-model.js"/>
@@ -75,6 +76,7 @@
 <link rel="modulepreload" href="src/y-delta-model.js"/>
 <link rel="modulepreload" href="src/clipboard-model.js"/>
 <link rel="modulepreload" href="src/plot-format.js"/>
+<link rel="modulepreload" href="src/netlist-import.js"/>
 <!-- /modulepreload -->
 </head>
 <body>
@@ -107,6 +109,7 @@
 <button id="save-button" title="JSON 파일로 저장 (Ctrl+S)" type="button">저장</button>
 <button id="load-button" type="button">열기</button>
 <button id="share-button" title="현재 회로를 주소(#p=…)에 담아 복사" type="button">링크 복사</button>
+<button id="netlist-button" title="회로도 사진을 Claude가 바꿔 준 넷리스트 글로 회로 만들기" type="button">넷리스트 붙여넣기</button>
 <input accept="application/json,.json" hidden="" id="file-input" type="file"/>
 </div></details>
 </div>
@@ -267,6 +270,14 @@
 <details class="measure-panel hidden" id="measure-panel"><summary id="measure-summary"></summary></details>
 <div aria-live="polite" class="cursor-readout" id="cursor-readout" role="status">그래프를 눌러 값을 읽습니다.</div>
 </section>
+<dialog aria-labelledby="netlist-title" class="netlist-dialog" id="netlist-dialog"><form class="netlist-form" method="dialog">
+<h2 id="netlist-title">넷리스트 붙여넣기</h2>
+<p class="netlist-hint">회로도 사진을 Claude 앱에 올리면서 아래 안내문을 함께 보내면 넷리스트 글이 나옵니다. 그 글을 여기에 붙여 넣으세요.</p>
+<button id="netlist-copy-prompt" type="button">Claude 안내문 복사</button>
+<textarea aria-label="넷리스트" autocapitalize="off" autocomplete="off" autocorrect="off" id="netlist-text" placeholder="* RC 1차 회로&#10;V1 in 0 SIN(0 2.5 1k)&#10;R1 in out 1.5k&#10;C1 out 0 11n&#10;.tran 5u 3m" rows="9" spellcheck="false"></textarea>
+<div aria-live="polite" class="netlist-preview" id="netlist-preview"></div>
+<div class="netlist-actions"><button class="run-button" id="netlist-load" type="button">불러오기</button><button value="cancel">닫기</button></div>
+</form></dialog>
 <nav aria-label="편집기 하단 막대" class="view-tabs">
 <div aria-label="패널 선택" class="view-tab-list" role="tablist">
 <button aria-controls="palette-panel" aria-selected="true" data-view="palette" role="tab" title="회로 캔버스와 부품 목록" type="button">회로</button>

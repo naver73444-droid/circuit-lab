@@ -1120,3 +1120,19 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 @media (min-width: 900px) and (pointer: coarse) and (max-height: 900px) {
   #circuit-course-workspace .circuit-course-integration-header, #circuit-course-host > header > h2, #circuit-course-host > header > p { display: none; }
 }
+
+/* "넷리스트 붙여넣기": a modal over the editor (paste, preview of what was read, open). */
+.netlist-dialog { width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 14px; }
+.netlist-dialog::backdrop { background: rgba(0,0,0,.45); }
+.netlist-form { display: grid; gap: 10px; padding: 16px; }
+.netlist-form h2 { margin: 0; font-size: 18px; }
+.netlist-hint { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+#netlist-copy-prompt { justify-self: start; min-height: 40px; }
+#netlist-text { width: 100%; box-sizing: border-box; min-height: 180px; padding: 10px; font: 15px/1.5 var(--mono); color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 9px; resize: vertical; }
+.netlist-preview { max-height: 34dvh; overflow: auto; font-size: 14px; line-height: 1.55; }
+.netlist-preview ul { margin: 6px 0 0; padding-left: 18px; }
+.netlist-parts li { font-family: var(--mono); font-size: 13px; }
+.netlist-error { color: var(--danger); }
+.netlist-warning { color: var(--warning); }
+.netlist-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.netlist-actions button { min-height: 44px; min-width: 96px; }
