@@ -106,6 +106,8 @@ export function createProjectIO(deps) {
       diode: [{ kind: "voltage", componentId: "R1", pin: 0 }], opamp: [{ kind: "voltage", componentId: "U1", pin: 2 }],
       "coupled-coils": [{ kind: "current", componentId: "K1" }, { kind: "current", componentId: "K1", winding: 2 }, { kind: "current", componentId: "R1" }],
       "ideal-transformer": [{ kind: "current", componentId: "T1" }, { kind: "voltage", componentId: "R2", pin: 0 }],
+      "series-resonance": [{ kind: "current", componentId: "R1" }, { kind: "voltage", componentId: "C1", pin: 0 }],
+      "lowpass-2nd": [{ kind: "voltage", componentId: "R1", pin: 0 }],
     };
     mutate(() => {
       resetProjectSession();

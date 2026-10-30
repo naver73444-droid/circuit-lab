@@ -18,7 +18,7 @@ const polar = (m, deg) => z(m * Math.cos(deg * Math.PI / 180), m * Math.sin(deg 
 const ang = w => Math.atan2(w.im, w.re) * 180 / Math.PI;
 
 test('tool registry: unique ids and keys, valid defaults, preset keys are fields, every field kind is handled', () => {
-  assert.deepEqual(TOOLS.map(t => t.id), ['complex', 'three-phase-ext', 'loads', 'max-power', 'coupled', 'transformer']);
+  assert.deepEqual(TOOLS.map(t => t.id), ['complex', 'three-phase-ext', 'loads', 'max-power', 'coupled', 'transformer', 'bode', 'resonance', 'filters', 'scaling']);
   assert.equal(new Set(TOOLS.map(t => t.title)).size, TOOLS.length);
   for (const def of TOOLS) {
     const keys = dataFields(def).map(f => f.key);

@@ -50,11 +50,24 @@ export function capacitanceText(farads, format = fmt) {
   if (size >= 1e-9) return format(farads * 1e9) + ' nF';
   return format(farads * 1e12) + ' pF';
 }
-// Text field → finite number (plain decimal or e-notation), the one parser every course form uses.
-export function parseCourseNumber(text) {
-  const trimmed = String(text).trim();
-  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed)) throw new RangeError('유한한 숫자를 입력하세요. 예: -2.5, 3e-3');
-  const n = Number(trimmed);
+// SI prefixes a course number may end with (case matters: m = milli, M = mega; u and µ = micro).
+const SI_PREFIX = Object.freeze({ p: 1e-12, n: 1e-9, u: 1e-6, 'µ': 1e-6, 'μ': 1e-6, m: 1e-3, k: 1e3, K: 1e3, M: 1e6, G: 1e9 });
+// Text field → finite number (plain decimal or e-notation), the one parser every course form uses. si: also one SI prefix at the end
+// (0.4u, 11.26n, 2k) — only for fields in base units (Ω, H, F, Hz), never for a field already shown in µF or kW.
+export function parseCourseNumber(text, { si = false } = {}) {
+  let trimmed = String(text).trim(), factor = 1;
+  const prefix = trimmed.slice(-1);
+  if (si && trimmed.length > 1 && Object.hasOwn(SI_PREFIX, prefix) && /\d\.?$/.test(trimmed.slice(0, -1))) { factor = SI_PREFIX[prefix]; trimmed = trimmed.slice(0, -1); }
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed)) throw new RangeError('유한한 숫자를 입력하세요. 예: -2.5, 3e-3' + (si ? ', 0.4u, 10m, 2k' : ''));
+  const n = Number(trimmed) * factor;
   if (!Number.isFinite(n) || (n === 0 && /[1-9]/.test(trimmed.split(/e/i)[0]))) throw new RangeError('숫자가 표현 범위를 벗어났습니다.');
   return n;
+}
+// A value with an SI prefix and four significant digits: 1.126e-8 F → "11.26 nF", 1200 H → "1.2 kH", 0 → "0 Ω".
+export function siUnit(value, unit) {
+  if (!Number.isFinite(value)) return '미정';
+  if (value === 0) return '0 ' + unit;
+  const prefixes = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n'], [1e-12, 'p']];
+  const [scale, p] = prefixes.find(([s]) => Math.abs(value) >= s * (1 - 5e-5)) ?? prefixes[prefixes.length - 1];
+  return Number((value / scale).toPrecision(4)).toString() + ' ' + p + unit;
 }

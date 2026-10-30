@@ -4,7 +4,8 @@ import { escapeHtml as esc } from './safe-dom.js';
 import { phasorGraphs, waves, triangle, table, verificationTable, examplesFold, examplesSummary, FOLD_OPEN_MAX, keyboardOf, revealOnPhone } from './circuit-course-view.js';
 import { fmt } from './circuit-course-format.js';
 import { toolFigure } from './circuit-course-figures.js';
-import { isShown, labelOf, unitOf, sliderOf, toDisplay, draftText } from './circuit-course-tool-common.js';
+import { isShown, labelOf, unitOf, sliderOf, sliderPosition, toDisplay, draftText } from './circuit-course-tool-common.js';
+import { freqPlot } from './circuit-course-freq-plot.js';
 
 export { draftText };
 
@@ -64,8 +65,9 @@ export function createCourseToolView(host, def) {
         const slider = row.querySelector('[data-cc-slider]');
         if (slider) {
           const range = sliderOf(f, values), shown = toDisplay(f, values[f.key], basis), scale = f.amplitude ? toDisplay(f, 1, basis) : 1;
-          slider.min = String(range.min * scale); slider.max = String(range.max * scale); slider.step = String(range.step * scale);
-          slider.value = String(Math.min(range.max * scale, Math.max(range.min * scale, shown)));
+          const scaled = { ...range, min: range.min * scale, max: range.max * scale };
+          slider.min = String(sliderPosition(scaled, scaled.min)); slider.max = String(sliderPosition(scaled, scaled.max)); slider.step = String(range.log ? range.step : range.step * scale);
+          slider.value = String(sliderPosition(scaled, shown));
           slider.setAttribute('aria-label', labelOf(f, values));
         }
         const message = errors[f.key] ?? '';
@@ -95,6 +97,7 @@ export function createCourseToolView(host, def) {
     showResult(result, verification, basis) {
       let html = result.read ? '<p class="cc-tool-read" data-cc-read>' + esc(result.read) + '</p>' : '';
       if (result.figure) html += '<section class="circuit-course-card">' + toolFigure(result.figure) + '</section>';
+      html += (result.freqPlots ?? []).map(freqPlot).join('');
       if (result.metrics?.length) html += '<div class="circuit-course-metrics">' + result.metrics.map(m => '<div class="circuit-course-metric"><span>' + esc(m.label) + '</span><strong>' + esc(m.text) + '</strong>' + esc(m.unit)
         + '</div>').join('') + '</div>';
       if (verification?.length) html += verificationTable(verification, basis);

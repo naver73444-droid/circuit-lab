@@ -1,4 +1,4 @@
-// Textbook-chapter navigation of the circuit course (Alexander & Sadiku 7e, Ch.9–13). Pure data and helpers: the controller keeps the state and storage,
+// Textbook-chapter navigation of the circuit course (Alexander & Sadiku 7e, Ch.9–14). Pure data and helpers: the controller keeps the state and storage,
 // the view draws the two rows (chapter, then that chapter's items). kind/id are the experiment ids (circuit-course-registry.js) and tool ids (TOOL_TABS).
 export const NAV_STORAGE_KEY = 'circuit-lab.circuit-course.nav';
 // label: short tab text (fits a 390 px row of four); the full title shows as the tooltip and as the heading of the open screen.
@@ -13,6 +13,9 @@ export const CHAPTERS = Object.freeze([
     { kind: 'experiment', id: 'three-phase', label: '균형 3상' }, { kind: 'tool', id: 'three-phase-ext', label: '3상 확장' }] },
   { id: 'ch13', short: 'Ch13', long: '자기결합', items: [
     { kind: 'tool', id: 'coupled', label: '결합 코일' }, { kind: 'tool', id: 'transformer', label: '변압기' }] },
+  { id: 'ch14', short: 'Ch14', long: '주파수응답', items: [
+    { kind: 'tool', id: 'bode', label: '보드선도' }, { kind: 'tool', id: 'resonance', label: '공진' },
+    { kind: 'tool', id: 'filters', label: '필터' }, { kind: 'tool', id: 'scaling', label: '스케일링' }] },
   { id: 'mine', short: '내 문제', long: '', items: [{ kind: 'experiment', id: 'problem', label: '내 문제' }] }
 ]);
 export const itemKey = (kind, id) => kind + ':' + id;

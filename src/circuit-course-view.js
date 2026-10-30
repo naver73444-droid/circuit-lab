@@ -172,7 +172,7 @@ function worksheet(solution) {
  * (min < 0: imaginary parts, angles, Q), a unit or a prefix (quantity fields: kΩ, mV, deg/rad, kvar) gets the text keyboard;
  * a plain positive number (f, |V|, R, L, C, PF) keeps the decimal pad.
  */
-export const keyboardOf = p => (p.quantity || p.min < 0 ? TEXT_KEYBOARD : 'inputmode="decimal"');
+export const keyboardOf = p => (p.quantity || p.si || p.min < 0 ? TEXT_KEYBOARD : 'inputmode="decimal"');
 export const TEXT_KEYBOARD = 'inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false"';
 
 /**

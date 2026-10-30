@@ -14,6 +14,10 @@ export const isShown = (field, values) => !field.showIf || field.showIf(values);
 export const dataFields = def => def.fields.filter(f => f.kind !== 'heading');
 export const initialValues = def => Object.fromEntries(dataFields(def).map(f => [f.key, f.initial]));
 export const sliderOf = (field, values) => (typeof field.slider === 'function' ? field.slider(values) : field.slider ?? null);
+// A slider marked log: true moves in decades: its position is log10 of the shown value and step is a fraction of a decade.
+// A value read from a log slider keeps four significant digits (10^0.37 → 2.344, not 2.3442288153).
+export const sliderPosition = (range, shown) => (range.log ? Math.log10(Math.min(range.max, Math.max(range.min, shown))) : Math.min(range.max, Math.max(range.min, shown)));
+export const sliderValue = (range, position) => (range.log ? Number((10 ** position).toPrecision(4)) : position);
 export const labelOf = (field, values) => (typeof field.label === 'function' ? field.label(values) : field.label);
 const nameOf = field => field.name ?? (typeof field.label === 'string' ? field.label : field.key);
 export const unitOf = (field, values) => (typeof field.unit === 'function' ? field.unit(values) : field.unit ?? '');
@@ -46,7 +50,7 @@ export function reviewDrafts(def, values, drafts, basis) {
   for (const field of dataFields(def)) {
     if (field.kind !== 'number' || !isShown(field, candidate) || drafts[field.key] === undefined) continue;
     if (drafts[field.key] === draftText(toDisplay(field, values[field.key], basis))) continue;
-    try { const internal = fromDisplay(field, parseCourseNumber(drafts[field.key]), basis); validateField(field, internal); candidate[field.key] = internal; } catch (e) { errors[field.key] = e.message + FIELD_KEPT; }
+    try { const internal = fromDisplay(field, parseCourseNumber(drafts[field.key], { si: field.si }), basis); validateField(field, internal); candidate[field.key] = internal; } catch (e) { errors[field.key] = e.message + FIELD_KEPT; }
   }
   return { candidate, errors };
 }

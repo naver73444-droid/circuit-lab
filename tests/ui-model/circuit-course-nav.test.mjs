@@ -12,8 +12,8 @@ test("every experiment and tool tab sits under exactly one textbook chapter, and
 });
 
 test("the chapter row stays on one phone line and every chapter's tab row too", () => {
-  assert.ok(CHAPTERS.length <= 5, "at most five chapter buttons");
-  assert.deepEqual(CHAPTERS.map((c) => c.short), ["Ch9–10", "Ch11", "Ch12", "Ch13", "내 문제"]);
+  assert.ok(CHAPTERS.length <= 6, "at most six chapter buttons");
+  assert.deepEqual(CHAPTERS.map((c) => c.short), ["Ch9–10", "Ch11", "Ch12", "Ch13", "Ch14", "내 문제"]);
   for (const chapter of CHAPTERS) {
     assert.ok(chapter.items.length >= 1 && chapter.items.length <= 4, `${chapter.id}: up to four tabs`);
     for (const item of chapter.items) assert.ok([...item.label].length <= 6, `${item.id}: short label fits a quarter of 390 px (${item.label})`);
@@ -31,6 +31,7 @@ test("chapter assignment follows the textbook: Y–Δ and the complex calculator
   assert.equal(of("experiment", "three-phase"), "ch12");
   assert.equal(of("tool", "three-phase-ext"), "ch12");
   for (const id of ["coupled", "transformer"]) assert.equal(of("tool", id), "ch13");
+  for (const id of ["bode", "resonance", "filters", "scaling"]) assert.equal(of("tool", id), "ch14");
   assert.equal(of("experiment", "problem"), "mine");
   assert.equal(chapterOf("tool", "nope"), null);
 });

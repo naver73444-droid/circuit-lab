@@ -270,6 +270,62 @@ export const examples = [
       ],
     ),
   },
+  {
+    id: "series-resonance",
+    name: "직렬 공진 (예제 14.7)",
+    description: "교재 예제 14.7: 20 V(peak) AC 전원에 R = 2 Ω, L = 1 mH, C = 0.4 µF 직렬. ω0 = 1/√(LC) = 50 krad/s(f0 = 7957.75 Hz), B = R/L = 2 krad/s(318.3 Hz), Q = ω0L/R = 25입니다. "
+      + "페이저 주파수가 f0로 열려 전류 I(R1) = 10 A∠0°, |V_L| = |V_C| = Q·Vm = 500 V가 보입니다. "
+      + "페이저 주파수를 반전력점 ω1 = 49.01 krad/s(7800.18 Hz)로 바꾸면 I = 7.071 A∠+45°, ω2 = 51.01 krad/s(8118.49 Hz)에서는 7.071 A∠−45°입니다. "
+      + "AC 스윕은 f0·10^±0.2 범위, decade당 200점이라 f0가 표본점이고 커서로 봉우리를 읽을 수 있습니다. "
+      + "I(R1) 프로브의 자동 '−3 dB 대역폭'은 표본 사이 보간이라 약 316.9 Hz로 정확값 318.3 Hz보다 조금 작게 나옵니다. "
+      + "R1을 선택해 파라미터 스윕(2→8 Ω, 3점, 로그)으로 R = 2·4·8 Ω을 겹치면 B = 2·4·8 krad/s, Q = 25·12.5·6.25로 봉우리가 낮고 넓어집니다.",
+    settings: { analysis: "ac", startFrequency: "5020.999013", endFrequency: "12612.17929", pointsPerDecade: "200", phasorFrequency: "7957.747155" },
+    circuit: circuit(
+      [
+        component("V1", "V", 120, 250, { mode: "SIN", dc: "0", acMagnitude: "20", acPhase: "0", ref: "V1" }, 90),
+        component("R1", "R", 280, 130, { value: "2", ref: "R1" }),
+        component("L1", "L", 450, 130, { value: "1m", ic: "0", ref: "L1" }),
+        component("C1", "C", 570, 270, { value: "0.4u", ic: "0", ref: "C1" }, 90),
+        component("G1", "GND", 330, 410, { ref: "GND" }),
+      ],
+      [
+        wire("W1", "V1", 0, "R1", 0),
+        wire("W2", "R1", 1, "L1", 0),
+        wire("W3", "L1", 1, "C1", 0),
+        wire("W4", "C1", 1, "G1", 0),
+        wire("W5", "V1", 1, "G1", 0),
+      ],
+    ),
+  },
+  {
+    id: "lowpass-2nd",
+    name: "2차 저역통과 (예제 14.10)",
+    description: "교재 예제 14.10: 1 V AC 전원에 L = 2 H 직렬, 출력 Vo는 R = 2 kΩ ∥ C = 2 µF(접지) 양단입니다. "
+      + "H(s) = Vo/Vi = R/(s²RLC + sL + R), H(0) = 1입니다. "
+      + "강의 정의(H(0) 기준 −3 dB)의 차단 ωc = 742.25 rad/s(fc = 118.13 Hz)에서 |Vo| = 0.7071 V(위상 −148.34°)이고, 페이저 주파수가 fc로 열려 바로 확인됩니다. "
+      + "AC 스윕은 fc·10^−2 ~ fc·10^1, decade당 200점이라 fc가 표본점이고 커서로도 읽힙니다. "
+      + "이 회로는 ω ≈ 467.7 rad/s(74.44 Hz)에 약 +6.30 dB 봉우리가 있습니다. "
+      + "주의: 편집기의 자동 '−3 dB' 측정은 곡선 최대값(봉우리) 기준이라 이 곡선을 대역통과로 보고 '−3 dB 대역폭' 약 43.0 Hz(약 49.75~92.77 Hz)로 표시합니다. "
+      + "강의 값 118.13 Hz는 커서나 페이저 주파수로 읽으세요.",
+    settings: { analysis: "ac", startFrequency: "1.181335064", endFrequency: "1181.335064", pointsPerDecade: "200", phasorFrequency: "118.1335064" },
+    circuit: circuit(
+      [
+        component("V1", "V", 120, 280, { mode: "SIN", dc: "0", acMagnitude: "1", acPhase: "0", ref: "V1" }, 90),
+        component("L1", "L", 280, 150, { value: "2", ic: "0", ref: "L1" }),
+        component("R1", "R", 440, 280, { value: "2k", ref: "R1" }, 90),
+        component("C1", "C", 580, 280, { value: "2u", ic: "0", ref: "C1" }, 90),
+        component("G1", "GND", 350, 420, { ref: "GND" }),
+      ],
+      [
+        wire("W1", "V1", 0, "L1", 0),
+        wire("W2", "L1", 1, "R1", 0),
+        wire("W3", "R1", 0, "C1", 0),
+        wire("W4", "V1", 1, "G1", 0),
+        wire("W5", "R1", 1, "G1", 0),
+        wire("W6", "C1", 1, "G1", 0),
+      ],
+    ),
+  },
 ];
 
 export function cloneExample(id) {
