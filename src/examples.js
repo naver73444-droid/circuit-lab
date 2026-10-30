@@ -78,11 +78,11 @@ export const examples = [
   {
     id: "rl",
     name: "RL 응답",
-    description: "100 Ω·10 mH 직렬 회로. 1 V 계단에서 τ=0.1 ms, 최종 전류 10 mA입니다.",
+    description: "100 Ω·10 mH 직렬 회로. 1 V 펄스(폭 1 ms, 주기 2 ms)에서 τ=0.1 ms, 최종 전류 10 mA이고, 시간 눈금을 늘리면 반복됩니다.",
     settings: { analysis: "transient", start: "0", end: "500u", step: "1u" },
     circuit: circuit(
       [
-        component("V1", "V", 140, 240, { mode: "PULSE", pulseV1: "0", pulseV2: "1", pulseDelay: "0", pulseRise: "0", pulseFall: "0", pulseWidth: "1", pulsePeriod: "2", ref: "V1" }, 90),
+        component("V1", "V", 140, 240, { mode: "PULSE", pulseV1: "0", pulseV2: "1", pulseDelay: "0", pulseRise: "0", pulseFall: "0", pulseWidth: "1m", pulsePeriod: "2m", ref: "V1" }, 90),
         component("R1", "R", 320, 140, { value: "100", ref: "R1" }),
         component("L1", "L", 500, 260, { value: "10m", ic: "0", ref: "L1" }, 90),
         component("G1", "GND", 320, 400, { ref: "GND" }),
@@ -98,11 +98,11 @@ export const examples = [
   {
     id: "rlc",
     name: "직렬 RLC 응답",
-    description: "100 Ω·10 mH·1 µF 직렬 회로의 감쇠 진동 계단 응답입니다.",
+    description: "100 Ω·10 mH·1 µF 직렬 회로의 감쇠 진동 응답입니다. 1 V 펄스(폭 2 ms, 주기 4 ms)라 시간 눈금을 늘리면 반복됩니다.",
     settings: { analysis: "transient", start: "0", end: "1m", step: "1u" },
     circuit: circuit(
       [
-        component("V1", "V", 120, 250, { mode: "PULSE", pulseV1: "0", pulseV2: "1", pulseDelay: "0", pulseRise: "0", pulseFall: "0", pulseWidth: "1", pulsePeriod: "2", ref: "V1" }, 90),
+        component("V1", "V", 120, 250, { mode: "PULSE", pulseV1: "0", pulseV2: "1", pulseDelay: "0", pulseRise: "0", pulseFall: "0", pulseWidth: "2m", pulsePeriod: "4m", ref: "V1" }, 90),
         component("R1", "R", 280, 130, { value: "100", ref: "R1" }),
         component("L1", "L", 450, 130, { value: "10m", ic: "0", ref: "L1" }),
         component("C1", "C", 570, 270, { value: "1u", ic: "0", ref: "C1" }, 90),
