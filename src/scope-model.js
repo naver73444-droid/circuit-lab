@@ -63,7 +63,9 @@ export function fittedXAxis(xValues, logarithmic = false) {
   const first = logarithmic ? Math.log10(xValues[0]) : xValues[0];
   const last = logarithmic ? Math.log10(xValues.at(-1)) : xValues.at(-1);
   if (!Number.isFinite(first) || !Number.isFinite(last)) return { minimum: 0, maximum: 1, division: .1, automatic: true };
-  const division = niceCeiling((last - first || 1) / X_DIVISIONS);
+  // Time: the ten divisions span exactly the run (3 ms → 300 µs/div), so the trace reaches the right edge instead of stopping at 60 %
+  // of a rounded-up span. A log frequency axis keeps whole 1-2-5 steps of decades (fractional decades would make odd tick labels).
+  const division = !logarithmic && last > first ? (last - first) / X_DIVISIONS : niceCeiling((last - first || 1) / X_DIVISIONS);
   return { minimum: first, maximum: first + division * X_DIVISIONS, division, automatic: true };
 }
 

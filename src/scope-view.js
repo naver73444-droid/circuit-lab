@@ -144,6 +144,11 @@ export class ScopeView {
     const changedAnalysis = result?.analysis !== this.result?.analysis;
     const changedResult = result !== this.result;
     const keepCursorB = Boolean(this.result && result && this.result.analysis === result.analysis && this.result.xValues.length === result.xValues.length);
+    // A run over another time (or frequency) range brings the axis back to the whole run, even after a manual zoom: a longer run must
+    // never show only the window of the shorter one. The same range keeps the zoom (a value tweak re-runs with the same range).
+    const ends = (r) => [r.xValues[0], r.xValues.at(-1)];
+    const spanChanged = Boolean(this.result && result && !changedAnalysis && result.xValues?.length && this.result.xValues?.length
+      && ends(result).some((value, i) => Math.abs(value - ends(this.result)[i]) > 1e-9 * Math.max(Math.abs(value), Math.abs(ends(this.result)[i]), 1e-300)));
     this.result = result;
     this.series = series;
     const availableKeys = new Set(series.map((item) => item.key));
@@ -164,7 +169,7 @@ export class ScopeView {
     }
     this.logarithmic = result.analysis === "ac";
     this.xValues = result.xValues.map((value) => this.logarithmic ? Math.log10(value) : value);
-    if (changedAnalysis || this.forceFit || !this.xAxis || this.xAxis.automatic) this.xAxis = fittedXAxis(result.xValues, this.logarithmic);
+    if (changedAnalysis || spanChanged || this.forceFit || !this.xAxis || this.xAxis.automatic) this.xAxis = fittedXAxis(result.xValues, this.logarithmic);
     const grouped = new Map();
     for (const item of series) {
       if (!grouped.has(item.quantity)) grouped.set(item.quantity, []);
