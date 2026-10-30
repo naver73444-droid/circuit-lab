@@ -1,0 +1,56 @@
+# Circuit Lab — AI 작업 지침 (클라우드 세션용)
+
+이 파일은 Claude Code가 저장소를 열 때 자동으로 읽습니다. PC(로컬)에서 하던 작업을 클라우드에서 이어 가기 위한 지침입니다. 마지막 갱신: 2026-10-30.
+
+## 1. 무엇인가
+- 빌드 없는 순수 ES 모듈 웹 앱. 외부 패키지·CDN 없음, 해석은 Web Worker.
+- 탭 4개: 회로 편집기 / 전자기학 / 신호 및 시스템 / 회로 과정.
+- 사용자: 부산대 전기공학 2학년 학생 한 명. 2026-2학기 **전기회로2(Alexander & Sadiku 7판)**, **신호및시스템(Alkin식 강의)**, **전자기학(Hayt)** 복습·과제·기말 대비용으로 폰과 PC에서 씀. 신호및시스템 기말 12/10.
+- 공개 배포: GitHub Pages https://naver73444-droid.github.io/circuit-lab/ (이 저장소 `main`의 루트를 그대로 서빙).
+- 먼저 읽을 문서: `README.md`(기능·조작), `docs/ARCHITECTURE.md`(모듈 지도·데이터 흐름), `DESIGN.md`(화면 원칙), `docs/COMMON-CONTRACTS.md`(단위·파일 계약). `START-HERE.md`의 시험 개수 등 숫자는 오래됨(현재 단위 시험 약 1718개).
+
+## 2. 반드시 지킬 규칙
+1. **`main`에 push = 공개 사이트 배포.** 사용자가 명시적으로 확인하기 전에는 `main`에 push·병합하지 않는다. 작업은 갈래(`cloud/<주제>` 또는 아래 `feat/*`)에서 하고 갈래만 push한다.
+2. **강의 슬라이드 문장·그림을 앱·문서에 옮기지 않는다.** 구조·공식·예제 번호·수치만 쓴다.
+3. **단순화 우선.** 기존 구조나 문자열 시험에 얽매이지 말고 더 간단하게. 난잡한 기능은 빼도 된다.
+4. **학습 화면 원칙:** 슬라이더·끌기 즉시 반영(적용 버튼 없음), 그림 하나 중심, 강의 예제 수치를 프리셋으로 넣고 시험으로 고정, 폰 390·360px에서 터치 대상 44px 이상·입력 글자 16px 이상·가로 넘침 없음, 색은 `:root`/`[data-theme="light"]` 토큰만.
+5. **git stash 금지**(여러 작업 사본이 스택을 공유함). 임시 보관은 WIP 커밋으로.
+6. 커밋 메시지는 한국어, 마지막 줄 `Co-Authored-By: Claude <noreply@anthropic.com>` 형식의 공동 작성자 줄.
+7. 보고·문서는 한국어, 짧고 담백하게.
+
+## 3. 실행과 시험
+```bash
+npm test            # engine + ui-model + tooling 단위 시험
+npm run check       # src 경계·import 사이클·modulepreload 목록 검사 (errors 0이어야 함)
+node server.mjs 0   # 로컬 서버(127.0.0.1, 빈 포트)
+node --test tests/browser/<파일>.test.mjs   # 브라우저 시험 — 파일 하나씩 순서대로
+```
+- 새 모듈을 만들거나 import를 바꾸면 `node scripts/gen-modulepreload.mjs`로 `index.html`의 modulepreload 목록과 `src/module-preload-map.js`를 다시 만든다(안 하면 `npm run check`가 오류).
+- 순수 계산 모듈(DOM 없음)은 `scripts/check-boundaries.mjs`의 pure 목록에 등록한다.
+- 브라우저 시험은 `tests/browser/harness.mjs`가 헤드리스 브라우저를 띄운다. PC는 Windows Edge, **클라우드(Linux)는 Chromium을 `EDGE_PATH`로 지정**(필요하면 `--no-sandbox` 래퍼). 여러 브라우저 시험 파일을 동시에 돌리면 서로 부딪혀 거짓 실패가 나므로 하나씩 돌린다.
+- 클라우드 Linux에서만 나는 알려진 실패(코드 문제 아님, 10-22 확인): manifest SVG 아이콘 로그가 `assertNoProblems`에 걸림, Ctrl+S 다운로드·단축키 시나리오, `after` 훅의 "process N should have been stopped"(좀비 PID), 단위 시험 "압축 폭탄 4 KB…"(Node 22 차이). main에서도 같은 실패가 나는지 대조해서 **새 실패만** 문제로 본다.
+- 간헐 실패로 알려진 시험(PC에서도 가끔): smoke "drafts: a settings draft is discarded…", 준비 단계 `autoUpdateOff` 클릭, editor-polish "390x844 selection bar … 값 reopens the sheet". 실패하면 그 시험만 단독 재실행해 판정.
+
+## 4. 강의 규약 (요약, 슬라이드 문장 아님)
+- **전기회로2:** 9~10장 페이저는 최댓값·cos 기준(Vm cos(ωt+φ) ↔ Vm∠φ), 11장 뒤~13장 전력은 RMS. S = V·I*, Q>0 유도성. 3상 상순서 abc는 Vbn = Van∠−120°. 이상 변압기 n = N2/N1, 점 극성 같으면 V2 = +nV1, I1·I2 모두 점으로 들어가면 I2 = −I1/n. 2전력계법은 교재 §12.10(W1 = V_L I_L cos(θ+30°), W2 = cos(θ−30°), Q = √3(W2−W1)).
+- **전기회로2 14장(새 진도, 앱에 아직 없음):** 전달함수 H = Y/X, 보드선도 x축 ω[rad/s] 로그·y축 H_dB = 20 log10|H|, 위상[도]. 직선 근사 7항(상수, 원점 극·영점 ±20N dB/dec·±90N°, 단일 극·영점, 이차 극·영점 ±40N dB/dec). 단일 영점 위상은 +90N°(슬라이드에 −90N°로 잘못 적힌 곳 있음). 직렬공진 ω0 = 1/√(LC), B = R/L = ω0/Q, Q = ω0L/R. 전력 dB는 10 log10, 전압·전류는 20 log10. 스케일링: 크기 Km(R·L×Km, C÷Km), 주파수 Kf(L·C÷Kf).
+- **신호및시스템:** X(ω) = ∫x(t)e^{−jωt}dt, 역변환에 1/2π. 그림은 Hz 축도 씀(f축·ω축 선택 지원). 연속시간 점프에서 u(0)은 미정의(열린 원·채운 원으로 표시), 이산시간 u[0] = 1. 컨볼루션 적분 변수 λ.
+- **전자기학:** μ0 = 4π×10⁻⁷(앱은 CODATA 값 사용, 차이 1e-10 수준). 강의 장 번호 = 교재 장 번호 − 1이 아님에 주의(강의 Chap 9 = Hayt 9장 시변장). 9장: V_emf = −∫(∂B/∂t)·ds + ∮(v×B)·dl, ∇×E = −∂B/∂t, ∇×H = J + ∂D/∂t, 변위전류밀도 J_d = ∂D/∂t, E = −∇V − ∂A/∂t, 단자 전압 부호 규약 V_emf_ab에 주의. 시험은 "기호 관계식 유도 + 가끔 증명" 형식.
+
+## 5. 현재 상태 (2026-10-30)
+- `main` = GitHub `main` = `171edbd`(10-22). 사이트도 이 상태.
+- 10-27에 새 진도 추가를 시작했다가 사용자 지시로 멈춤. 남은 것:
+  - **`feat/f-editor3ph`**(push됨): 편집기 3상 전압원 부품 `THREE_PHASE`(4핀 Y, 상순서, 저장 version 5)와 교재 예제 12.2·12.3 — 커밋 2개, **검증·수정 전**. 이어서 할 것: Y–Δ 변환의 L·C 확장(셋 다 L이거나 셋 다 C일 때만; L은 R과 같은 식, C는 쌍대식 — 변환 전후 AC 결과 동일을 시험으로), 반박 검증(교재 12장 수치 0.1% 이내), 코드 검토, 수정.
+  - **`feat/f-testinfra`**(push됨): `package.json`에 브라우저 시험 `--test-concurrency=1`과 `test:browser:all` 추가만 됨. 이어서 할 것: 위 3절의 간헐 실패 원인을 반복 실행으로 재현해 근본 수정(고정 sleep 대신 상태 대기), 동시 실행 안전성.
+  - **새 진도 3과목**: 과목마다 두 관점의 기능 제안이 끝났고 **고르는 단계 전에 멈춤**. 제안 전체는 `docs/plans/2026-10-27-course-additions.md`.
+- 강의 정리본(`.notes/lectures/*.md`, 14장·9장·Ch04 4~5절 포함)은 **PC에만 있고 저장소에 없음**(`.gitignore`). 클라우드에서는 위 4절 요약과 제안 문서를 근거로 쓰고, 예제 수치가 필요하면 교재 예제 번호로 대조한다.
+
+## 6. 다음 할 일 (우선순위 순 제안)
+1. **전기회로2 14장** — 회로 과정 장 탐색(`src/circuit-course-nav.js` CHAPTERS)에 "Ch14 주파수응답" 장 추가. 후보: 보드선도 직선 근사·정확 곡선 도구(절점 끌기), 직렬·병렬 공진 도구(ω0·반전력점·B·Q, 예제 14.7), 수동·능동 필터 도구, 크기·주파수 스케일링 도구, 편집기 예제(14.7 직렬공진, 14.10 2차 LPF).
+2. **전자기학 9장** — 문제 풀이 실험(`src/em-course-registry.js`, `em-course-lecture.js`의 defineLecture, 기존 `em-course-induction.js` 확인). 후보: 회전 루프의 변압기 emf·운동 emf 분해, 슬라이딩 바·Homopolar(V = Bωr²/2), 평행판 커패시터 변위전류(∮H·dl = I_f = I_d), 유도 전계 E = −∇V − ∂A/∂t와 경로.
+3. **신호 Ch04 4·5절** — 이미 있는 것(푸리에 급수·변환·따라가기 5단계·주파수 응답·ESD·PSD·쌍대성·변조) 확인 후 빠진 것만. 후보: FT 성질 증명 보기, 급수 세 꼴(TFS·EFS·CFS) 계수 표, 2차 계단응답과 h = ds/dt(Ex 2.19), 자기상관 끌기, 대칭(짝·홀) 슬라이더.
+4. `feat/f-editor3ph`, `feat/f-testinfra` 마무리.
+- 기능마다: 순수 모듈 + 단위 시험(강의 예제 수치, 허용 오차 명시) + 브라우저 시험 새 파일 + README·ARCHITECTURE 한두 줄. 끝나면 독립 검토(수치 반박 검증 + 코드·상태 검토)를 거친 뒤 사용자에게 보고하고 `main` 병합·배포는 확인받는다.
+
+## 7. 마무리할 때
+- 갈래를 push하고, 무엇을 했는지·시험 결과·남은 일을 이 파일 5·6절이나 `docs/`의 인계 문서에 적는다(PC 세션이 이어받을 수 있게).
