@@ -14,6 +14,7 @@ import { formatPortResult, probeKeysForTarget } from "./ui-model.js";
 import { createSweepRunner } from "./sweep-runner.js";
 import { sweepLegendMarkup, syncSweepStatus } from "./sweep-panel.js";
 import { setSingleSelection } from "./selection-model.js";
+import { pulseWindowHint } from "./scope-model.js";
 import { presentProbe as presentProbeIn, synchronizeIntent as synchronizeIntentIn } from "./run-state.js";
 
 export { createRunState } from "./run-state.js";
@@ -425,6 +426,7 @@ export function createAnalysisRunner(deps) {
       quantity: state.result?.analysis === "ac" ? item.unit : item.probe.kind === "voltage" ? "V" : "A",
       values: state.result?.analysis === "ac" ? item.values : item.raw,
     }));
+    scopeView.idleText = (state.result?.analysis === "transient" && pulseWindowHint(state.circuit, state.settings)) || CURSOR_HINT;
     scopeView.setData(state.result, viewSeries, staleNow);
     if (hasData) {
       // Measurements use the raw samples and are recomputed only for a new result or a different set of traces.

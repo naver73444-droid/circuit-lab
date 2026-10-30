@@ -169,3 +169,23 @@ export function extendedRunSettings(rightEdge, settings) {
   if ((rightEdge - start) / step > 20000) out.step = timeText(niceCeiling((rightEdge - start) / 20000));
   return out;
 }
+/**
+ * A hint when a PULSE source stays on through the whole transient window (on time = rise + width reaches the end), so the run shows a
+ * step and never the repeat the user set a period for; null otherwise or when a value cannot be read.
+ */
+export function pulseWindowHint(circuit, settings) {
+  let end;
+  try { end = parseValue(settings?.end); } catch { return null; }
+  for (const component of circuit?.components ?? []) {
+    const p = component.props ?? {};
+    if (p.mode !== "PULSE") continue;
+    let delay, onTime, period;
+    try { delay = parseValue(p.pulseDelay ?? 0); onTime = parseValue(p.pulseRise ?? 0) + parseValue(p.pulseWidth ?? 1); period = parseValue(p.pulsePeriod ?? 2); } catch { continue; }
+    if (delay < end && delay + onTime >= end) {
+      // A period within a few time/div steps is reached with 시간 +; a longer one (the editor default 2 s) has to be shortened.
+      const fix = delay + 2 * period <= 20 * end ? "시간 눈금 + 로 창을 늘리면 반복이 보입니다" : "속성에서 펄스 폭·주기를 창보다 짧게 하면 반복됩니다";
+      return `${p.ref ?? component.id} 펄스가 ${timeText(delay + onTime)}s까지 켜져 있어 이 창(${timeText(end)}s)에서는 계단처럼 보입니다 · ${fix}`;
+    }
+  }
+  return null;
+}

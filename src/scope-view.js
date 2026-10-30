@@ -13,6 +13,7 @@ export class ScopeView {
     this.svg = svg;
     this.controls = controls;
     this.readout = readout;
+    this.idleText = "그래프를 눌러 값을 읽습니다.";
     this.axes = new Map();
     this.xAxis = null;
     this.result = null;
@@ -458,7 +459,7 @@ export class ScopeView {
     target.replaceChildren();
     const index = this.cursorIndex;
     if (index === null || !this.result || index >= this.result.xValues.length) {
-      this.readout.textContent = "그래프를 눌러 값을 읽습니다.";
+      this.readout.textContent = this.idleText;
       this.renderCursorB(target, null);
       return;
     }

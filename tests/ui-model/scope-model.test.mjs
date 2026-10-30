@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { zoomAxis, fittedAxis, step125, engineering, fittedXAxis, nearestSampleIndex, extremaIndices } from "../../src/scope-model.js";
+import { zoomAxis, fittedAxis, step125, engineering, fittedXAxis, nearestSampleIndex, extremaIndices, pulseWindowHint } from "../../src/scope-model.js";
 
 test("large finite plotting data cannot cause an endless autoscale loop", () => {
   const url = new URL("../../src/scope-model.js", import.meta.url).href;
@@ -52,4 +52,17 @@ test('display reduction retains narrow extrema and gaps without mutating samples
 
 test('engineering text handles zero, femto and large powers without truncation',()=>{
   assert.equal(engineering(0,'s'),'0 s');assert.equal(engineering(.005,'A'),'5 mA');assert.equal(engineering(1e-15,'F'),'1 fF');assert.equal(engineering(1e10,'Hz'),'10 GHz');assert.equal(engineering(-45,'°'),'-45 °');
+});
+
+test("pulseWindowHint: a pulse still on at the window's end reads as a step and says so; one that turns off inside the window does not", () => {
+  const source = (props) => ({ components: [{ id: "c1", type: "V", props: { mode: "PULSE", ref: "V1", ...props } }] });
+  const hint = pulseWindowHint(source({ pulseWidth: "1", pulsePeriod: "2" }), { end: "5m" });
+  assert.match(hint, /^V1 펄스가 1s까지 켜져 있어 이 창\(5ms\)/);
+  assert.match(hint, /속성에서 펄스 폭·주기를/, "a 2 s period is out of reach of 시간 +");
+  assert.equal(pulseWindowHint(source({}), { end: "5m" }) !== null, true, "the editor default (width 1 s) counts");
+  assert.equal(pulseWindowHint(source({ pulseWidth: "2m", pulsePeriod: "4m" }), { end: "5m" }), null);
+  assert.match(pulseWindowHint(source({ pulseWidth: "2m", pulsePeriod: "4m" }), { end: "1m" }), /시간 눈금 \+ 로 창을 늘리면/, "the example's first view: widen the window");
+  assert.equal(pulseWindowHint(source({ pulseDelay: "10m" }), { end: "5m" }), null, "not on yet: no step to explain");
+  assert.equal(pulseWindowHint(source({ mode: "DC" }), { end: "5m" }), null);
+  assert.equal(pulseWindowHint(source({ pulseWidth: "abc" }), { end: "5m" }), null, "unreadable values are left to the analysis error");
 });
