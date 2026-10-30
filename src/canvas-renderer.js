@@ -237,6 +237,11 @@ export function createCanvasRenderer(deps) {
     const probed = probe ? " probed" : "";
     const color = probe ? ` style="--probe-color:${traceColor(probe.color)}"` : "";
     const arrowSample = currentArrowSample();
+    // Voltage across the part: + at pin 1, − at pin 2 in the probe's colour, next to the leads (the sign convention of V(R1)).
+    const across = state.probes.find((item) => item.kind === "voltage" && item.across === true && item.componentId === component.id);
+    // Each sign is turned back upright around its own spot, so a vertical part still shows "−" and not "|".
+    const turn = -Number(component.rotation ?? 0), sign = (x, glyph) => `<text x="${x}" y="18" text-anchor="middle" dominant-baseline="middle" transform="rotate(${turn} ${x} 18)">${glyph}</text>`;
+    const acrossMarkup = across ? `<g class="across-mark" style="--probe-color:${traceColor(across.color)}">${sign(-30, "+")}${sign(30, "−")}</g>` : "";
     const directionMarkup = currentProbes.map((item) => currentArrowMarkup(component, item.winding === 2 ? 2 : 1, geometryVersion, arrowSample)).join("");
     const connectionStatus = connection?.status ?? "solver-check";
     const badgeRotation = -Number(component.rotation ?? 0);
@@ -260,7 +265,7 @@ export function createCanvasRenderer(deps) {
       + (valueMarkup || modeMarkup ? `<g transform="translate(${labelX} ${hangY})"><g class="label-zoom">${valueMarkup}${modeMarkup}</g></g>` : "") + `</g>`;
     const diagnostic = diagnosticIds.has(component.id) ? ` data-diagnostic="1"` : "";
     const diagnosticMarkup = diagnostic ? `<rect class="diagnostic-halo" x="-52" y="-52" width="104" height="104" rx="8"/>` : "";
-    return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${escapeHtml(connectionStatus)}"${diagnostic} aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${diagnosticMarkup}${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${labels}${deleteMarkup}</g>`;
+    return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${escapeHtml(connectionStatus)}"${diagnostic} aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${diagnosticMarkup}${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${acrossMarkup}${labels}${deleteMarkup}</g>`;
   }
 
   /**

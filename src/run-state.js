@@ -53,6 +53,7 @@ export function presentProbe(state, probe) {
     if (component) probe.label = currentProbeLabel(component, circuitGeometryVersion(state.circuit), probe.winding);
   } else if (probe.kind === "voltage") {
     if (probe.junctionId !== undefined) probe.label = `V(${probe.junctionId})`;
+    else if (probe.across) { const component = state.circuit.components.find((item) => item.id === probe.componentId); if (component) probe.label = `V(${component.props?.ref ?? component.id})`; }
     else {
       const component = state.circuit.components.find((item) => item.id === probe.componentId);
       if (component) probe.label = `V(${component.props?.ref ?? component.id}.${probe.pin + 1})`;

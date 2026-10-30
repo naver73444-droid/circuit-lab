@@ -133,7 +133,7 @@ const input = createEditorInput({
   applySelection: renderer.applySelection, setMarquee: renderer.setMarquee,
   runAnalysis: () => analysis.runAnalysis(), saveProject: () => projectIO.saveProject(),
   mutate: session.mutate, mutateGrouped: session.mutateGrouped, closeEditGroup: session.closeEditGroup, snapshot: session.snapshot, commitMove: session.commitMove, undo: session.undo, redo: session.redo,
-  addVoltageProbe: session.addVoltageProbe, addVoltageProbeEndpoint: session.addVoltageProbeEndpoint, addCurrentProbe: session.addCurrentProbe, removeProbe: session.removeProbe,
+  addVoltageProbe: session.addVoltageProbe, addVoltageProbeEndpoint: session.addVoltageProbeEndpoint, addAcrossProbe: session.addAcrossProbe, addCurrentProbe: session.addCurrentProbe, removeProbe: session.removeProbe,
   renderCanvas: renderer.renderCanvas, renderOverlay: renderer.renderOverlay, scheduleDragUpdate: renderer.scheduleDragUpdate, cancelDragUpdate: renderer.cancelDragUpdate, scheduleOverlayRender: renderer.scheduleOverlayRender,
   updateCanvasView: renderer.updateCanvasView, endpointPosition: renderer.endpointPosition, pinPosition: renderer.pinPosition, routeForWireId: renderer.routeForWireId,
   renderInspector: inspector.renderInspector, openInlineEditor: inspector.openInlineEditor, closeInlineEditor: inspector.closeInlineEditor,

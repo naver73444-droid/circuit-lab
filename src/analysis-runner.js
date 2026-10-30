@@ -1,3 +1,4 @@
+import { voltageProbeNodes, voltageAt } from "./probe-voltage.js";
 import { parseValue, pinCount } from "./circuit-engine.js";
 import { acceptsRunGeneration, endpointExists } from "./circuit-edit.js";
 import { acMagnitudeLevel, acPhaseDegrees, currentDisplayScale } from "./plot-format.js";
@@ -357,11 +358,10 @@ export function createAnalysisRunner(deps) {
   function rawSeriesForProbe(probe) {
     if (!state.result) return null;
     if (probe.kind === "voltage") {
-      const node = probe.junctionId !== undefined
-        ? state.result.topology.nodeIdByJunction?.[probe.junctionId]
-        : state.result.topology.nodeIdByPin[`${probe.componentId}:${probe.pin}`];
-      if (node === undefined) return null;
-      const raw = state.result.points.map((point) => point.nodeVoltages[node]);
+      const nodes = voltageProbeNodes(state.result.topology, probe);
+      if (!nodes) return null;
+      const raw = state.result.points.map((point) => voltageAt(point.nodeVoltages, nodes));
+      if (raw.some((value) => value === undefined)) return null;
       return { probe, raw, baseUnit: "V" };
     }
     // Scope, measurements and CSV show the current in the probe's reference direction (flipped parts: ×(−1)); the solver numbers stay.

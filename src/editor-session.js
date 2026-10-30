@@ -1,3 +1,4 @@
+import { ACROSS_PIN_COUNT, acrossProbeKey, acrossProbeLabel } from "./probe-voltage.js";
 import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geometry.js";
 import { endpointExists } from "./circuit-edit.js";
 import { classifyCircuitConnections, connectionFrequency } from "./circuit-status.js";
@@ -193,6 +194,19 @@ export function createEditorSession(deps) {
     committed();
   }
 
+  /** V probe on a part's body: the voltage across it (pin 1 − pin 2). Parts with more than two pins are probed pin by pin. */
+  function addAcrossProbe(componentId) {
+    const component = state.circuit.components.find((item) => item.id === componentId);
+    if (!component || pinCount(component.type) !== ACROSS_PIN_COUNT) return false;
+    const key = acrossProbeKey(componentId);
+    if (state.probes.some((probe) => probe.key === key)) return true;
+    recordProbeEdit();
+    state.probes.push({ key, kind: "voltage", componentId, across: true, wireId: null, label: acrossProbeLabel(component), color: nextAvailableProbeColor(PROBE_COLORS, state.probes) });
+    refreshProbeViews();
+    committed();
+    return true;
+  }
+
   function addCurrentProbe(componentId, winding = 1) {
     const component = state.circuit.components.find((item) => item.id === componentId);
     if (!component || component.type === "GND") return;
@@ -298,6 +312,6 @@ export function createEditorSession(deps) {
 
   return {
     currentConnections, snapshot, restore, mutate, bumpGeneration, commitMove, mutateGrouped, closeEditGroup, undo, redo,
-    addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, addProbes, addGround, removeProbe, flipCurrentReference,
+    addVoltageProbe, addVoltageProbeEndpoint, addAcrossProbe, addCurrentProbe, addProbes, addGround, removeProbe, flipCurrentReference,
   };
 }

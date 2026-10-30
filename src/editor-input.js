@@ -55,7 +55,7 @@ export function createInputState() {
 
 /** Tools, placement, wiring, probe placement and every canvas/plot pointer, wheel, touch and keyboard gesture. */
 export function createEditorInput(deps) {
-  const { state, elements, workspace, scopeView, mutate, mutateGrouped, closeEditGroup, snapshot, commitMove, undo, redo, runAnalysis, saveProject, hover, addVoltageProbe, addVoltageProbeEndpoint, addCurrentProbe, removeProbe,
+  const { state, elements, workspace, scopeView, mutate, mutateGrouped, closeEditGroup, snapshot, commitMove, undo, redo, runAnalysis, saveProject, hover, addVoltageProbe, addVoltageProbeEndpoint, addAcrossProbe, addCurrentProbe, removeProbe,
     renderCanvas, renderOverlay, scheduleOverlayRender, updateCanvasView, endpointPosition, pinPosition, routeForWireId,
     renderAll, renderSelection, applySelection, setMarquee, scheduleDragUpdate, cancelDragUpdate, renderInspector, openInlineEditor, closeInlineEditor, assignPortEndpoint, presentProbe, reconcileAnalysis, setStatus, showInspector, showCanvas, isCircuitUiActive } = deps;
   const openValueSheet = deps.openValueSheet ?? (() => false);
@@ -141,7 +141,7 @@ export function createEditorInput(deps) {
     select: "클릭 선택 · Shift+클릭 다중 선택 · 끌어서 이동 · 빈 곳 끌기 화면 이동 · Shift+빈 곳 끌기 상자 선택",
     pan: "화면 이동 — 부품은 움직이지 않습니다.",
     wire: "배선 — 핀에서 다른 핀·배선까지 끌거나, 핀을 누르고 빈 격자점으로 꺾은 뒤 다른 핀·배선에서 끝냅니다.",
-    "voltage-probe": "V 프로브 — 핀이나 배선을 누르면 접지 기준 전압이 추가됩니다.",
+    "voltage-probe": "V 프로브 — 핀이나 배선을 누르면 접지 기준 전압, 부품 가운데를 누르면 그 부품 양단 전압(단자 1 − 단자 2)이 추가됩니다.",
     "current-probe": "I 프로브 — 부품을 누르면 기준 방향 전류가 추가됩니다.",
   };
   // Touch screens get finger wording for the select tool (tap / long press / two fingers instead of click / Shift).
@@ -289,6 +289,7 @@ export function createEditorInput(deps) {
       if (performance.now() < state.ignoreClickUntil) return;
       const id = group.dataset.id;
       if (state.tool === "current-probe") addCurrentProbe(id, currentProbeWinding(state.circuit.components.find((item) => item.id === id), svgPoint(event)));
+      else if (state.tool === "voltage-probe") addAcrossProbe(id);
       else if (state.tool === "select") {
         if (event.shiftKey) return; // Shift+press already toggled this part on pointerdown
         setSingleSelection(state, { kind: "component", id });
@@ -829,6 +830,16 @@ export function createEditorInput(deps) {
       }
       if (pinHit) return pinHit;
     }
+    // V probe: a finger on the middle of a two-pin part (away from both pins) means the voltage across that part.
+    if (state.tool === "voltage-probe" && !state.pendingPin && !state.port.mode) {
+      for (const c of state.circuit.components) {
+        if (pinCount(c.type) !== 2) continue;
+        const a = screen(pinPosition(c, 0)), b = screen(pinPosition(c, 1)), center = screen(c);
+        const half = Math.hypot(b.x - a.x, b.y - a.y) / 2;
+        const along = Math.hypot(point.x - center.x, point.y - center.y);
+        if (half > 0 && along < half * 0.45 && distanceToSegment(point, a, b) < 23) return { kind: "component", id: c.id };
+      }
+    }
     if (!endpointMode) {
       let best = null, bestDistance = 23;
       for (const c of state.circuit.components) {
@@ -943,6 +954,7 @@ export function createEditorInput(deps) {
       }
       if(target.kind === "component") {
         if(state.tool === "current-probe")addCurrentProbe(target.id, currentProbeWinding(state.circuit.components.find(c=>c.id===target.id), point));
+        else if(state.tool === "voltage-probe")addAcrossProbe(target.id);
         else {setSingleSelection(state,{kind:"component",id:target.id});openValueSheet(target.id);renderSelection();armSelectionBar();}
         return;
       }

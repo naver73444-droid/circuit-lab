@@ -98,7 +98,7 @@ export function passiveSliderModel(type, value) {
 export function probeKeysForTarget(probes, target) {
   return probes.filter((probe) => {
     if (target.kind === "chip") return probe.key === target.key;
-    if (target.kind === "component") return probe.kind === "current" && probe.componentId === target.componentId;
+    if (target.kind === "component") return (probe.kind === "current" || (probe.kind === "voltage" && probe.across === true)) && probe.componentId === target.componentId;
     if (target.kind === "pin") return probe.kind === "voltage" && probe.componentId === target.componentId && probe.pin === target.pin;
     if (target.kind === "wire") return probe.kind === "voltage" && probe.wireId === target.wireId;
     if (target.kind === "junction") return probe.kind === "voltage" && probe.junctionId === target.junctionId;

@@ -1,3 +1,4 @@
+import { voltageProbeNodes, voltageAt } from "./probe-voltage.js";
 import { divideComplex, peakToRms, phasorAxis, phasorPolar, phasorTimeValue, theoreticalImpedance } from "./phasor-format.js";
 import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
@@ -19,11 +20,9 @@ export function createPhasorView(elements, state, parseNumeric, hasPendingInputs
     const point = state.phasorResult.points[0];
     return state.probes.map((probe) => {
       if (probe.kind === "voltage") {
-        const node = probe.junctionId !== undefined
-          ? state.phasorResult.topology.nodeIdByJunction?.[probe.junctionId]
-          : state.phasorResult.topology.nodeIdByPin[`${probe.componentId}:${probe.pin}`];
-        if (node === undefined) return null;
-        return { probe, value: point.nodeVoltages[node], baseUnit: "V" };
+        const nodes = voltageProbeNodes(state.phasorResult.topology, probe);
+        const value = nodes ? voltageAt(point.nodeVoltages, nodes) : undefined;
+        return value === undefined ? null : { probe, value, baseUnit: "V" };
       }
       // Shown in the probe's reference direction: a flipped part (winding) shows −I, so the phasor matches the textbook figure.
       const component = state.circuit.components.find((item) => item.id === probe.componentId);

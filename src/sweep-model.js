@@ -5,6 +5,7 @@
  *   3) mergeSweepResults: N개 해석 결과를 한 프로브의 겹쳐 그리기(overlay) 시리즈로 합친다.
  * 해석 실행(simulate)은 이 모듈이 하지 않는다 — 호출 측이 buildSweepCircuits 결과로 실행한다.
  */
+import { voltageProbeNodes, voltageAt } from "./probe-voltage.js";
 import { parseValue } from "./circuit-engine.js";
 import { probeCurrentKey } from "./current-direction.js";
 import { acMagnitudeLevel, acPhaseDegrees } from "./plot-format.js";
@@ -187,11 +188,9 @@ function unwrapResult(entry) {
 
 function rawSeries(result, probe) {
   if (probe.kind === "voltage") {
-    const node = probe.junctionId !== undefined
-      ? own(result.topology?.nodeIdByJunction, probe.junctionId)
-      : own(result.topology?.nodeIdByPin, `${probe.componentId}:${probe.pin}`);
-    if (!Number.isInteger(node)) return { error: "프로브 노드가 이 결과에 없습니다." };
-    const raw = result.points.map((point) => own(point?.nodeVoltages, node));
+    const nodes = voltageProbeNodes(result.topology, probe);
+    if (!nodes || !nodes.every(Number.isInteger)) return { error: "프로브 노드가 이 결과에 없습니다." };
+    const raw = result.points.map((point) => voltageAt(point?.nodeVoltages, nodes));
     if (raw.some((value) => value === undefined)) return { error: "프로브 노드 전압이 이 결과에 없습니다." };
     return { raw, baseUnit: "V" };
   }

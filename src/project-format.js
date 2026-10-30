@@ -105,7 +105,10 @@ export function deserializeProject(text, fallbackSettings = {}) {
       const maximumPin = component ? pinCount(component.type) - 1 : -1;
       const hasComponentTarget = probe?.componentId !== undefined || probe?.pin !== undefined;
       const hasJunctionTarget = probe?.junctionId !== undefined;
-      const validVoltage = probe?.kind === "voltage" && hasComponentTarget !== hasJunctionTarget && (
+      // A voltage across a part (across: true) names the part and no pin; it needs a two-pin part.
+      const validAcross = probe?.kind === "voltage" && probe.across === true && probe.pin === undefined && probe.junctionId === undefined && typeof probe.componentId === "string"
+        && componentIds.has(probe.componentId) && maximumPin === 1;
+      const validVoltage = validAcross || probe?.kind === "voltage" && probe.across === undefined && hasComponentTarget !== hasJunctionTarget && (
         (typeof probe.componentId === "string" && componentIds.has(probe.componentId) && Number.isInteger(probe.pin) && probe.pin >= 0 && probe.pin <= maximumPin) ||
         (typeof probe.junctionId === "string" && junctionIds.has(probe.junctionId))
       );
