@@ -114,12 +114,14 @@ const renderer = createCanvasRenderer({
 const flow = createFlowLayer({ state, elements, scopeView, wireRoutes: renderer.wireRoutes });
 // Probe arrows show the real direction at the scope cursor time in a transient run, so they follow the cursor (one frame per move).
 scopeView.subscribe((type) => { if (type === "cursor") renderer.refreshCurrentArrows(); });
-// A wider time/div that reaches past the end of a transient run lengthens the run to the new right edge and runs it again (one undo
-// step), so the waveform fills the screen as on an oscilloscope. The step grows only if the run would pass the 20 000-point limit.
+// A wider time/div that reaches past the end of a transient run lengthens the run to the new right edge and runs it again when
+// 자동 갱신 is on (one undo step), so the waveform fills the screen as on an oscilloscope. The step grows only if the run would pass the 20 000-point limit.
 scopeView.subscribe((type, detail) => {
   if (type !== "extend" || state.settings.analysis !== "transient" || state.result?.analysis !== "transient" || !isCircuitUiActive()) return;
   const end = extendedRunSettings(detail.end, state.settings);
   if (!end) return;
+  // With 자동 갱신 off the student runs by hand: only the window widens, and the status says how to fill it.
+  if (!state.autoUpdate) { setStatus(`창이 해석 끝을 넘었습니다 · 해석 설정의 끝 시간을 ${end.end}s로 늘리고 실행하면 채워집니다`, "ready"); return; }
   session.mutate(() => { state.settings.end = end.end; if (end.step) state.settings.step = end.step; state.intent = "manual"; }, { auto: false });
   inspector.renderAnalysisSettings();
   setStatus(`시간 눈금에 맞춰 끝 시간을 ${end.end}s로 늘려 다시 계산합니다`, "ready");
