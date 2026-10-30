@@ -25,7 +25,8 @@ const UNSUPPORTED = { Q: "트랜지스터(BJT)", M: "MOSFET", J: "JFET", X: "부
 
 /** A value as the editor reads it: "1.5kΩ" → "1.5k", "11nF" → "11n", "10mH" → "10m"; null when it cannot be read. */
 export function editorValue(raw, unit) {
-  const text = String(raw ?? "").trim().replace(/[Ωω]$/u, "").replace(/ohms?$/i, "").replace(new RegExp(unit + "$", "i"), "");
+  // A unit letter goes only in its own case: "11nF" → "11n", but "10f" stays femto (SPICE), never 10 farad.
+  const text = String(raw ?? "").trim().replace(/[Ωω]$/u, "").replace(/ohms?$/i, "").replace(unit ? new RegExp(unit + "$") : /$^/, "");
   if (/^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?M$/.test(text)) return null; // "1M": milli in SPICE, mega elsewhere — ask for "1meg" or "1m"
   try { parseValue(text); return text; } catch { return null; }
 }
@@ -40,7 +41,7 @@ function tokens(line) {
   return out;
 }
 
-function sourceProps(rest, unit, error) {
+function sourceProps(rest, unit, error, warn) {
   const props = {};
   let modeSet = false;
   for (let i = 0; i < rest.length; i++) {
@@ -48,10 +49,13 @@ function sourceProps(rest, unit, error) {
     const num = (text, what) => { const v = editorValue(text, unit); if (v === null) error(what + ' 값 "' + text + '"을(를) 읽을 수 없습니다.'); return v ?? "0"; };
     if (typeof t === "object") {
       if (t.name === "SIN") {
-        const [offset = "0", amplitude = "0", frequency = "60", , , phase = "0"] = t.args;
+        const [offset = "0", amplitude = "0", frequency = "60", delay = "0", damping = "0", phase = "0"] = t.args;
+        if (t.args.length < 3) error("SIN(오프셋 진폭 주파수)의 세 값이 필요합니다.");
+        if (Number(parseValue(editorValue(delay, "s") ?? "0")) !== 0 || Number(parseValue(editorValue(damping, "") ?? "0")) !== 0) warn("SIN의 지연·감쇠는 편집기에 없어 0으로 읽었습니다.");
         Object.assign(props, { mode: "SIN", offset: num(offset, "SIN 오프셋"), amplitude: num(amplitude, "SIN 진폭"), frequency: num(frequency, "SIN 주파수"), phase: num(phase, "SIN 위상") });
       } else if (t.name === "PULSE") {
         const [v1 = "0", v2 = "1", delay = "0", rise = "0", fall = "0", width = "1", period = "2"] = t.args;
+        if (t.args.length < 7) error("PULSE(V1 V2 지연 상승 하강 폭 주기)의 일곱 값이 모두 필요합니다.");
         Object.assign(props, { mode: "PULSE", pulseV1: num(v1, "PULSE V1"), pulseV2: num(v2, "PULSE V2"), pulseDelay: num(delay, "PULSE 지연"), pulseRise: num(rise, "PULSE 상승"),
           pulseFall: num(fall, "PULSE 하강"), pulseWidth: num(width, "PULSE 폭"), pulsePeriod: num(period, "PULSE 주기") });
       } else error(t.name + "(…) 꼴의 전원은 지원하지 않습니다. DC, SIN(…), PULSE(…), AC를 쓰세요.");
@@ -66,9 +70,12 @@ function sourceProps(rest, unit, error) {
     } else if (!modeSet && editorValue(t, unit) !== null) { Object.assign(props, { mode: "DC", dc: num(t, "DC") }); modeSet = true; }
     else error('"' + t + '"을(를) 읽을 수 없습니다.');
   }
-  if (!props.mode) props.mode = props.acMagnitude !== undefined ? "SIN" : "DC";
-  if (props.mode === "SIN" && props.amplitude === undefined) Object.assign(props, { offset: "0", amplitude: "0" });
-  if (props.mode === "DC" && props.dc === undefined) props.dc = "0";
+  // Every value the editor would otherwise fill from its own defaults (dc 5, AC 1) is set here, as SPICE reads the line: "AC 1" alone is a
+  // 0 V source with an AC part, the DC value of a SIN/PULSE source is its value at t = 0, and no AC part means AC 0.
+  if (!props.mode) props.mode = "DC";
+  if (props.dc === undefined) props.dc = props.mode === "SIN" ? props.offset : props.mode === "PULSE" ? props.pulseV1 : "0";
+  if (props.acMagnitude === undefined) props.acMagnitude = "0";
+  if (props.acPhase === undefined) props.acPhase = "0";
   return props;
 }
 
@@ -81,8 +88,15 @@ export function parseNetlist(text) {
   if (typeof text !== "string" || !text.trim()) { out.errors.push("넷리스트가 비어 있습니다."); return out; }
   if (text.length > NETLIST_MAX_CHARS) { out.errors.push("넷리스트는 " + NETLIST_MAX_CHARS + "자 이내여야 합니다."); return out; }
   const refs = new Set();
-  // A fenced block copied from a chat (```spice … ```) is read as its content; "+" continuation lines join the line above.
-  const lines = text.replace(/^```[^\n]*\n?|```\s*$/gm, "").split(/\r?\n/);
+  // A whole chat answer may be pasted: with ``` fences only the first block is read (the words around it are the model's notes) and the
+  // other lines count as blank, so line numbers still match the pasted text. "+" continuation lines join the line above.
+  let lines = text.split(/\r?\n/);
+  const fences = lines.map((l, i) => (/^\s*```/.test(l) ? i : -1)).filter((i) => i >= 0);
+  if (fences.length >= 2) {
+    const [open, close] = fences;
+    lines = lines.map((l, i) => (i > open && i < close ? l : ""));
+    if (fences.length > 3) out.warnings.push("코드 블록이 여러 개라 첫 블록(" + (open + 1) + "~" + (close + 1) + "행)만 읽었습니다. 다른 회로는 그 블록만 따로 붙여 넣으세요.");
+  } else if (fences.length === 1) lines = lines.map((l, i) => (i === fences[0] ? "" : l));
   const joined = [];
   lines.forEach((raw, index) => {
     const line = raw.replace(/;.*$/, "").trim();
@@ -103,15 +117,23 @@ export function parseNetlist(text) {
       if (cmd === ".tran") {
         const [step, stop, start = "0"] = args.map((a) => editorValue(a, "s"));
         if (!step || !stop) { error(".tran 간격과 끝 시간을 읽을 수 없습니다. 예: .tran 10u 5m"); continue; }
+        if (!(valueOf(step) > 0 && valueOf(stop) > valueOf(start ?? "0"))) { error(".tran 간격은 0보다 크고 끝 시간은 시작보다 커야 합니다."); continue; }
+        if (valueOf(stop) / valueOf(step) > 20000) { error(".tran 점이 2만 개를 넘습니다(끝 ÷ 간격). 간격을 늘리세요."); continue; }
         out.settings = { analysis: "transient", step, end: stop, start: start ?? "0" };
       } else if (cmd === ".ac") {
         const [sweep, points, fstart, fstop] = args;
         if (String(sweep).toLowerCase() !== "dec") { error(".ac는 dec 스윕만 지원합니다. 예: .ac dec 50 10 100k"); continue; }
         const f1 = editorValue(fstart, "Hz"), f2 = editorValue(fstop, "Hz"), n = Number(points);
         if (!f1 || !f2 || !Number.isInteger(n) || n < 1) { error(".ac 값을 읽을 수 없습니다. 예: .ac dec 50 10 100k"); continue; }
+        if (!(valueOf(f1) > 0 && valueOf(f2) > valueOf(f1))) { error(".ac 시작 주파수는 0보다 크고 끝 주파수보다 작아야 합니다."); continue; }
         out.settings = { analysis: "ac", pointsPerDecade: String(Math.min(n, 200)), startFrequency: f1, endFrequency: f2 };
       } else if (cmd === ".probe" || cmd === ".print" || cmd === ".plot") {
-        for (const m of line.matchAll(/\b([VI])\(\s*([^)\s,]+)\s*\)/gi)) out.probes.push(m[1].toUpperCase() === "V" ? { kind: "voltage", node: m[2] } : { kind: "current", ref: m[2].toUpperCase() });
+        for (const m of line.matchAll(/\b([VI])\(\s*([^)]+?)\s*\)/gi)) {
+          const args = m[2].split(/[\s,]+/).filter(Boolean);
+          if (m[1].toUpperCase() === "I") { out.probes.push({ kind: "current", ref: args[0].toUpperCase() }); continue; }
+          if (args.length > 1) out.warnings.push(number + "행: V(" + args.join(",") + ")는 두 노드의 전압을 각각 잽니다(차이는 커서로 읽으세요).");
+          for (const node of args) out.probes.push({ kind: "voltage", node: node.toLowerCase() });
+        }
       } else out.warnings.push(number + "행: " + word + " 지시문은 무시했습니다.");
       continue;
     }
@@ -120,21 +142,31 @@ export function parseNetlist(text) {
     if (!TYPES[letter]) { error('"' + ref + '"의 부품 종류를 알 수 없습니다. R, C, L, V, I, D, U로 시작해야 합니다.'); continue; }
     if (!/^[A-Z][A-Z0-9_]{0,15}$/.test(ref)) { error('부품 이름 "' + ref + '"은(는) 글자로 시작하는 16자 이내 영문·숫자여야 합니다.'); continue; }
     if (refs.has(ref)) { error(ref + "이(가) 두 번 나옵니다."); continue; }
-    const nodeCount = letter === "U" ? 3 : 2, nodes = parts.slice(1, 1 + nodeCount);
+    // Node names are not case sensitive (SPICE): IN and in are one node.
+    const nodeCount = letter === "U" ? 3 : 2, nodes = parts.slice(1, 1 + nodeCount).map((n) => (typeof n === "string" ? n.toLowerCase() : n));
     if (nodes.length < nodeCount || nodes.some((n) => typeof n !== "string")) { error(ref + "에 연결 노드 " + nodeCount + "개가 필요합니다."); continue; }
+    if (letter === "U" && parts.length > 4) { error(ref + "는 +입력 −입력 출력 세 노드만 씁니다. ±Vcc 전원 핀은 빼세요 (이상 OP AMP)."); continue; }
     if (nodeCount === 2 && nodes[0] === nodes[1]) out.warnings.push(number + "행: " + ref + "의 두 단자가 같은 노드(" + nodes[0] + ")라 단락된 부품입니다.");
-    const rest = parts.slice(1 + nodeCount), unit = { R: "", C: "F", L: "H", V: "V", I: "A" }[letter] ?? "";
+    let rest = parts.slice(1 + nodeCount);
+    // "1.5 k" or "11 nF" (a space before the prefix, as photos print "1.5 kΩ") is one value, never 1.5 Ω and a stray "k".
+    if (typeof rest[0] === "string" && typeof rest[1] === "string" && rest[1] && /^(meg|[kmunpfgtKMUNPFGT]|µ)?(Ω|ohms?|F|H|V|A)?$/u.test(rest[1])) rest = [rest[0] + rest[1], ...rest.slice(2)];
+    const unit = { R: "", C: "F", L: "H", V: "V", I: "A" }[letter] ?? "";
     let props = {};
     if (letter === "R" || letter === "C" || letter === "L") {
       const value = editorValue(rest[0], unit);
       if (value === null) { error(ref + ' 값 "' + (rest[0] ?? "") + '"을(를) 읽을 수 없습니다. 예: 1.5k, 11n, 10m (메가는 meg)'); continue; }
       if (!(valueOf(value) > 0)) { error(ref + " 값은 0보다 커야 합니다."); continue; }
       props = { value };
-      const ic = rest.slice(1).find((t) => typeof t === "string" && /^ic=/i.test(t));
-      if (ic && letter !== "R") props.ic = editorValue(ic.slice(3), letter === "C" ? "V" : "A") ?? "0";
+      const extra = rest.slice(1).map((t) => (typeof t === "string" ? t : "")).join(" ").replace(/\s*=\s*/g, "=").trim();
+      const ic = /^ic=(\S+)$/i.exec(extra);
+      if (ic && letter !== "R") {
+        const v = editorValue(ic[1], letter === "C" ? "V" : "A");
+        if (v === null) { error(ref + ' 초기값 "' + ic[1] + '"을(를) 읽을 수 없습니다.'); continue; }
+        props.ic = v;
+      } else if (extra) out.warnings.push(number + "행: " + ref + ' 뒤의 "' + extra + '"은(는) 무시했습니다.');
     } else if (letter === "V" || letter === "I") {
       const before = out.errors.length;
-      props = sourceProps(rest, unit, error);
+      props = sourceProps(rest, unit, error, (m) => out.warnings.push(number + "행: " + ref + " " + m));
       if (out.errors.length > before) continue;
     }
     refs.add(ref);
@@ -194,6 +226,9 @@ export function layoutNetlist(parsed) {
     else if (p.nodes.every(isGround)) floating.push(p);
     else series.push(p);
   }
+  // No AC part anywhere: the main source carries AC 1 so a later switch to the AC analysis has an input (only that one: SPICE semantics).
+  const anyAc = parts.some((p) => (p.type === "V" || p.type === "I") && valueOf(p.props.acMagnitude ?? "0") !== 0);
+  const propsOf = (p) => (p === source && !anyAc ? { ...p.props, acMagnitude: p.type === "V" ? "1" : "1m" } : p.props);
   if (source && grounded(source)) { const list = shunts.get(source.nodes.find((n) => !isGround(n))); list.splice(list.indexOf(source), 1); list.unshift(source); }
   // Node x positions: each node's shunts side by side, then a gap for the part to the next node.
   const left = new Map(), right = new Map();
@@ -205,7 +240,7 @@ export function layoutNetlist(parsed) {
     x += COLUMN;
   }
   const components = [];
-  const place = (p, cx, cy, rotation) => { components.push({ id: p.ref, type: p.type, x: cx, y: cy, rotation, props: { ...componentDefaults(p.type, Number(p.ref.match(/\d+/)?.[0] ?? 1)), ...p.props, ref: p.ref } }); };
+  const place = (p, cx, cy, rotation) => { components.push({ id: p.ref, type: p.type, x: cx, y: cy, rotation, props: { ...componentDefaults(p.type, Number(p.ref.match(/\d+/)?.[0] ?? 1)), ...propsOf(p), ref: p.ref } }); };
   for (const node of order) shunts.get(node).forEach((p, k) => {
     // Vertical, live pin up (pin 0 is at the top at 90°, at the bottom at 270°).
     place(p, left.get(node) + SHUNT * k, MID, isGround(p.nodes[0]) ? 270 : 90);
@@ -289,7 +324,7 @@ export function inferredSettings(parts) {
     .filter((t) => Number.isFinite(t) && t > 0);
   if (!periods.length) return { analysis: "dc" };
   const T = Math.max(...periods), short = (n) => String(Number(n.toPrecision(3)));
-  return { analysis: "transient", start: "0", end: short(3 * T), step: short(Math.min(...periods) / 200) };
+  return { analysis: "transient", start: "0", end: short(3 * T), step: short(Math.max(Math.min(...periods) / 200, 3 * T / 20000)) };
 }
 
 /** One line per part for the preview: "R1  저항  in – out  1.5 kΩ". */
@@ -305,10 +340,11 @@ export function describePart(p) {
   if (unit) value = si(p.props.value, unit);
   else if (p.type === "V" || p.type === "I") {
     const u = p.type === "V" ? "V" : "A", q = p.props;
-    value = q.mode === "SIN" ? "정현파 진폭 " + si(q.amplitude, u) + " (" + si(Number(valueOf(q.amplitude)) * 2, u + "pp") + "), " + si(q.frequency, "Hz") + (Number(valueOf(q.offset)) ? ", 오프셋 " + si(q.offset, u) : "")
+    value = q.mode === "DC" && valueOf(q.dc) === 0 && q.acMagnitude !== undefined && valueOf(q.acMagnitude) !== 0 ? "AC 해석용 (직류 0)"
+      : q.mode === "SIN" ? "정현파 진폭 " + si(q.amplitude, u) + " (" + si(Number(valueOf(q.amplitude)) * 2, u + "pp") + "), " + si(q.frequency, "Hz") + (Number(valueOf(q.offset)) ? ", 오프셋 " + si(q.offset, u) : "")
       : q.mode === "PULSE" ? "펄스 " + si(q.pulseV1, u) + " ↔ " + si(q.pulseV2, u) + ", 주기 " + si(q.pulsePeriod, "s") + " (" + si(1 / valueOf(q.pulsePeriod), "Hz") + "), 폭 " + si(q.pulseWidth, "s")
       : "DC " + si(q.dc, u);
-    if (q.acMagnitude !== undefined) value += " · AC " + si(q.acMagnitude, u);
+    if (q.acMagnitude !== undefined && valueOf(q.acMagnitude) !== 0) value += " · AC " + si(q.acMagnitude, u);
   } else if (p.type === "OPAMP_IDEAL") value = "+ " + p.nodes[0] + ", − " + p.nodes[1] + ", 출력 " + p.nodes[2];
   const nodes = p.type === "OPAMP_IDEAL" ? "" : p.nodes.map((n) => (isGround(n) ? "접지" : n)).join(" – ");
   return [p.ref, p.kind, nodes, value].filter(Boolean).join("  ");
@@ -317,12 +353,14 @@ export function describePart(p) {
 // The text a student pastes once into the Claude app (or a Claude project's instructions) so a photo comes back as this netlist.
 export const CLAUDE_PROMPT = [
   "회로도 사진을 받으면 Circuit Lab에 붙여 넣을 넷리스트로 바꿔 주세요. 규칙:",
-  "1. 코드 블록 하나에 회로 하나. 첫 줄은 '* 회로 이름', 둘째 줄부터 '* '로 사진에 적힌 실험 조건(신호, 바꿔 끼우는 값 등).",
-  "2. 부품 줄: 이름 노드… 값. 접지는 0, 다른 노드는 in, out, n1처럼 짧은 영문.",
-  "   R1 in out 1.5k / C1 out 0 11n / L1 a b 10m / D1 애노드 캐소드 / U1 +입력 −입력 출력 (이상 OP AMP)",
-  "3. 단위 접두사: k, meg, m, u, n, p (대문자 M은 쓰지 말 것). 값 뒤 단위 글자(Ω F H)는 생략.",
-  "4. 함수 발생기 전원: 정현파 Vpp는 진폭 = Vpp/2 → V1 in 0 SIN(0 2.5 1k). 구형파 ±Vpp/2 → V1 in 0 PULSE(-2.5 2.5 0 1u 1u 0.5m 1m) (폭 = 주기/2). 직류는 V1 in 0 DC 5.",
-  "5. 해석: 시간 파형은 '.tran 간격 끝시간' (주기의 3~5배, 간격은 주기/200), 주파수 응답은 '.ac dec 50 시작 끝'. 측정할 값은 '.probe V(노드) I(부품)'.",
-  "6. 값이 여러 개(예: C 11nF, 47nF)면 첫 값으로 쓰고 나머지는 '*' 줄에 적기. 사진에서 확실하지 않은 부분은 코드 블록 밖에 한 줄로 알려 주기.",
-  "7. 트랜지스터·스위치처럼 R C L V I D U가 아닌 부품은 넣지 말고 블록 밖에 따로 적기.",
+  "1. 회로 하나에 코드 블록 하나. 첫 줄은 '* 회로 이름', 다음 '* ' 줄들에 사진에 적힌 실험 조건(신호, 바꿔 끼우는 값, 잴 양).",
+  "2. 부품 줄: 이름 노드… 값. 접지는 0, 다른 노드는 in, out, n1처럼 소문자 영문.",
+  "   R1 in out 1.5k / C1 out 0 11n / L1 a b 10m / D1 애노드 캐소드 / U1 +입력 −입력 출력 (이상 OP AMP, ±Vcc 전원 핀과 그 전원은 쓰지 않음)",
+  "3. 값은 띄어 쓰지 말고 접두사 k, meg, m, u, n, p (대문자 M은 쓰지 말 것). 값 뒤 단위 글자(Ω F H)는 생략.",
+  "4. 함수 발생기: 정현파 진폭 = Vpp/2 (Vrms면 √2·Vrms, Vp면 그대로) → V1 in 0 SIN(오프셋 진폭 주파수), 예: 5Vpp 1kHz → SIN(0 2.5 1k).",
+  "   구형파 ±Vpp/2 → PULSE(-2.5 2.5 0 1u 1u 0.5m 1m) (일곱 값 모두, 폭 = 주기/2). 0~5 V 구형파는 PULSE(0 5 0 1u 1u 0.5m 1m). 삼각파는 PULSE(-2.5 2.5 0 0.5m 0.5m 1n 1m).",
+  "   직류는 V1 in 0 DC 5. 주파수 응답만 볼 때는 V1 in 0 AC 1.",
+  "5. 해석: 시간 파형은 '.tran 간격 끝시간' (끝 = 주기의 3~5배, 간격 = 주기/200), 주파수 응답은 '.ac dec 50 시작 끝'.",
+  "6. 계측기는 부품으로 넣지 말 것: 전압계·오실로스코프 채널은 '.probe V(노드)', 전류계는 그 자리를 그냥 한 노드로 잇고 '.probe I(부품)'.",
+  "7. 값이 여러 개(예: C 11nF, 47nF)면 첫 값으로 쓰고 나머지는 '*' 줄에 적기. 사진에서 확실하지 않은 부분과 트랜지스터·스위치처럼 R C L V I D U가 아닌 부품은 코드 블록 밖에 적기(편집기는 첫 코드 블록만 읽음).",
 ].join("\n");

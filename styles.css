@@ -1127,7 +1127,7 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .netlist-form { display: grid; gap: 10px; padding: 16px; }
 .netlist-form h2 { margin: 0; font-size: 18px; }
 .netlist-hint { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
-#netlist-copy-prompt { justify-self: start; min-height: 40px; }
+#netlist-copy-prompt { justify-self: start; min-height: 44px; }
 #netlist-text { width: 100%; box-sizing: border-box; min-height: 180px; padding: 10px; font: 15px/1.5 var(--mono); color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 9px; resize: vertical; }
 .netlist-preview { max-height: 34dvh; overflow: auto; font-size: 14px; line-height: 1.55; }
 .netlist-preview ul { margin: 6px 0 0; padding-left: 18px; }
