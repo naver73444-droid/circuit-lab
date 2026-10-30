@@ -46,7 +46,12 @@ describe("iPad layout", { timeout: 300000 }, () => {
     await click('.view-tabs [data-view="wave"]');
     assert.deepEqual(await open(), ["wave-panel"]);
     const plot = await box("#wave-panel .plot-wrap");
-    assert.ok(plot.height >= 200, `the plot keeps its height in the column (${plot.height} px)`);
+    assert.ok(plot.width >= 640 && plot.height >= 300, `with 파형 open the waveform gets the larger side (${plot.width}×${plot.height})`);
+    const circuit = await box("#canvas-wrap");
+    assert.ok(circuit.width >= 400, `the circuit stays beside it (${circuit.width} px)`);
+    assert.deepEqual(await ev(`(() => { const panel = document.querySelector(".canvas-panel").getBoundingClientRect();
+      return [...document.querySelectorAll(".canvas-bar button, .canvas-bar summary")].filter((b) => b.offsetParent).map((b) => b.getBoundingClientRect())
+        .filter((r) => r.right > panel.right + 1 || r.left < panel.left - 1).length; })()`), 0, "no tool button is cut off in the narrower circuit column");
     await click('.view-tabs [data-view="inspector"]');
     assert.deepEqual(await open(), ["side-panel"]);
     assert.equal(await ev(`getComputedStyle(document.querySelector(".side-tabs")).display`), "none", "no second 속성/결과 tab row");

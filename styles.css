@@ -1084,6 +1084,9 @@ body :has(.topbar) { height: 100%; min-height: 0; }
   #wave-panel > .scope-zero-note { order: 4; }
   #wave-panel .scope-controls { order: 5; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; border-left: none; border-top: 1px solid var(--line-soft); }
   #wave-panel[data-idle] .plot-wrap { flex: 0 0 auto; min-height: 0; }
+  /* With 파형 open the waveform needs the room: the right column takes three fifths and the circuit stays beside it, smaller. */
+  .workbench:has(> #wave-panel:not([hidden])) { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+  .workbench:has(> #wave-panel:not([hidden])) :is(.canvas-bar, .canvas-bar .tool-group) { flex-wrap: wrap; }
   .wave-actions { margin-left: 0; }
   .wave-actions button, .scale-control button, .probe-chip button { min-width: 44px; font-size: 14px; }
   .canvas-head { flex-wrap: nowrap; gap: 6px; padding: 6px 8px 2px; }
@@ -1136,3 +1139,8 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .netlist-warning { color: var(--warning); }
 .netlist-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .netlist-actions button { min-height: 44px; min-width: 96px; }
+
+/* Tablet held upright (iPad portrait, 820 px, phone layout): the plot may use the tall screen instead of the phone's 280 px. */
+@media (min-width: 700px) and (max-width: 899px) and (pointer: coarse) {
+  #wave-panel .plot-wrap { height: clamp(260px, calc(100dvh - 560px), 520px); }
+}
