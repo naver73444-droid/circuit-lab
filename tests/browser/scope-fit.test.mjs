@@ -50,4 +50,23 @@ describe("waveform time axis", { timeout: 300000 }, () => {
     await run();
     assert.deepEqual(await xAxis(), zoomed, "same range: the zoom stays");
   });
+
+  test("직렬 RLC 응답: a wider time/div (+) past the end of the run lengthens the run, so the waveform fills the wider window", async () => {
+    await navigate("/?example=rlc");
+    await run();
+    const before = await xAxis(), end = before.maximum;
+    assert.ok(Math.abs(end - (await ev(`${L}.getState().result.xValues.at(-1)`))) < end * 1e-9, "the axis ends at the run's end");
+    await click('[data-scale-axis="x"][data-scale-step="1"]');
+    await until(`${L}.getState().runState.status === "success" && ${L}.getState().result.xValues.at(-1) > ${end} * 1.5`, "the longer run");
+    await settle();
+    const x = await xAxis(), last = await ev(`${L}.getState().result.xValues.at(-1)`);
+    assert.ok(x.division > before.division, "a wider time/div");
+    close(x.minimum, 0, "the window still starts at 0");
+    assert.ok(Math.abs(last - x.maximum) <= x.division * 1e-3, `the run reaches the right edge (${last} vs ${x.maximum})`);
+    assert.equal(x.automatic, false, "the chosen time/div stays after the longer run");
+    assert.ok(Number(await ev(`${L}.getState().result.xValues.length`)) <= 20001);
+    // One undo step brings the old end time back.
+    await click("#undo-button");
+    assert.notEqual((await ev(`${L}.getState().settings.end`)), String(x.maximum));
+  });
 });

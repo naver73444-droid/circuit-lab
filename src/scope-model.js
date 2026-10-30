@@ -1,4 +1,5 @@
-/** Pure display mathematics. This module never edits the circuit or solver samples. */
+/** Pure display mathematics. This module never edits the circuit or solver samples (extendedRunSettings only proposes new settings). */
+import { parseValue } from "./circuit-engine.js";
 export const X_DIVISIONS = 10;
 export const Y_DIVISIONS = 8;
 
@@ -148,4 +149,23 @@ export function repinnedIndex(pin, result) {
   const tolerance = Math.max(Math.abs(pin.last - pin.first), Math.abs(pin.first), Math.abs(pin.last)) * 1e-9;
   if (Math.abs(xs[0] - pin.first) > tolerance || Math.abs(xs.at(-1) - pin.last) > tolerance) return null;
   return nearestSampleIndex(xs, pin.x);
+}
+
+/** A time in the editor's own value text, six significant digits: 0.002 → "2m", 3e-4 → "300u", 1.5 → "1.5". */
+export function timeText(seconds) {
+  const steps = [[1, ""], [1e-3, "m"], [1e-6, "u"], [1e-9, "n"], [1e-12, "p"]];
+  const [scale, prefix] = steps.find(([size]) => Math.abs(seconds) >= size * (1 - 1e-9)) ?? steps[steps.length - 1];
+  return String(Number((seconds / scale).toPrecision(6))) + prefix;
+}
+/**
+ * The transient settings that reach a wider time/div's right edge: { end, step? } (step only when the run would pass the solver's
+ * 20 000-step limit), or null when the settings cannot be read or the edge is not after the start.
+ */
+export function extendedRunSettings(rightEdge, settings) {
+  let start, step;
+  try { start = parseValue(settings.start ?? "0"); step = parseValue(settings.step); } catch { return null; }
+  if (!(rightEdge > start) || !(step > 0) || !Number.isFinite(rightEdge)) return null;
+  const out = { end: timeText(rightEdge) };
+  if ((rightEdge - start) / step > 20000) out.step = timeText(niceCeiling((rightEdge - start) / 20000));
+  return out;
 }

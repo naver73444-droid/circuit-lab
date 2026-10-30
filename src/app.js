@@ -1,3 +1,4 @@
+import { extendedRunSettings } from "./scope-model.js";
 import { examples } from "./examples.js";
 import { initializeAppearance } from "./theme.js";
 import { InputDrafts } from "./input-drafts.js";
@@ -113,6 +114,17 @@ const renderer = createCanvasRenderer({
 const flow = createFlowLayer({ state, elements, scopeView, wireRoutes: renderer.wireRoutes });
 // Probe arrows show the real direction at the scope cursor time in a transient run, so they follow the cursor (one frame per move).
 scopeView.subscribe((type) => { if (type === "cursor") renderer.refreshCurrentArrows(); });
+// A wider time/div that reaches past the end of a transient run lengthens the run to the new right edge and runs it again (one undo
+// step), so the waveform fills the screen as on an oscilloscope. The step grows only if the run would pass the 20 000-point limit.
+scopeView.subscribe((type, detail) => {
+  if (type !== "extend" || state.settings.analysis !== "transient" || state.result?.analysis !== "transient" || !isCircuitUiActive()) return;
+  const end = extendedRunSettings(detail.end, state.settings);
+  if (!end) return;
+  session.mutate(() => { state.settings.end = end.end; if (end.step) state.settings.step = end.step; state.intent = "manual"; }, { auto: false });
+  inspector.renderAnalysisSettings();
+  setStatus(`시간 눈금에 맞춰 끝 시간을 ${end.end}s로 늘려 다시 계산합니다`, "ready");
+  analysis.runAnalysis();
+});
 const inspector = createInspector({
   state, elements, workspace, inputDrafts, phasorView, renderAll, setStatus, showInspector, isCircuitUiActive,
   mutate: session.mutate, currentConnections: session.currentConnections,

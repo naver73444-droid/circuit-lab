@@ -149,6 +149,10 @@ export class ScopeView {
     const ends = (r) => [r.xValues[0], r.xValues.at(-1)];
     const spanChanged = Boolean(this.result && result && !changedAnalysis && result.xValues?.length && this.result.xValues?.length
       && ends(result).some((value, i) => Math.abs(value - ends(this.result)[i]) > 1e-9 * Math.max(Math.abs(value), Math.abs(ends(this.result)[i]), 1e-300)));
+    // …unless the manual axis already holds the whole new run (the run was lengthened to fill a wider time/div): that view stays.
+    const tolerance = Math.abs(this.xAxis?.division ?? 0) * 1e-6;
+    const covers = Boolean(result?.xValues?.length && this.xAxis && !this.xAxis.automatic && result.analysis !== "ac"
+      && this.xAxis.minimum <= result.xValues[0] + tolerance && this.xAxis.maximum >= result.xValues.at(-1) - tolerance);
     this.result = result;
     this.series = series;
     const availableKeys = new Set(series.map((item) => item.key));
@@ -169,7 +173,7 @@ export class ScopeView {
     }
     this.logarithmic = result.analysis === "ac";
     this.xValues = result.xValues.map((value) => this.logarithmic ? Math.log10(value) : value);
-    if (changedAnalysis || spanChanged || this.forceFit || !this.xAxis || this.xAxis.automatic) this.xAxis = fittedXAxis(result.xValues, this.logarithmic);
+    if (changedAnalysis || (spanChanged && !covers) || this.forceFit || !this.xAxis || this.xAxis.automatic) this.xAxis = fittedXAxis(result.xValues, this.logarithmic);
     const grouped = new Map();
     for (const item of series) {
       if (!grouped.has(item.quantity)) grouped.set(item.quantity, []);
@@ -227,7 +231,12 @@ export class ScopeView {
     if (!this.result) return;
     if (key === "x") {
       if (this.result.analysis === "dc") return;
-      this.xAxis = zoomAxis(this.xAxis, direction, fraction, X_DIVISIONS);
+      // Like an oscilloscope: in a transient run a wider time/div shows more time from the same start, and when that goes past the end
+      // of the run the app runs it longer ("extend": the editor raises the end time and runs again) instead of leaving the right side blank.
+      const transient = this.result.analysis === "transient", first = this.xValues[0], last = this.xValues.at(-1);
+      const atStart = transient && this.xAxis.minimum <= first + Math.abs(this.xAxis.division) * 1e-9;
+      this.xAxis = zoomAxis(this.xAxis, direction, atStart ? 0 : fraction, X_DIVISIONS);
+      if (transient && direction > 0 && this.xAxis.maximum > last + Math.abs(this.xAxis.division) * 1e-6) this.emit("extend", { end: this.xAxis.maximum, start: first });
     } else if (this.axes.has(key)) this.axes.set(key, zoomAxis(this.axes.get(key), direction, fraction));
     this.render();
   }
