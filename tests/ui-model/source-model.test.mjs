@@ -89,16 +89,31 @@ test("the AC and DC answers of a lab RC follow the generator: 5 Vpp 1 kHz sine w
   near(Math.atan2(v.im, v.re) * 180 / Math.PI, -Math.atan(wRC) * 180 / Math.PI, 1e-6, "cos phase 0 at the input: the output lags by atan(ωRC)");
 });
 
-test("files from before: an AC value chosen on an untouched sine moves into the sine; defaults and set sines stay", () => {
-  const old = source("V", { mode: "SIN", acMagnitude: "16.97", acPhase: "30" });
-  migrateGeneratorSource(old);
-  assert.deepEqual([old.props.amplitude, old.props.phase], ["16.97", "120"]);
-  const defaultAc = source("V", { mode: "SIN" });
-  migrateGeneratorSource(defaultAc);
-  assert.equal(defaultAc.props.amplitude, "5", "AC 1∠0° is the part default, not a choice: the 5 V sine stays");
-  const set = source("V", { mode: "SIN", amplitude: "2", acMagnitude: "16.97" });
-  migrateGeneratorSource(set);
-  assert.equal(set.props.amplitude, "2", "a sine the user set wins");
-  const dc = source("V", { mode: "DC", acMagnitude: "3" });
-  assert.deepEqual(migrateGeneratorSource(dc).props.mode, "DC");
+test("files from before: in a file saved for AC, the separate AC values move into the waveform; DC/transient files keep their waveforms", () => {
+  const ac = { analysis: "ac", frequency: "159.155" };
+  const defaultSine = migrateGeneratorSource(source("V", { mode: "SIN", acMagnitude: "1", acPhase: "0" }), ac);
+  assert.deepEqual([defaultSine.props.amplitude, defaultSine.props.phase], ["1", "90"], "AC 1∠0° on a default 5 V sine: the AC answer stays 1∠0°");
+  const dcWithAc = migrateGeneratorSource(source("V", { mode: "DC", dc: "3", acMagnitude: "10", acPhase: "30" }), ac);
+  assert.deepEqual([dcWithAc.props.mode, dcWithAc.props.offset, dcWithAc.props.amplitude, dcWithAc.props.phase, dcWithAc.props.frequency], ["SIN", "3", "10", "120", "159.155"]);
+  const current = migrateGeneratorSource(source("I", { mode: "DC", dc: "0" }), ac);
+  assert.equal(current.props.amplitude, "1m", "an I source keeps its 1 mA AC (not 1 A)");
+  const off = migrateGeneratorSource(source("V", { mode: "DC", acMagnitude: "0" }), ac);
+  assert.equal(off.props.mode, "DC", "AC 0 stays a DC source");
+  const matching = migrateGeneratorSource(source("V", { mode: "SIN", amplitude: "2", phase: "0", acMagnitude: "2", acPhase: "-90" }), ac);
+  assert.deepEqual([matching.props.amplitude, matching.props.phase], ["2", "0"], "a sine that already gives its AC value is kept");
+  const transient = migrateGeneratorSource(source("V", { mode: "SIN", acMagnitude: "2" }), { analysis: "transient" });
+  assert.deepEqual([transient.props.amplitude, transient.props.phase], ["5", "0"], "a transient file keeps its 5 V sine");
+  // Two sources with their own AC parts give the same AC answer before and after.
+  const part = (id, type, props, nets) => ({ id, type, x: 100, y: 100, rotation: 0, props: { ...componentDefaults(type), ref: id, ...props }, nets });
+  const all = [part("V1", "V", { mode: "DC", acMagnitude: "10", acPhase: "30" }, ["a", "0"]), part("V2", "V", { mode: "DC", acMagnitude: "5", acPhase: "-45" }, ["b", "0"]),
+    part("R1", "R", { value: "1k" }, ["a", "m"]), part("R2", "R", { value: "2k" }, ["b", "m"]), part("R3", "R", { value: "3k" }, ["m", "0"]), part("G", "GND", {}, ["0"])];
+  const groups = new Map(), wires = [];
+  all.forEach((c) => c.nets.forEach((net, pin) => { if (!groups.has(net)) groups.set(net, []); groups.get(net).push({ componentId: c.id, pin }); }));
+  for (const ends of groups.values()) for (let k = 1; k < ends.length; k += 1) wires.push({ id: `W${wires.length + 1}`, a: ends[0], b: ends[k] });
+  const circuit = { version: 3, geometryVersion: 2, components: all.map(({ nets, ...c }) => c), wires, junctions: [] };
+  const before = simulateACAtFrequency(circuit, "1k").points[0].componentCurrents.R3;
+  const migrated = structuredClone(circuit);
+  migrated.components.forEach((c) => migrateGeneratorSource(c, ac));
+  const after = simulateACAtFrequency(analysisCircuit(migrated).circuit, "1k").points[0].componentCurrents.R3;
+  near(after.re, before.re, 1e-12, "Re I(R3)"); near(after.im, before.im, 1e-12, "Im I(R3)");
 });

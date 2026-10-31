@@ -138,9 +138,9 @@ export function sweepableProps(component) {
       const props = [];
       const mode = p.mode ?? "DC";
       if (mode === "DC") props.push({ key: "dc", label: "DC 값", unit });
-      if (mode === "SIN") props.push({ key: "amplitude", label: "peak 진폭", unit }, { key: "frequency", label: "SIN 주파수", unit: "Hz" });
-      if (mode === "PULSE") props.push({ key: "pulseV2", label: "PULSE 높은 값", unit });
-      props.push({ key: "acMagnitude", label: "AC peak 크기", unit });
+      // The AC input is the sine's own amplitude (source-model.js), so there is no separate AC magnitude to sweep.
+      if (mode === "SIN") props.push({ key: "amplitude", label: "진폭 (peak)", unit }, { key: "frequency", label: "사인 주파수", unit: "Hz" });
+      if (mode === "PULSE") props.push({ key: "pulseV2", label: "구형 높은 값", unit });
       return props;
     }
     case "OPAMP": return [{ key: "gain", label: "개방루프 이득", unit: "" }];

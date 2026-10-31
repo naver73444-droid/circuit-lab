@@ -261,7 +261,8 @@ export function createAnalysisRunner(deps) {
     const refined = settings.analysis === "transient" ? refinedTransientStep(circuit, settings) : null;
     if (refined) settings.step = String(refined.step);
     // 정상상태 (a triggered scope): run past the start-up transient and keep the part from a rising edge of the source on.
-    const steady = state.scopeSteady ? steadyStateRun(circuit, settings) : null;
+    const plan = state.scopeSteady ? steadyStateRun(circuit, settings) : null;
+    const steady = plan && !plan.refused ? plan : null;
     if (steady) Object.assign(settings, { start: "0", end: String(steady.end), step: String(steady.step) });
     // With no sine source the AC run takes the first source as its 1 V (1 A) input: say so, it is not a value the user typed.
     const acInput = settings.analysis === "ac" ? analysisCircuit(circuit).acInput : null;
@@ -287,7 +288,7 @@ export function createAnalysisRunner(deps) {
         ? `정상상태 · ${steady.source} 상승 = 0 s (시작 후 ${engineering(steady.trigger, "s", 3)}) · ${points.toLocaleString()}개 점`
         : `${state.settings.analysis === "dc" ? "DC 동작점" : state.settings.analysis === "transient" ? "시간응답" : "AC 주파수"} · ${points.toLocaleString()}개 점 · 현재 회로 결과`;
       state.lastRunMs = performance.now() - startedAt;
-      setStatus(`${automatic ? "최신 결과 · 자동" : "해석 완료"} · ${state.lastRunMs.toFixed(0)} ms${refined ? ` · τ ${engineering(refined.tau, "s", 3)}에 맞춰 간격 ${engineering(refined.step, "s", 3)}` : ""}${acInput ? ` · 사인 전원이 없어 ${acInput}을(를) 1 입력으로 계산` : ""}`, "ready");
+      setStatus(`${automatic ? "최신 결과 · 자동" : "해석 완료"} · ${state.lastRunMs.toFixed(0)} ms${refined ? ` · τ ${engineering(refined.tau, "s", 3)}에 맞춰 간격 ${engineering(Number(settings.step), "s", 3)}` : ""}${acInput ? ` · 사인 전원이 없어 ${acInput}을(를) 1 입력으로 계산` : ""}${plan?.refused ? ` · ${plan.refused}` : ""}`, "ready");
       setAutoHint(`완료 · ${state.lastRunMs.toFixed(1)} ms${state.autoUpdate ? " · 자동 갱신" : ""}`);
       renderAll();
       try { onResultReady?.(state.result.analysis); } catch { /* a failing observer must not break the run lifecycle */ }

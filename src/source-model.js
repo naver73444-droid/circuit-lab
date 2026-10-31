@@ -21,7 +21,14 @@ const SOURCE_TYPES = new Set(["V", "I"]);
 const LAB_DEFAULT = { V: { vpp: 5, frequency: 1000 }, I: { vpp: 2e-3, frequency: 1000 } };
 
 const num = (value, fallback = NaN) => { try { const x = parseValue(value); return Number.isFinite(x) ? x : fallback; } catch { return fallback; } };
+/** Shown values: 6 significant digits ("1k", "333.333u"). */
 const text = (value) => siValueText(Number(value.toPrecision(12)));
+/** Stored values: 12 significant digits, so 60 Hz → period 16.6666666667m reads back as 60 Hz and 50 %, not 59.9999. */
+function store(value) {
+  if (value === 0) return "0";
+  const [scale, prefix] = PREFIXES.find(([size]) => Math.abs(value) >= size * (1 - 1e-9)) ?? PREFIXES[PREFIXES.length - 1];
+  return String(Number((value / scale).toPrecision(12))) + prefix;
+}
 
 export const isGeneratorSource = (component) => SOURCE_TYPES.has(component?.type);
 export function waveOf(props) { return props?.mode === "SIN" ? "SIN" : props?.mode === "PULSE" ? "SQUARE" : "DC"; }
@@ -50,11 +57,11 @@ export function generatorFieldText(props, key) {
 
 function sharedKnobs(component) {
   const props = component.props ?? {}, view = generatorView(props), defaults = componentDefaults(component.type);
-  // A phase the part never had set (the engine default 0, a sine) starts as a cosine: φ = 0 in the course's reference.
-  const phase = props.phase !== undefined && props.phase !== defaults.phase ? props.phase : "90";
+  const phase = props.phase ?? "0";
   if (view.wave !== "DC") return { vpp: view.vpp, frequency: view.frequency, offset: view.offset, phase };
-  // From DC: a sine the part was given before (its stored values differ from the engine defaults), else the lab default.
-  const remembered = props.amplitude !== undefined && (props.amplitude !== defaults.amplitude || props.frequency !== defaults.frequency);
+  // From DC: a sine the part was given before (its stored values differ from the engine defaults), else the lab default, which starts
+  // as a cosine (φ = 0 in the course's reference; the engine's sin phase 90°).
+  const remembered = props.amplitude !== undefined && (props.amplitude !== defaults.amplitude || props.frequency !== defaults.frequency || phase !== defaults.phase);
   const lab = LAB_DEFAULT[component.type] ?? LAB_DEFAULT.V;
   return remembered
     ? { vpp: 2 * num(props.amplitude, lab.vpp / 2), frequency: num(props.frequency, lab.frequency), offset: num(props.offset ?? 0, 0), phase }
@@ -63,7 +70,7 @@ function sharedKnobs(component) {
 
 function squareProps(props, { vpp, frequency, offset, duty }) {
   const period = 1 / frequency;
-  return { mode: "PULSE", pulseV1: text(offset - vpp / 2), pulseV2: text(offset + vpp / 2), pulsePeriod: text(period), pulseWidth: text(period * duty / 100),
+  return { mode: "PULSE", pulseV1: store(offset - vpp / 2), pulseV2: store(offset + vpp / 2), pulsePeriod: store(period), pulseWidth: store(period * duty / 100),
     pulseDelay: props.pulseDelay ?? "0", pulseRise: props.pulseRise ?? "0", pulseFall: props.pulseFall ?? "0" };
 }
 
@@ -79,15 +86,20 @@ export function generatorEdit(component, key, value) {
     if (value === "DC") return { mode: "DC" };
     const knobs = sharedKnobs(component);
     if (![knobs.vpp, knobs.frequency, knobs.offset].every(Number.isFinite) || !(knobs.frequency > 0)) return null;
-    if (value === "SIN") return { mode: "SIN", amplitude: text(knobs.vpp / 2), frequency: text(knobs.frequency), offset: text(knobs.offset), phase: String(knobs.phase) };
-    if (value === "SQUARE") return squareProps(props, { ...knobs, duty: view.wave === "SQUARE" && Number.isFinite(view.duty) ? view.duty : 50 });
+    if (value === "SIN") return { mode: "SIN", amplitude: store(knobs.vpp / 2), frequency: store(knobs.frequency), offset: store(knobs.offset), phase: String(knobs.phase) };
+    if (value === "SQUARE") {
+      const out = { ...squareProps(props, { ...knobs, duty: 50 }), phase: String(knobs.phase) };
+      // Edges kept from an earlier square must still fit the new period: if not, the square starts with sharp edges.
+      if (num(out.pulseRise, 0) + num(out.pulseFall, 0) + num(out.pulseWidth) > num(out.pulsePeriod) * (1 + 1e-9)) Object.assign(out, { pulseRise: "0", pulseFall: "0" });
+      return out;
+    }
     return null;
   }
   const x = num(value);
   if (!Number.isFinite(x)) return null;
   if (view.wave === "DC") return key === "level" ? { dc: String(value) } : null;
   if (view.wave === "SIN") {
-    if (key === "vpp") return x >= 0 ? { amplitude: text(x / 2) } : null;
+    if (key === "vpp") return x >= 0 ? { amplitude: store(x / 2) } : null;
     if (key === "frequency") return x > 0 ? { frequency: String(value) } : null;
     if (key === "offset") return { offset: String(value) };
     if (key === "phase") return { phase: String(Number((x + 90).toPrecision(12))) };
@@ -144,7 +156,8 @@ export function analysisCircuit(circuit) {
   const components = circuit?.components ?? [];
   const sources = components.filter(isGeneratorSource);
   const hasSine = sources.some((component) => waveOf(component.props) === "SIN");
-  const acInput = hasSine ? null : sources[0] ?? null;
+  // No sine: the signal source is the first square (a DC supply is not an input), else the first source.
+  const acInput = hasSine ? null : sources.find((component) => waveOf(component.props) === "SQUARE") ?? sources[0] ?? null;
   const next = components.map((component) => {
     if (!isGeneratorSource(component)) return component;
     const props = { ...(component.props ?? {}) };
@@ -163,21 +176,27 @@ export function analysisCircuit(circuit) {
   return { circuit: { ...circuit, components: next }, acInput: acInput ? (acInput.props?.ref ?? acInput.id) : null };
 }
 
+/** Written by serializeProject: a file whose sources already follow this model is read as it is. */
+export const SOURCE_MODEL = "generator";
+
 /**
- * A part saved before sources were generators may carry an AC magnitude/phase of its own. When its sine was never set (the engine
- * defaults: 5 V(1 mA) peak, 60 Hz, phase 0) and the AC value was (not the default 1∠0°), that AC value was the intent: the sine takes it (peak = AC magnitude, cos phase = AC phase),
- * so the AC analysis gives the same numbers as before. Otherwise the sine wins. Changes component.props in place; returns it.
+ * A file saved before sources were generators kept a separate AC magnitude/phase on every source. In a file saved for the AC analysis
+ * those values were what it computed, so they move into the waveform and the AC answers stay the same: a sine whose own peak/phase
+ * differ takes the AC value (peak = AC magnitude, cos phase = AC phase), and a DC or PULSE source with a non-zero AC part becomes that
+ * sine around its old DC value at `frequency` (the file's phasor frequency). Files saved for DC or transient keep their waveforms (their
+ * AC values were defaults nobody used). Changes component.props in place; returns it.
  */
-export function migrateGeneratorSource(component) {
-  if (!isGeneratorSource(component) || component.props?.mode !== "SIN" || component.props.acMagnitude === undefined) return component;
-  const props = component.props, defaults = componentDefaults(component.type);
-  const untouched = ["amplitude", "frequency", "phase"].every((key) => props[key] === undefined || props[key] === defaults[key]);
-  // An AC value left at the part's default (1 V∠0°) was never chosen either: the sine stays.
-  const chosenAc = String(props.acMagnitude) !== defaults.acMagnitude || String(props.acPhase ?? "0") !== defaults.acPhase;
+export function migrateGeneratorSource(component, { analysis, frequency = "1k" } = {}) {
+  if (analysis !== "ac" || !isGeneratorSource(component) || component.props?.acMagnitude === undefined) return component;
+  const props = component.props;
   const magnitude = num(props.acMagnitude), phase = num(props.acPhase ?? 0);
-  if (untouched && chosenAc && Number.isFinite(magnitude) && magnitude !== 0 && Number.isFinite(phase)) {
-    props.amplitude = String(props.acMagnitude);
-    props.phase = String(Number((phase + 90).toPrecision(12)));
+  if (!Number.isFinite(magnitude) || !Number.isFinite(phase)) return component;
+  const sinPhase = String(Number((phase + 90).toPrecision(12)));
+  if (props.mode === "SIN") {
+    const same = Math.abs(num(props.amplitude ?? 0) - magnitude) <= 1e-12 * Math.max(1, magnitude) && Math.abs(((num(props.phase ?? 0) - 90 - phase) % 360 + 540) % 360 - 180) < 1e-9;
+    if (!same) Object.assign(props, { amplitude: String(props.acMagnitude), phase: sinPhase });
+  } else if (magnitude !== 0) {
+    Object.assign(props, { mode: "SIN", offset: String(props.dc ?? "0"), amplitude: String(props.acMagnitude), phase: sinPhase, frequency: String(frequency) });
   }
   return component;
 }

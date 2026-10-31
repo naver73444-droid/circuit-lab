@@ -17,32 +17,41 @@ const rc = (r, c, source = square) => make([part("V1", "V", source, ["in", "0"])
 const near = (actual, expected, tolerance, label) => assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} vs ${expected}`);
 const settings = { analysis: "transient", start: "0", end: "5m", step: "2u" };
 
-test("정상상태: RC 1 kΩ·1 µF with a 0–5 V 1 kHz square settles by 5τ = 5 ms; from that rising edge it swings 1.888…3.112 V", () => {
+test("정상상태: RC 1 kΩ·1 µF with a 0–5 V 1 kHz square settles by 10RC = 10 ms; from that rising edge it swings 1.888…3.112 V", () => {
   const circuit = rc("1k", "1u");
   const plan = steadyStateRun(circuit, settings);
-  near(plan.trigger, 5e-3, 1e-12, "trigger = first edge at or after 5 ms");
-  near(plan.end, 10e-3, 1e-12, "the 5 ms window after it");
+  near(plan.trigger, 10e-3, 1e-12, "trigger = first edge at or after 10 ms");
+  near(plan.end, 15e-3, 1e-12, "the 5 ms window after it");
   assert.equal(plan.source, "V1");
   const result = triggeredResult(simulate(analysisCircuit(circuit).circuit, { ...settings, end: String(plan.end), step: String(plan.step) }), plan.trigger);
-  assert.equal(result.xValues[0], 0, "t = 0 is the trigger sample");
+  near(result.xValues[0], -plan.step, 1e-12, "one pre-trigger sample (the level the edge starts from)");
+  near(result.xValues[1], 0, 1e-12, "t = 0 is the trigger sample");
   near(result.xValues.at(-1), 5e-3, 1e-9, "window kept");
   const v = result.points.map((point) => point.nodeVoltages[2]);
   const vmax = 5 / (1 + Math.exp(-0.5)), vmin = 5 - vmax;
-  near(Math.max(...v), vmax, 0.01, "Vmax = 5/(1+e^−0.5)");
-  near(Math.min(...v), vmin, 0.01, "Vmin");
-  near(v[0], vmin, 0.02, "at the rising edge the capacitor is at its minimum");
+  // The engine's backward Euler at 2 µs = τ/500 lands within 0.6 % of the exact steady state (12 mV of 1.9 V).
+  near(Math.max(...v), vmax, 0.012, "Vmax = 5/(1+e^−0.5)");
+  near(Math.min(...v), vmin, 0.012, "Vmin");
+  near(Math.max(...v) - Math.min(...v), vmax - vmin, 0.005, "Vpp");
+  near(v[0], Math.min(...v), 1e-9, "just before the rising edge the capacitor is at its minimum");
 });
 
-test("정상상태: a lab RC (1.5 kΩ·47 nF) needs only one period; a sine triggers at its upward zero crossing; DC and AC runs have none", () => {
-  near(steadyStateRun(rc("1.5k", "47n"), settings).trigger, 1e-3, 1e-12, "settle 0.35 ms → the edge at 1 ms (at least one period)");
+test("정상상태: a lab RC needs only one period; a sine triggers at its upward zero crossing; a delayed square settles after it starts; refusals", () => {
+  near(steadyStateRun(rc("1.5k", "47n"), settings).trigger, 1e-3, 1e-12, "settle 0.7 ms → the edge at 1 ms (at least one period)");
   const cosine = { mode: "SIN", amplitude: "1", frequency: "1k", offset: "0", phase: "90" };
-  const plan = steadyStateRun(rc("1.5k", "47n", cosine), settings);
-  near(plan.trigger, 1.75e-3, 1e-12, "cos(2πft) rises through 0 at 3T/4 (+ whole periods)");
+  near(steadyStateRun(rc("1.5k", "47n", cosine), settings).trigger, 1.75e-3, 1e-12, "cos(2πft) rises through 0 at 3T/4 (+ whole periods)");
+  near(steadyStateRun(rc("1k", "1u", { ...square, pulseDelay: "10m" }), settings).trigger, 20e-3, 1e-12, "delay 10 ms + settle 10 ms");
   assert.equal(steadyStateRun(rc("1.5k", "47n", { mode: "DC", dc: "5" }), settings), null);
   assert.equal(steadyStateRun(rc("1.5k", "47n"), { ...settings, analysis: "ac" }), null);
-  const long = steadyStateRun(rc("1k", "1"), settings);
-  assert.ok(long.end / long.step <= 20000 + 1e-6, "never past the 20 000-point limit");
-  assert.ok(Math.abs(long.trigger / long.step - Math.round(long.trigger / long.step)) < 1e-6, "the trigger is a whole number of steps");
+  assert.match(steadyStateRun(rc("10k", "100u"), settings).refused, /한 주기에 20점도 못 그립니다/, "a 10 s settle cannot be drawn at 1 kHz");
+  // Long windows near the 20 000-point limit never pass it (the step is lengthened, not shortened, to put the trigger on a sample).
+  for (const [end, step] of [["200m", "10u"], ["1", "50u"], ["500m", "100u"], ["20m", "1u"]]) {
+    const plan = steadyStateRun(rc("1.5k", "47n"), { ...settings, end, step });
+    if (plan.refused) continue;
+    assert.ok(plan.end / plan.step <= 19990 + 1e-6, `${end}/${step}: ${plan.end / plan.step} points`);
+    assert.ok(Math.abs(plan.trigger / plan.step - Math.round(plan.trigger / plan.step)) < 1e-6, `${end}/${step}: trigger on a sample`);
+    simulate(analysisCircuit(rc("1.5k", "47n")).circuit, { ...settings, end: String(plan.end), step: String(plan.step) });
+  }
 });
 
 test("Autoset: five periods at about 200 samples per period", () => {

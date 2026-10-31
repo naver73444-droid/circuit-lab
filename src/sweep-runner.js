@@ -1,6 +1,7 @@
 import { buildSweepCircuits, mergeSweepResults, planSweep, sweepTarget } from "./sweep-model.js";
 import { AnalysisCancelledError } from "./analysis-worker-client.js";
 import { currentReferenceSign } from "./current-direction.js";
+import { refinedTransientStep } from "./analysis-policy.js";
 
 /** Whole-sweep wall-clock guard on top of the engine's own per-run budget. */
 export const SWEEP_TIME_LIMIT_MS = 60000;
@@ -56,6 +57,11 @@ export function createSweepRunner(deps) {
     if (!built.ok) { say(built.reason, "error"); return false; }
 
     const settings = structuredClone(state.settings);
+    // The finest step any of the swept circuits needs (the same rule as a normal run: at least 10 samples per time constant).
+    if (settings.analysis === "transient") {
+      const steps = built.entries.map((entry) => refinedTransientStep(entry.circuit, settings)?.step).filter(Boolean);
+      if (steps.length) settings.step = String(Math.min(...steps));
+    }
     const total = built.entries.length;
     sweep.overlay = null;
     sweep.running = true;

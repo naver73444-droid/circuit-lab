@@ -476,8 +476,11 @@ export function buildTopology(circuit) {
   for (const component of components.filter((item) => item.type === "V")) {
     const a = nodeIdByPin[publicPinKey(component.id, 0)];
     const b = nodeIdByPin[publicPinKey(component.id, 1)];
-    const dc = sourceValue(component, 0, "dc");
-    if (a === b && Math.abs(dc) > 1e-15) {
+    if (a !== b) continue;
+    // Shorted and not a 0 V source: its DC value, a sine's amplitude or a pulse's levels.
+    const p = component.props ?? {};
+    const levels = [p.dc, p.mode === "SIN" ? p.amplitude : 0, p.mode === "PULSE" ? p.pulseV1 : 0, p.mode === "PULSE" ? p.pulseV2 : 0];
+    if (levels.some((level) => { try { return Math.abs(parseValue(level ?? 0)) > 1e-15; } catch { return false; } })) {
       throw new CircuitError("VOLTAGE_SOURCE_SHORT", `${component.props?.ref ?? component.id}의 두 단자가 같은 net인데 전압이 0이 아닙니다.`, "전압원 단락 또는 잘못된 배선을 확인하세요.");
     }
   }
@@ -529,7 +532,10 @@ function sourceValue(component, time, purpose = "transient") {
   const width = parseValue(p.pulseWidth ?? 1, `${p.ref ?? component.id} PULSE 폭`);
   const period = parseValue(p.pulsePeriod ?? 2, `${p.ref ?? component.id} PULSE 주기`);
   if (time <= delay) return v1;
-  const local = (time - delay) % period;
+  // Sample times are n·dt in floating point: a time a rounding error short of an edge (k·period) counts as on it, so every period's
+  // edge falls on the same sample instead of jittering by one step.
+  let local = (time - delay) % period;
+  if (period - local <= 1e-9 * period) local = 0;
   if (rise > 0 && local < rise) return v1 + ((v2 - v1) * local) / rise;
   if (local < rise + width) return v2;
   if (fall > 0 && local < rise + width + fall) return v2 + ((v1 - v2) * (local - rise - width)) / fall;

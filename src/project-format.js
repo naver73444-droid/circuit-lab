@@ -1,5 +1,5 @@
 import { CircuitError, deserializeCircuit, parseValue, pinCount, serializeCircuit } from "./circuit-engine.js";
-import { migrateGeneratorSource } from "./source-model.js";
+import { SOURCE_MODEL, migrateGeneratorSource } from "./source-model.js";
 import { isSafeColor } from "./safe-dom.js";
 import { sanitizeCurrentReferences } from "./current-direction.js";
 
@@ -57,6 +57,7 @@ export function serializeProject(project) {
     circuit,
     settings: project.settings,
     probes: project.probes,
+    sources: SOURCE_MODEL,
   }, null, 2);
 }
 
@@ -93,7 +94,11 @@ export function deserializeProject(text, fallbackSettings = {}) {
   const circuit = deserializeCircuit(JSON.stringify(wrapped ? payload.circuit : payload));
   // Optional display field (no version bump): flipCurrent / flipCurrent2 = true flips a part's shown current reference. Anything else is dropped.
   sanitizeCurrentReferences(circuit.components);
-  circuit.components.forEach(migrateGeneratorSource);
+  // Files from before sources were function generators: their separate AC values move into the waveform (source-model.js).
+  if (!wrapped || payload.sources !== SOURCE_MODEL) {
+    const options = { analysis: settings.analysis, frequency: settings.phasorFrequency ?? "1k" };
+    circuit.components.forEach((component) => migrateGeneratorSource(component, options));
+  }
   const probes = wrapped ? structuredClone(payload.probes ?? []) : [];
   if (wrapped) {
     const componentIds = new Set(circuit.components.map((component) => component.id));

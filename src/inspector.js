@@ -26,7 +26,8 @@ const derivedEdit = (component, key, value) => generatorEdit(component, key.slic
 const committedValue = (component, key) => (isDerived(key) ? generatorFieldText(component?.props ?? {}, key.slice(4)) : component?.props?.[key]);
 /** A generator entry that reads as a number but is out of range (duty 0 or 100 and over, frequency 0, negative amplitude). */
 const unusableDerived = (component, key, value) => isDerived(key) && value !== committedValue(component, key) && !derivedEdit(component, key, value);
-const GENERATOR_HELP = { "gen:duty": "듀티는 0과 100 사이(%)", "gen:frequency": "주파수는 0보다 커야 합니다", "gen:vpp": "진폭은 0 이상", "gen:rise": "상승+폭+하강이 주기 안이어야 합니다", "gen:fall": "상승+폭+하강이 주기 안이어야 합니다" };
+const EDGES_FIT = "상승+높은 구간+하강이 한 주기 안이어야 합니다";
+const GENERATOR_HELP = { "gen:duty": `듀티는 0과 100 사이(%), ${EDGES_FIT}`, "gen:frequency": `주파수는 0보다 크고, ${EDGES_FIT}`, "gen:vpp": "진폭은 0 이상", "gen:rise": EDGES_FIT, "gen:fall": EDGES_FIT, "gen:delay": "지연은 0 이상" };
 const needsPositive = (type, key) => (["R", "C", "L"].includes(type) && key === "value") || (type === "COUPLED_L" && (key === "L1" || key === "L2")) || (type === "XFMR_IDEAL" && key === "n");
 
 export function createInspector(deps) {
@@ -110,15 +111,24 @@ export function createInspector(deps) {
       update.control?.focus();
       return false;
     }
-    // 주파수·듀티 are not stored: an edited one becomes the period/width it implies, unless that field was edited too.
+    // Generator knobs are not stored: each edited one becomes the engine props it implies. Several on one part apply in turn to a working
+    // copy (frequency, then duty, …), so a later knob builds on an earlier one instead of overwriting it.
+    const working = new Map();
     for (const [mapKey, update] of [...updates]) {
       if (update.kind !== "prop" || !isDerived(update.key)) continue;
       updates.delete(mapKey);
       inputDrafts.delete("prop", update.id, update.key);
-      if (update.value === committedValue(update.component, update.key)) continue;
-      for (const [key, value] of Object.entries(derivedEdit(update.component, update.key, update.value))) {
-        const stored = inputDrafts.key("prop", update.id, key), other = updates.get(stored);
-        if (!other || other.value === String(update.component.props[key] ?? "")) updates.set(stored, { ...update, key, value, control: null });
+      if (!working.has(update.id)) working.set(update.id, { ...update.component, props: { ...update.component.props } });
+      const part = working.get(update.id);
+      if (update.value === committedValue(part, update.key)) continue;
+      Object.assign(part.props, derivedEdit(part, update.key, update.value));
+    }
+    for (const [id, part] of working) {
+      const component = state.circuit.components.find((item) => item.id === id);
+      for (const [key, value] of Object.entries(part.props)) {
+        if (String(component.props[key] ?? "") === String(value)) continue;
+        const stored = inputDrafts.key("prop", id, key), other = updates.get(stored);
+        if (!other || other.value === String(component.props[key] ?? "")) updates.set(stored, { kind: "prop", id, key, value: String(value), control: null, component, object: component.props });
       }
     }
     const changed = [...updates.values()].filter((update) => String(update.object[update.key] ?? "") !== update.value);
@@ -467,6 +477,8 @@ export function createInspector(deps) {
         }
         inputDrafts.delete("prop", current.id, control.dataset.prop);
         const patch = isDerived(control.dataset.prop) ? derivedEdit(current, control.dataset.prop, control.value) : null;
+        // The same setting written another way ("1000" for the shown "1k") changes nothing: no history step, no Autoset.
+        if (patch && Object.entries(patch).every(([key, value]) => String(current.props[key] ?? "") === String(value))) { renderInspector(); return; }
         mutate(() => {
           if (patch) Object.assign(current.props, patch); else current.props[control.dataset.prop] = control.value;
           if (control.dataset.prop === "gen:frequency") autosetTimebase(current);
