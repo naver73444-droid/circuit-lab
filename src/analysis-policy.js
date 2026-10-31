@@ -147,12 +147,13 @@ export function triggeredResult(result, trigger) {
 }
 
 /**
- * Autoset for a generator: the transient run that shows five periods of `frequency` with about 200 samples per period (step on a
- * 1-2-5 grid), as a scope's Autoset does after the signal changes. { end, step } as editor texts; null for a frequency that is not > 0.
+ * Autoset for a generator: the transient run that shows five periods of `frequency` with about 1000 samples per period (step on a
+ * 1-2-5 grid; the engine's backward Euler then keeps a sine's amplitude within about 0.1 %),
+ * as a scope's Autoset does after the signal changes. { end, step } as editor texts; null for a frequency that is not > 0.
  */
 export function generatorTimebase(frequency, start = 0) {
   if (!(frequency > 0) || !Number.isFinite(frequency)) return null;
   const period = 1 / frequency;
   const text = (value) => String(Number(value.toPrecision(6)));
-  return { end: text(start + 5 * period), step: text(floor125(period / 200)) };
+  return { end: text(start + 5 * period), step: text(floor125(period / 1000)) };
 }

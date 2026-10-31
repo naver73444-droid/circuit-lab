@@ -54,8 +54,8 @@ test("정상상태: a lab RC needs only one period; a sine triggers at its upwar
   }
 });
 
-test("Autoset: five periods at about 200 samples per period", () => {
-  assert.deepEqual(generatorTimebase(1000), { end: "0.005", step: "0.000005" });
-  assert.deepEqual(generatorTimebase(60), { end: "0.0833333", step: "0.00005" });
+test("Autoset: five periods at about 1000 samples per period", () => {
+  assert.deepEqual(generatorTimebase(1000), { end: "0.005", step: "0.000001" });
+  assert.deepEqual(generatorTimebase(60), { end: "0.0833333", step: "0.00001" });
   assert.equal(generatorTimebase(0), null);
 });
