@@ -159,9 +159,9 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await navigate("/?example=rc-lowpass");
     await selectPart("V1");
     await click("#inspector-tab");
-    await typeInto('#inspector-content [data-prop="acMagnitude"]', "0");
+    await typeInto('#inspector-content [data-prop="gen:vpp"]', "0");
     await press("Enter", "Enter", 13);
-    await waitFor(async () => (await component("V1")).props.acMagnitude === "0", "the 0 V amplitude to commit");
+    await waitFor(async () => (await component("V1")).props.amplitude === "0", "the 0 V amplitude to commit (the AC input is the sine's amplitude)");
     await runAnalysis("ac");
     await click("#results-tab");
     await until(`document.getElementById("phasor-validity").dataset.status === "ready"`, "phasor validity ready");
@@ -4550,11 +4550,13 @@ describe("browser smoke", { timeout: 600000 }, () => {
     assert.match(await unit(), /\(peak\)/);
     await click('[data-ac-basis="rms"]');
     assert.match(await currents(), /11\.09\d*\s*A \(rms\)/);
-    // the inspector line under the source amplitude converts the stored peak value (169.7 V) to the shown basis (120 V rms) and says the input is peak
+    // the generator shows the amplitude as Vpp (339.4 = 2·169.7), the peak and rms under it, and the phasor in the shown basis (120 V rms)
     await selectPart("V1");
     await click("#inspector-tab");
-    assert.match(await ev(`document.getElementById("inspector-content").innerText`), /V \(rms\) = 120[\s\S]*입력 칸은 항상 peak/);
-    assert.match(await ev(`document.querySelector('#inspector-content [data-prop="acMagnitude"]').value`), /^169\.70562/, "the stored amplitude is the peak value");
+    const inspector = await ev(`document.getElementById("inspector-content").innerText`);
+    assert.match(inspector, /= 169\.7 Vpk · 120 Vrms/);
+    assert.match(inspector, /페이저 120∠0° Vrms/);
+    assert.match(await ev(`document.querySelector('#inspector-content [data-prop="gen:vpp"]').value`), /^339\.411/, "Vpp = 2 × the stored peak");
   });
 
   // ---- 전기회로2: Y–Δ with complex impedances (9.7) and the autotransformer power split (13.6) -------------------------------------------

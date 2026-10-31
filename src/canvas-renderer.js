@@ -192,7 +192,8 @@ export function createCanvasRenderer(deps) {
     const magnetic = component.type === "COUPLED_L" || component.type === "XFMR_IDEAL";
     const valueLabel = magnetic ? magneticValueLabel(component) : formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
     // A source's wording ("DC bias ") is its own tspan, hidden when the labels have to grow (svg[data-text-compact]); textContent is unchanged.
-    const value = generator !== null ? escapeHtml(generator)
+    // The waveform word ("사인 ") is dropped with the other source wording when the labels have to grow (svg[data-text-compact]).
+    const value = generator !== null ? generator.replace(/^(\S+ )?(.*)$/, (_, word = "", rest) => `${word ? `<tspan class="value-extra">${escapeHtml(word)}</tspan>` : ""}${escapeHtml(rest)}`)
       : sourceDescriptor
       ? `<tspan class="value-extra">${escapeHtml(sourceDescriptor.label)} </tspan>${escapeHtml(`${valueLabel} ${sourceDescriptor.unit}`)}`
       : escapeHtml(valueLabel);

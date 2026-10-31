@@ -168,7 +168,7 @@ describe("canvas UX for first-time students", { timeout: 300000 }, () => {
       assert.equal(measured.extra, 0, "the source wording is hidden then");
     }
     // the stored text is unchanged (the hidden wording is still part of the label)
-    assert.match(await ev(`document.querySelector('.component[data-id="V1"] .value-label').textContent`), /^PULSE high 5 V$/);
+    assert.match(await ev(`document.querySelector('.component[data-id="V1"] .value-label').textContent`), /^구형 5 Vpp · 500 mHz · \+2\.5 V$/);
   });
 
   test("new sources stand upright with + (or the arrow) on top; examples keep their stored rotation", async () => {
@@ -251,7 +251,8 @@ describe("canvas UX for first-time students", { timeout: 300000 }, () => {
       assert.equal(bar.bar, true, `the selection bar is up for ${id}`);
       const rects = await ev(`(() => { const box = (e) => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; }; const tip = document.getElementById("hover-tip"); return { bar: box(document.getElementById("selection-bar")), tip: tip.classList.contains("hidden") ? null : box(tip) }; })()`);
       if (rects.tip) assert.equal(overlap(rects.tip, rects.bar), false, `${id}: bubble ${JSON.stringify(rects.tip)} vs bar ${JSON.stringify(rects.bar)}`);
-      await tapSelector('.value-sheet [data-sheet-action="close"]');
+      // A source opens no value sheet (it is set as a generator in 속성).
+      if (await ev(`Boolean(document.querySelector('.value-sheet [data-sheet-action="close"]')?.getClientRects().length)`)) await tapSelector('.value-sheet [data-sheet-action="close"]');
     }
     // at least one of the bubbles was shown (it moved below the finger instead of disappearing)
     await tap(await partPoint("R2"));
@@ -259,29 +260,13 @@ describe("canvas UX for first-time students", { timeout: 300000 }, () => {
     assert.equal((await ev(`${L}.getHoverReadout()`)).visible, true, "the bubble is shown, clear of the bar");
   });
 
-  test("phone value sheet: a signed value (source) gets a 44 px ± key that flips the sign; R keeps the number pad without it", async () => {
+  test("phone value sheet: R gets the number pad without a ± key; a source opens no sheet (it is set as a generator in 속성)", async () => {
     await phone("/?example=divider");
     await tap(await partPoint("R1"));
     assert.equal(await ev(`document.querySelector('.value-sheet [data-sheet-action="sign"]').hidden`), true, "no ± for a resistance");
     assert.equal(await ev(`document.getElementById("value-sheet-input").inputMode`), "decimal");
     await tap(await partPoint("V1"));
-    const info = await ev(`${L}.getValueSheet()`);
-    assert.equal(info.id === "V1" && info.prop === "dc", true, JSON.stringify(info));
-    const sign = await rectOf('.value-sheet [data-sheet-action="sign"]');
-    assert.ok(sign && sign.w >= 44 && sign.h >= 44, `the ± key is a full touch target (${JSON.stringify(sign)})`);
-    const depth = (await state()).historyDepth;
-    await tap(sign);
-    assert.equal((await component("V1")).props.dc, "-10");
-    assert.equal((await state()).historyDepth, depth + 1, "one undo step");
-    await tap(sign);
-    assert.equal((await component("V1")).props.dc, "10");
-    // while typing, ± flips the typed number and keeps the field focused
-    await tapSelector("#value-sheet-input");
-    await ctx.cdp.send("Input.insertText", { text: "3.3" });
-    await tap(await rectOf('.value-sheet [data-sheet-action="sign"]'));
-    assert.equal(await ev(`document.getElementById("value-sheet-input").value`), "-3.3");
-    assert.equal(await ev(`document.activeElement?.id`), "value-sheet-input", "the keyboard stays");
-    assert.equal((await component("V1")).props.dc, "-3.3");
-    await ev(`document.activeElement.blur()`); await settle();
+    assert.equal((await ev(`${L}.getValueSheet()`)).visible, false, "no value sheet for a source");
+    assert.equal((await state()).selected?.id, "V1");
   });
 });

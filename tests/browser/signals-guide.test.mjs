@@ -67,7 +67,7 @@ describe("signals: Fourier-transform guided mode", { timeout: 300000 }, () => {
     assert.equal(await ev(`document.querySelector('[data-signals-step="train"]').getAttribute("aria-current")`), "step");
     assert.equal(await shown("[data-signals-family]"), false, "the 예시 select is replaced by the steps");
     assert.match(await text("[data-signals-guide-body]"), /선 스펙트럼/);
-    assert.match(await text("h2"), /따라가기 · ① 펄스열에서 펄스 하나로/);
+    assert.match(await text("#signals-workspace h2"), /따라가기 · ① 펄스열에서 펄스 하나로/);
     assert.match(await text("[data-signals-live]"), /선 간격 f₀ = 4 Hz/, "T₀ = 0.25 s at first");
 
     // Preset "T₀ = 1 s": the slider jumps there, the read-out follows and the chip shows as pressed.
@@ -129,7 +129,7 @@ describe("signals: Fourier-transform guided mode", { timeout: 300000 }, () => {
     assert.equal(await shown("[data-signals-steps]"), false);
     assert.equal(await shown("[data-signals-chips]"), false);
     assert.equal(await shown("[data-signals-family]"), true);
-    assert.equal(await text("h2"), "푸리에 변환 · 시간 ↔ 주파수");
+    assert.equal(await text("#signals-workspace h2"), "푸리에 변환 · 시간 ↔ 주파수");
     // ... and 따라가기 again resumes at step ①, where it was left.
     await change("[data-signals-mode]", "guide");
     await settle();

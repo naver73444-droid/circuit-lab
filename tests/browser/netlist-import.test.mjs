@@ -26,7 +26,7 @@ describe("netlist import", { timeout: 300000 }, () => {
     assert.equal(await ev(`document.getElementById("netlist-load").disabled`), true, "nothing to open yet");
     await paste(RC);
     assert.deepEqual(await ev(`[...document.querySelectorAll("#netlist-preview .netlist-parts li")].map((li) => li.textContent)`), [
-      "V1  전압원  in – 접지  펄스 -2.5 V ↔ 2.5 V, 주기 1 ms (1 kHz), 폭 500 µs", "R1  저항  in – out  1.5 kΩ", "C1  커패시터  out – 접지  11 nF"]);
+      "V1  전압원  in – 접지  구형 5 Vpp · 1 kHz", "R1  저항  in – out  1.5 kΩ", "C1  커패시터  out – 접지  11 nF"]);
     await click("#netlist-load");
     assert.equal(await ev(`document.getElementById("netlist-dialog").open`), false, "the dialog closes");
     const s = await state();

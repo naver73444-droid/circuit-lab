@@ -178,12 +178,10 @@ describe("phone editor", { timeout: 300000 }, () => {
     assertBarVisible(await tabBar(), "sheet closed");
     await tap(await partPoint("R1"));
     assert.equal((await sheet()).visible, true, "an explicit tap on the part reopens it");
-    // A source: the sheet steps the DC value along 1-2-5-like nice numbers.
+    // A source has no single value to step: it is set like a function generator in 속성, so a tap selects it without the sheet.
     await tap(await partPoint("V1"));
-    info = await sheet();
-    assert.equal(info.id === "V1" && info.prop === "dc", true, JSON.stringify(info));
-    await tapSelector('.value-sheet [data-step="1"]');
-    assert.equal((await component("V1")).props.dc, "12");
+    assert.equal((await sheet()).visible, false, "no value sheet for a source");
+    assert.equal((await state()).selected?.id, "V1");
   });
 
   test("390x844 value sheet folds: dragging the canvas or tapping another part leaves only the value row with ◀ ▶, the handle opens it again, and a part under the sheet slides into view", async () => {
@@ -234,9 +232,9 @@ describe("phone editor", { timeout: 300000 }, () => {
     await touchDragPoints(handle, { x: handle.x, y: handle.y - 80 }, { steps: 6 });
     assert.equal((await sheet()).collapsed, false, "dragging the handle up opens it");
     // Tapping another part folds it, and it stays folded for the next part (also after ✕).
-    await tap(await partPoint("V1"));
+    await tap(await partPoint("R2"));
     info = await sheet();
-    assert.equal(info.visible && info.collapsed && info.id === "V1", true, `another part folds the sheet (${JSON.stringify(info)})`);
+    assert.equal(info.visible && info.collapsed && info.id === "R2", true, `another part folds the sheet (${JSON.stringify(info)})`);
     await tapSelector('.value-sheet [data-sheet-action="close"]');
     await tap(await partPoint("R1"));
     info = await sheet();
