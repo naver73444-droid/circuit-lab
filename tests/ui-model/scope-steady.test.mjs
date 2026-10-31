@@ -24,8 +24,7 @@ test("정상상태: RC 1 kΩ·1 µF with a 0–5 V 1 kHz square settles by 10RC 
   near(plan.end, 15e-3, 1e-12, "the 5 ms window after it");
   assert.equal(plan.source, "V1");
   const result = triggeredResult(simulate(analysisCircuit(circuit).circuit, { ...settings, end: String(plan.end), step: String(plan.step) }), plan.trigger);
-  near(result.xValues[0], -plan.step, 1e-12, "one pre-trigger sample (the level the edge starts from)");
-  near(result.xValues[1], 0, 1e-12, "t = 0 is the trigger sample");
+  assert.equal(result.xValues[0], 0, "t = 0 is the trigger sample");
   near(result.xValues.at(-1), 5e-3, 1e-9, "window kept");
   const v = result.points.map((point) => point.nodeVoltages[2]);
   const vmax = 5 / (1 + Math.exp(-0.5)), vmin = 5 - vmax;
@@ -33,7 +32,7 @@ test("정상상태: RC 1 kΩ·1 µF with a 0–5 V 1 kHz square settles by 10RC 
   near(Math.max(...v), vmax, 0.012, "Vmax = 5/(1+e^−0.5)");
   near(Math.min(...v), vmin, 0.012, "Vmin");
   near(Math.max(...v) - Math.min(...v), vmax - vmin, 0.005, "Vpp");
-  near(v[0], Math.min(...v), 1e-9, "just before the rising edge the capacitor is at its minimum");
+  near(v[0], vmin, 0.03, "at the rising edge the capacitor is near its minimum (one step after it)");
 });
 
 test("정상상태: a lab RC needs only one period; a sine triggers at its upward zero crossing; a delayed square settles after it starts; refusals", () => {

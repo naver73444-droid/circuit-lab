@@ -135,14 +135,10 @@ export function steadyStateRun(circuit, settings) {
   return { end: runEnd, step: runStep, trigger, span, source: p.ref ?? source.id };
 }
 
-/**
- * The part of a run a triggered scope shows: from the sample just before `trigger` (a scope shows a little pre-trigger: the level the
- * edge starts from), with time counted from the trigger (t = 0 at the edge).
- */
+/** The part of a run a triggered scope shows: samples from `trigger` on, with time counted from the trigger (t = 0 at the edge). */
 export function triggeredResult(result, trigger) {
-  const at = result.xValues.findIndex((x) => x >= trigger - 1e-12 * Math.max(1, trigger));
-  if (at < 0) return result;
-  const first = Math.max(0, at - 1);
+  const first = result.xValues.findIndex((x) => x >= trigger - 1e-12 * Math.max(1, trigger));
+  if (first < 0) return result;
   return { ...result, xValues: result.xValues.slice(first).map((x) => x - trigger), points: result.points.slice(first), trigger };
 }
 
