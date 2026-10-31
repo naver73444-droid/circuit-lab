@@ -25,6 +25,8 @@ describe("function generator and oscilloscope", { timeout: 300000 }, () => {
     await navigate("/?example=rc-charge");
     await click('[data-tool="select"]');
     await clickPart("V1");
+    // The example's V1 is a slow square; via DC the sine starts fresh, as a generator's default 5 Vpp 1 kHz.
+    await click('[data-wave="DC"]');
     await click('[data-wave="SIN"]');
     assert.deepEqual(await ev(`[...document.querySelectorAll("#inspector-content [data-prop]")].map((e) => e.dataset.prop)`), ["ref", "gen:vpp", "gen:frequency", "gen:offset", "gen:phase"],
       "no DC value, AC magnitude or mode select");
