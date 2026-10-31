@@ -4,7 +4,7 @@ import { measureTraces, summaryLine } from "./wave-measure-model.js";
 
 /**
  * Waveform measurement summary + the "B 커서" toggle. Display only.
- * One summary line is always visible for the chosen trace; opening it lists up to three traces with their values.
+ * One summary line per trace (up to three) is always visible, like a scope's measurement window; opening it lists every value.
  * On desktop the list is a column beside the plot (never over it); on the phone it sits inside the details block, below the summary.
  * Values are recomputed only when update() receives a new result/trace set — never on hover or cursor movement.
  */
@@ -40,8 +40,9 @@ export function createMeasureView({ panel, summary, body, bButton, scopeView }) 
     syncBody();
     const activeKey = scopeView.activeTraceKey ?? measured.rows[0]?.key;
     const active = measured.rows.find((row) => row.key === activeKey) ?? measured.rows[0];
-    const line = summaryLine(measured, active?.key);
-    summary.innerHTML = `<span class="measure-title">측정</span><span class="measure-line"><i style="--trace-color:${traceColor(active?.color)}"></i>${escapeHtml(line)}</span>`;
+    // One line per channel, as a scope's measurement window shows them; the active trace's line stays first-class for A/B.
+    const lines = measured.rows.map((row) => `<span class="measure-line${row.key === active?.key ? " active" : ""}"><i style="--trace-color:${traceColor(row.color)}"></i><b>${escapeHtml(row.label)}</b> ${escapeHtml(summaryLine(measured, row.key))}</span>`).join("");
+    summary.innerHTML = `<span class="measure-title">측정</span><span class="measure-lines">${lines}</span>`;
     summary.title = stale ? "이전 결과의 측정값입니다" : "눌러서 트레이스별 값 보기";
     const more = measured.hidden ? `<p class="measure-note">트레이스 ${measured.hidden}개는 표시 개수 제한으로 생략했습니다.</p>` : "";
     body.innerHTML = `${measured.rows.map((row) => rowMarkup(row, row.key === active?.key)).join("")}${more}<p class="measure-note">${escapeHtml(measured.basis)} · 주기·−3 dB는 표본 사이를 보간 · 값에 마우스를 올리면 사유</p>`;

@@ -11,6 +11,7 @@ import { circuitGeometryVersion } from "./circuit-geometry.js";
 import { actualCurrentText, currentReferenceSign, isCurrentReferenceFlipped, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection, signedCurrent } from "./current-direction.js";
 import { selectAllOnUserFocus } from "./field-select.js";
 import { WAVES, generatorEdit, generatorFieldText, generatorView } from "./source-model.js";
+import { generatorTimebase } from "./analysis-policy.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
 const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기" };
@@ -188,6 +189,28 @@ export function createInspector(deps) {
       // Plain text keyboard on purpose: it has "−" and the unit letters (k, m, u …) on every phone; a number pad (inputmode=decimal) has no minus on iOS.
       : `<input data-prop="${key}" aria-label="${escapeHtml(label)}" value="${escapeHtml(value)}" inputmode="text" autocomplete="off" />`;
     return `<div class="field${active ? " active-field" : ""}"><label>${label}</label>${control}${help ? `<span class="field-help">${help}</span>` : ""}</div>`;
+  }
+
+  /**
+   * Autoset: a new generator frequency (or a switch to 사인/구형) sets the transient window to five periods, as a scope's Autoset would.
+   * Only for settings that are the project's own (manual intent); the automatic plan already follows the source. Runs inside mutate().
+   */
+  function autosetTimebase(component) {
+    const view = generatorView(component.props);
+    if (view.wave === "DC" || state.intent !== "manual" || state.settings.analysis !== "transient") return;
+    let start = 0;
+    try { start = parseValue(state.settings.start ?? 0); } catch { /* an invalid start keeps 0 */ }
+    const timebase = generatorTimebase(view.frequency, start);
+    if (!timebase) return;
+    Object.assign(state.settings, timebase);
+    autosetNote = `시간축을 5주기(${engineering(5 / view.frequency, "s", 3)})에 맞췄습니다`;
+  }
+  let autosetNote = "";
+  function showAutoset() {
+    if (!autosetNote) return;
+    renderAnalysisSettings();
+    setStatus(autosetNote, "ready");
+    autosetNote = "";
   }
 
   /** A V/I source as a function generator: [DC] [사인] [구형] and only that waveform's knobs; DC and AC analyses follow it (source-model.js). */
@@ -444,7 +467,11 @@ export function createInspector(deps) {
         }
         inputDrafts.delete("prop", current.id, control.dataset.prop);
         const patch = isDerived(control.dataset.prop) ? derivedEdit(current, control.dataset.prop, control.value) : null;
-        mutate(() => { if (patch) Object.assign(current.props, patch); else current.props[control.dataset.prop] = control.value; });
+        mutate(() => {
+          if (patch) Object.assign(current.props, patch); else current.props[control.dataset.prop] = control.value;
+          if (control.dataset.prop === "gen:frequency") autosetTimebase(current);
+        });
+        showAutoset();
         // Linked fields show the new values: coupling changes the field set; a generator knob changes the lines under the others.
         if (control.dataset.prop === "coupling" || isDerived(control.dataset.prop)) renderInspector();
       };
@@ -467,7 +494,8 @@ export function createInspector(deps) {
       const current = state.circuit.components.find((item) => item.id === selected.id);
       const patch = current ? generatorEdit(current, "wave", button.dataset.wave) : null;
       if (!patch || !Object.keys(patch).length) return;
-      mutate(() => { Object.assign(current.props, patch); });
+      mutate(() => { Object.assign(current.props, patch); autosetTimebase(current); });
+      showAutoset();
       renderInspector();
     }));
     const controlTarget = elements["inspector-content"].querySelector("[data-control-target]");

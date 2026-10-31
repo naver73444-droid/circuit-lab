@@ -91,3 +91,54 @@ export function refinedTransientStep(circuit, settings) {
   const finer = Math.max(floor125(tau / 20), limit);
   return finer < step * 0.999 ? { step: finer, tau } : null;
 }
+
+/**
+ * Oscilloscope "정상상태" (steady state, triggered): a run long enough for the start-up transient to die out, shown from a rising edge
+ * of the first periodic source, as a triggered scope shows a repeating signal. Returns null when the run is not transient or no V/I
+ * source is a sine or a square; else { end, step, trigger, span, source } in seconds: run 0…end, keep trigger…trigger+span.
+ *   settle  = 5·R_max·ΣC and 10·ΣL/R_min (5 time constants; an RLC envelope decays with 2L/R), at least one period;
+ *   trigger = the first rising edge after settle: a square's edge (delay + k·T), a sine's upward zero crossing.
+ * The span keeps the typed length (end − start); the step is the given one, coarsened only to stay within 20 000 points and set so
+ * that the trigger falls on a sample.
+ */
+export function steadyStateRun(circuit, settings) {
+  if (settings?.analysis !== "transient") return null;
+  const source = circuit.components.find((component) => ["V", "I"].includes(component.type) && ["SIN", "PULSE"].includes(component.props?.mode));
+  if (!source) return null;
+  let start, end, step;
+  try { start = parseValue(settings.start ?? 0); end = parseValue(settings.end); step = parseValue(settings.step); } catch { return null; }
+  const span = end - start;
+  if (!(span > 0) || !(step > 0)) return null;
+  const p = source.props;
+  const period = p.mode === "SIN" ? 1 / number(p.frequency, 60) : number(p.pulsePeriod, 2);
+  if (!(period > 0) || !Number.isFinite(period)) return null;
+  const values = (type) => circuit.components.filter((component) => component.type === type).map((component) => number(component.props?.value)).filter((value) => value > 0 && Number.isFinite(value));
+  const r = values("R"), c = values("C"), l = values("L");
+  const settle = Math.max(period, r.length && c.length ? 5 * Math.max(...r) * c.reduce((a, b) => a + b, 0) : 0, r.length && l.length ? 10 * l.reduce((a, b) => a + b, 0) / Math.min(...r) : 0);
+  // First rising edge at or after settle: the edge repeats every period from `phase0`.
+  const phase0 = p.mode === "SIN" ? ((-number(p.phase, 0) / 360) % 1 + 1) % 1 * period : number(p.pulseDelay, 0);
+  const trigger = phase0 + Math.max(0, Math.ceil((settle - phase0) / period - 1e-9)) * period;
+  const runEnd = trigger + span;
+  // Within 20 000 points, and a whole number of steps to the trigger so that t = 0 is a sample.
+  let runStep = Math.max(step, runEnd / 19990);
+  if (trigger > 0) runStep = trigger / Math.ceil(trigger / runStep - 1e-9);
+  return { end: runEnd, step: runStep, trigger, span, source: p.ref ?? source.id };
+}
+
+/** The part of a run a triggered scope shows: samples from `trigger` on, with time counted from the trigger (t = 0 at the edge). */
+export function triggeredResult(result, trigger) {
+  const first = result.xValues.findIndex((x) => x >= trigger - 1e-12 * Math.max(1, trigger));
+  if (first < 0) return result;
+  return { ...result, xValues: result.xValues.slice(first).map((x) => x - trigger), points: result.points.slice(first), trigger };
+}
+
+/**
+ * Autoset for a generator: the transient run that shows five periods of `frequency` with about 200 samples per period (step on a
+ * 1-2-5 grid), as a scope's Autoset does after the signal changes. { end, step } as editor texts; null for a frequency that is not > 0.
+ */
+export function generatorTimebase(frequency, start = 0) {
+  if (!(frequency > 0) || !Number.isFinite(frequency)) return null;
+  const period = 1 / frequency;
+  const text = (value) => String(Number(value.toPrecision(6)));
+  return { end: text(start + 5 * period), step: text(floor125(period / 200)) };
+}

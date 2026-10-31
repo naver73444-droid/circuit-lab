@@ -38,6 +38,8 @@ export function createEditorState() {
     learningId: null,
     generation: 0,
     intent: "auto",
+    // 정상상태 보기 (triggered scope view of a transient run): a viewer preference, not part of the project.
+    scopeSteady: false,
   };
 }
 
