@@ -83,16 +83,14 @@ test("로그 슬라이더: 기준값 ×10^위치 (−1…1), 유효숫자 3자�
   for (const position of [-1, -0.37, 0, 0.21, 1]) assert.ok(parseValue(slideText("2.2k", position)) > 0);
 });
 
-test("조절할 속성: R/C/L 값, 전원은 해석 종류·파형에 따라 (속성 패널의 강조 칸과 같은 규칙)", () => {
+test("조절할 속성: R/C/L 값만 (전원은 함수 발생기처럼 속성 패널에서 여러 칸으로 정함)", () => {
   assert.equal(primaryValueField({ type: "R", props: {} }).prop, "value");
   assert.equal(primaryValueField({ type: "C", props: {} }).unit, "F");
   assert.equal(primaryValueField({ type: "L", props: {} }).kind, "positive");
-  assert.equal(primaryValueField({ type: "V", props: { mode: "DC" } }, "dc").prop, "dc");
-  assert.equal(primaryValueField({ type: "V", props: { mode: "SIN" } }, "dc").prop, "dc", "DC 해석에서는 SIN 전원도 DC 값");
-  assert.equal(primaryValueField({ type: "V", props: { mode: "SIN" } }, "transient").prop, "amplitude");
-  assert.equal(primaryValueField({ type: "I", props: { mode: "PULSE" } }, "transient").prop, "pulseV2");
-  assert.equal(primaryValueField({ type: "I", props: {} }, "ac").prop, "acMagnitude");
-  assert.equal(primaryValueField({ type: "I", props: {} }, "dc").kind, "signed");
+  for (const mode of ["DC", "SIN", "PULSE"]) {
+    assert.equal(primaryValueField({ type: "V", props: { mode } }), null, mode);
+    assert.equal(primaryValueField({ type: "I", props: { mode } }), null, mode);
+  }
   assert.equal(primaryValueField({ type: "GND", props: {} }), null);
   assert.equal(primaryValueField({ type: "OPAMP", props: {} }), null);
   assert.equal(primaryValueField(null), null);

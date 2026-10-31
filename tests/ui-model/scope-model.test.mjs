@@ -58,7 +58,7 @@ test("pulseWindowHint: a pulse still on at the window's end reads as a step and 
   const source = (props) => ({ components: [{ id: "c1", type: "V", props: { mode: "PULSE", ref: "V1", ...props } }] });
   const hint = pulseWindowHint(source({ pulseWidth: "1", pulsePeriod: "2" }), { end: "5m" });
   assert.match(hint, /^V1 펄스가 1s까지 켜져 있어 이 창\(5ms\)/);
-  assert.match(hint, /속성에서 펄스 폭·주기를/, "a 2 s period is out of reach of 시간 +");
+  assert.match(hint, /속성에서 주파수를 높이면/, "a 2 s period is out of reach of 시간 +");
   assert.equal(pulseWindowHint(source({}), { end: "5m" }) !== null, true, "the editor default (width 1 s) counts");
   assert.equal(pulseWindowHint(source({ pulseWidth: "2m", pulsePeriod: "4m" }), { end: "5m" }), null);
   assert.match(pulseWindowHint(source({ pulseWidth: "2m", pulsePeriod: "4m" }), { end: "1m" }), /시간 눈금 \+ 로 창을 늘리면/, "the example's first view: widen the window");

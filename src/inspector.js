@@ -10,7 +10,7 @@ import { acScale, amplitudeText, normalizeAcBasis } from "./ac-basis.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
 import { actualCurrentText, currentReferenceSign, isCurrentReferenceFlipped, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection, signedCurrent } from "./current-direction.js";
 import { selectAllOnUserFocus } from "./field-select.js";
-import { PULSE_DERIVED_KEYS, pulseDerivedValues, pulseEdit } from "./pulse-timing.js";
+import { WAVES, generatorEdit, generatorFieldText, generatorView } from "./source-model.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
 const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기" };
@@ -18,11 +18,14 @@ const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접�
 /** Props that hold text choices, not numbers: they skip the numeric input classification. */
 const TEXT_PROPS = new Set(["ref", "mode", "coupling", "dots"]);
 /** Props that must be strictly positive (R, C, L value; coupled-inductor L1/L2; transformer ratio n). */
-const isDerived = (key) => PULSE_DERIVED_KEYS.includes(key);
-/** What a field shows when it has no draft: the stored prop, or for 주파수·듀티 the value derived from period and width. */
-const committedValue = (component, key) => (isDerived(key) ? pulseDerivedValues(component?.props ?? {})[key] : component?.props?.[key]);
-/** A 주파수·듀티 entry that reads as a number but is out of range (duty 0 or 100 and over, frequency 0): no period/width follows from it. */
-const unusableDerived = (component, key, value) => isDerived(key) && value !== committedValue(component, key) && !pulseEdit(component.props ?? {}, key, value);
+/** A source's generator knobs (gen:vpp, gen:frequency, …) are not stored props: they read and write the engine props (source-model.js). */
+const isDerived = (key) => key.startsWith("gen:");
+const derivedEdit = (component, key, value) => generatorEdit(component, key.slice(4), value);
+/** What a field shows when it has no draft: the stored prop, or a generator knob derived from the stored props. */
+const committedValue = (component, key) => (isDerived(key) ? generatorFieldText(component?.props ?? {}, key.slice(4)) : component?.props?.[key]);
+/** A generator entry that reads as a number but is out of range (duty 0 or 100 and over, frequency 0, negative amplitude). */
+const unusableDerived = (component, key, value) => isDerived(key) && value !== committedValue(component, key) && !derivedEdit(component, key, value);
+const GENERATOR_HELP = { "gen:duty": "듀티는 0과 100 사이(%)", "gen:frequency": "주파수는 0보다 커야 합니다", "gen:vpp": "진폭은 0 이상", "gen:rise": "상승+폭+하강이 주기 안이어야 합니다", "gen:fall": "상승+폭+하강이 주기 안이어야 합니다" };
 const needsPositive = (type, key) => (["R", "C", "L"].includes(type) && key === "value") || (type === "COUPLED_L" && (key === "L1" || key === "L2")) || (type === "XFMR_IDEAL" && key === "n");
 
 export function createInspector(deps) {
@@ -112,7 +115,7 @@ export function createInspector(deps) {
       updates.delete(mapKey);
       inputDrafts.delete("prop", update.id, update.key);
       if (update.value === committedValue(update.component, update.key)) continue;
-      for (const [key, value] of Object.entries(pulseEdit(update.component.props, update.key, update.value))) {
+      for (const [key, value] of Object.entries(derivedEdit(update.component, update.key, update.value))) {
         const stored = inputDrafts.key("prop", update.id, key), other = updates.get(stored);
         if (!other || other.value === String(update.component.props[key] ?? "")) updates.set(stored, { ...update, key, value, control: null });
       }
@@ -185,6 +188,35 @@ export function createInspector(deps) {
       // Plain text keyboard on purpose: it has "−" and the unit letters (k, m, u …) on every phone; a number pad (inputmode=decimal) has no minus on iOS.
       : `<input data-prop="${key}" aria-label="${escapeHtml(label)}" value="${escapeHtml(value)}" inputmode="text" autocomplete="off" />`;
     return `<div class="field${active ? " active-field" : ""}"><label>${label}</label>${control}${help ? `<span class="field-help">${help}</span>` : ""}</div>`;
+  }
+
+  /** A V/I source as a function generator: [DC] [사인] [구형] and only that waveform's knobs; DC and AC analyses follow it (source-model.js). */
+  function generatorFields(component) {
+    const p = component.props, unit = component.type === "I" ? "A" : "V", view = generatorView(p);
+    const value = (key) => generatorFieldText(p, key);
+    const n = (x) => String(Number(x.toPrecision(4)));
+    const waves = WAVES.map(([wave, label]) => `<button type="button" data-wave="${wave}" aria-pressed="${view.wave === wave}">${label}</button>`).join("");
+    let html = `<fieldset class="source-group generator"><legend>파형</legend><div class="segmented generator-waves" role="group" aria-label="파형">${waves}</div>`;
+    if (view.wave === "DC") {
+      html += field(`${unit === "A" ? "전류" : "전압"} (${unit})`, "gen:level", value("level"));
+      html += `<p class="source-help">AC 해석에서는 0입니다(사인 전원이 하나도 없으면 첫 전원이 1 ${unit} 입력).</p>`;
+    } else {
+      const vpk = view.vpp / 2;
+      html += field(`진폭 (${unit}pp)`, "gen:vpp", value("vpp"), Number.isFinite(vpk) ? `= ${n(vpk)} ${unit}pk${view.wave === "SIN" ? ` · ${n(vpk / Math.SQRT2)} ${unit}rms` : ""}` : "");
+      html += field("주파수 (Hz)", "gen:frequency", value("frequency"), view.frequency > 0 ? `주기 ${engineering(1 / view.frequency, "s", 4)}` : "");
+      if (view.wave === "SQUARE") html += field("듀티 (%)", "gen:duty", value("duty"), "높은 구간 = 듀티 × 주기");
+      html += field(`오프셋 (${unit})`, "gen:offset", value("offset"), view.wave === "SQUARE" && Number.isFinite(view.low) ? `낮은 값 ${n(view.low)} ${unit} · 높은 값 ${n(view.high)} ${unit}` : "");
+      if (view.wave === "SIN") {
+        const phasor = Number.isFinite(vpk) && Number.isFinite(view.phase) ? ` · 페이저 ${amplitudeText(vpk, state.acBasis)}∠${n(view.phase)}° ${unit}${normalizeAcBasis(state.acBasis) === "rms" ? "rms" : "pk"}` : "";
+        html += field("위상 (°)", "gen:phase", value("phase"), `cos 기준: v = 오프셋 + (진폭/2)·cos(2πft + φ)${phasor}`);
+        html += `<p class="source-help">DC 해석은 오프셋, AC 해석은 이 사인의 진폭·위상으로 계산합니다.</p>`;
+      } else {
+        const open = [view.delay, view.rise, view.fall].some((x) => x !== 0);
+        html += `<details class="generator-more"${open ? " open" : ""}><summary>펄스 세부 (지연·상승·하강)</summary>${field("지연 (s)", "gen:delay", value("delay")) + field("상승시간 (s)", "gen:rise", value("rise")) + field("하강시간 (s)", "gen:fall", value("fall"))}</details>`;
+        html += `<p class="source-help">DC 해석은 평균값, AC 해석에서는 0입니다(사인 전원이 하나도 없으면 첫 전원이 1 ${unit} 입력).</p>`;
+      }
+    }
+    return html + `</fieldset>`;
   }
 
   /** Fields of a COUPLED_L part: L1, L2, the chosen one of k / M (the other is shown derived), dot placement, initial currents. */
@@ -365,30 +397,7 @@ export function createInspector(deps) {
         : "시간응답 시작 시점의 1→2 전류.";
       html += field(component.type === "C" ? "초기 전압 IC (V)" : "초기 전류 IC (A)", "ic", p.ic ?? "0", icHelp);
     }
-    if (["V", "I"].includes(component.type)) {
-      const unit = component.type === "I" ? "A" : "V";
-      const timeActive = state.settings.analysis !== "ac";
-      const acActive = state.settings.analysis === "ac";
-      html += `<fieldset class="source-group${timeActive ? " active-group" : ""}"><legend>DC · 시간응답</legend>`;
-      html += field("소스 파형", "mode", p.mode ?? "DC", "", [["DC", "DC"], ["SIN", "SIN"], ["PULSE", "PULSE"]], null, state.settings.analysis === "transient");
-      html += field(`DC 값 (${unit})`, "dc", p.dc ?? "0", "", null, null, state.settings.analysis === "dc" || (state.settings.analysis === "transient" && p.mode === "DC"));
-      if (p.mode === "SIN") {
-        html += field(`오프셋 (${unit})`, "offset", p.offset ?? "0") + field(`진폭 (${unit}pk)`, "amplitude", p.amplitude ?? "0", "", null, null, state.settings.analysis === "transient") + field("주파수 (Hz)", "frequency", p.frequency ?? "60") + field("위상 (°)", "phase", p.phase ?? "0", "sin 기준");
-      }
-      if (p.mode === "PULSE") {
-        html += field(`낮은 값 (${unit})`, "pulseV1", p.pulseV1 ?? "0") + field(`높은 값 (${unit})`, "pulseV2", p.pulseV2 ?? "0", "", null, null, state.settings.analysis === "transient")
-          + field("주파수 (Hz)", "pulseFrequency", pulseDerivedValues(p).pulseFrequency, "주기 = 1/주파수 · 듀티는 그대로") + field("듀티 (%)", "pulseDuty", pulseDerivedValues(p).pulseDuty, "펄스 폭 = 듀티×주기 (상승·하강 제외)")
-          + field("지연 (s)", "pulseDelay", p.pulseDelay ?? "0") + field("상승시간 (s)", "pulseRise", p.pulseRise ?? "0") + field("하강시간 (s)", "pulseFall", p.pulseFall ?? "0") + field("펄스 폭 (s)", "pulseWidth", p.pulseWidth ?? "1") + field("주기 (s)", "pulsePeriod", p.pulsePeriod ?? "2");
-      }
-      html += `</fieldset><fieldset class="source-group${acActive ? " active-group" : ""}"><legend>AC 해석</legend>`;
-      html += `<p class="source-help">크기가 0이면 AC 자극이 없습니다. RMS = 크기/√2.</p>`;
-      // The input column is always the solver's peak value; the line under it converts to the shown AC basis so it can be compared with a textbook (rms) value.
-      let peakMagnitude = NaN;
-      try { peakMagnitude = parseValue(p.acMagnitude ?? 0); } catch { /* an invalid draft has no conversion */ }
-      const basisHint = Number.isFinite(peakMagnitude) ? `표시 기준 ${unit} (${normalizeAcBasis(state.acBasis)}) = ${amplitudeText(peakMagnitude, state.acBasis)} · 입력 칸은 항상 peak` : "";
-      html += field(`AC 크기 (${unit}pk)`, "acMagnitude", p.acMagnitude ?? "0", basisHint, null, null, acActive) + field("AC 위상 (°)", "acPhase", p.acPhase ?? "0", "cos 기준 (sin 위상 − 90°)", null, null, acActive);
-      html += `</fieldset>`;
-    }
+    if (["V", "I"].includes(component.type)) html += generatorFields(component);
     if (component.type === "D") html += field("포화전류 Is", "is", p.is ?? "1e-12") + field("방출계수 n", "n", p.n ?? "1");
     if (component.type === "OPAMP") html += field("개방루프 이득 A", "gain", p.gain ?? "100k") + `<p class="model-note">전원 한계·포화·대역폭은 모델에 없습니다.</p>`;
     if (component.type === "OPAMP_IDEAL") html += `<div class="connection-detail status-referenced"><strong>이상 OP AMP</strong><span>핀 1 비반전(+) · 핀 2 반전(−) · 핀 3 출력</span><small>V+ = V−, 입력전류 0. 전원 한계·포화·대역폭 없음.</small></div>`;
@@ -428,16 +437,16 @@ export function createInspector(deps) {
           if ((classified.status !== "valid" || unusableDerived(current, control.dataset.prop, control.value)) && control.tagName !== "SELECT") {
             const editing = classified.status === "editing";
             control.classList.add(editing ? "input-editing" : "input-invalid");
-            setStatus(editing ? "입력 중" : control.dataset.prop === "pulseDuty" ? "잘못된 값 · 듀티는 0과 100 사이(%)" : "잘못된 값", editing ? "running" : "error");
+            setStatus(editing ? "입력 중" : GENERATOR_HELP[control.dataset.prop] ? `잘못된 값 · ${GENERATOR_HELP[control.dataset.prop]}` : "잘못된 값", editing ? "running" : "error");
             elements["csv-button"].disabled = true;
             return;
           }
         }
         inputDrafts.delete("prop", current.id, control.dataset.prop);
-        const derivedEdit = isDerived(control.dataset.prop) ? pulseEdit(current.props, control.dataset.prop, control.value) : null;
-        mutate(() => { if (derivedEdit) Object.assign(current.props, derivedEdit); else current.props[control.dataset.prop] = control.value; });
-        // Linked fields show the new values: source mode and coupling change the field set; frequency, duty, width and period move together.
-        if (["mode", "coupling", "pulseFrequency", "pulseDuty", "pulseWidth", "pulsePeriod"].includes(control.dataset.prop)) renderInspector();
+        const patch = isDerived(control.dataset.prop) ? derivedEdit(current, control.dataset.prop, control.value) : null;
+        mutate(() => { if (patch) Object.assign(current.props, patch); else current.props[control.dataset.prop] = control.value; });
+        // Linked fields show the new values: coupling changes the field set; a generator knob changes the lines under the others.
+        if (control.dataset.prop === "coupling" || isDerived(control.dataset.prop)) renderInspector();
       };
       if (control.tagName === "INPUT") control.addEventListener("input", () => {
         inputDrafts.set("prop", component.id, control.dataset.prop, control.value, committedValue(component, control.dataset.prop));
@@ -453,6 +462,14 @@ export function createInspector(deps) {
         if (event.key === "Enter") { event.preventDefault(); control.blur(); }
       });
     });
+    elements["inspector-content"].querySelectorAll("[data-wave]").forEach((button) => button.addEventListener("click", () => {
+      if (!isCircuitUiActive()) return;
+      const current = state.circuit.components.find((item) => item.id === selected.id);
+      const patch = current ? generatorEdit(current, "wave", button.dataset.wave) : null;
+      if (!patch || !Object.keys(patch).length) return;
+      mutate(() => { Object.assign(current.props, patch); });
+      renderInspector();
+    }));
     const controlTarget = elements["inspector-content"].querySelector("[data-control-target]");
     const controlDirection = elements["inspector-content"].querySelector("[data-control-direction]");
     const commitControlReference = () => {

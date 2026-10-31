@@ -238,7 +238,8 @@ describe("worker envelope", () => {
   });
 
   test("Worker AC returns one snapshot's sweep and phasor with complex values", () => {
-    const circuit = make([source("V1", { mode: "SIN", dc: "0", acMagnitude: "1", acPhase: "0" }, ["p", "0"]), resistor("R1", "1k", ["p", "0"])]);
+    // The worker reads a source as a function generator (source-model.js): this 1 V-peak cosine is the same AC input as "AC 1∠0°".
+    const circuit = make([source("V1", { mode: "SIN", dc: "0", amplitude: "1", frequency: "1k", phase: "90", acMagnitude: "1", acPhase: "0" }, ["p", "0"]), resistor("R1", "1k", ["p", "0"])]);
     const settings = { analysis: "ac", startFrequency: "10", endFrequency: "100k", pointsPerDecade: "30", phasorFrequency: contract.ac.frequency };
     const direct = simulate(circuit, settings);
     const directPhasor = simulateACAtFrequency(circuit, contract.ac.frequency);

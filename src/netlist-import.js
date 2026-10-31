@@ -14,6 +14,7 @@
 import { parseValue, componentDefaults, pinCount } from "./circuit-engine.js";
 import { CURRENT_GEOMETRY_VERSION, pinPosition } from "./circuit-geometry.js";
 import { rerouteWires, pinOutwardDirection } from "./wire-router.js";
+import { generatorLabel } from "./source-model.js";
 
 export const NETLIST_MAX_CHARS = 20000;
 export const NETLIST_MAX_PARTS = 60;
@@ -70,12 +71,19 @@ function sourceProps(rest, unit, error, warn) {
     } else if (!modeSet && editorValue(t, unit) !== null) { Object.assign(props, { mode: "DC", dc: num(t, "DC") }); modeSet = true; }
     else error('"' + t + '"을(를) 읽을 수 없습니다.');
   }
-  // Every value the editor would otherwise fill from its own defaults (dc 5, AC 1) is set here, as SPICE reads the line: "AC 1" alone is a
-  // 0 V source with an AC part, the DC value of a SIN/PULSE source is its value at t = 0, and no AC part means AC 0.
+  // The editor's sources are function generators (source-model.js): the DC and AC values follow the waveform, so a SPICE "AC" part
+  // becomes the sine it stands for and a DC level the editor would fill from its default (5 V) is set here.
   if (!props.mode) props.mode = "DC";
-  if (props.dc === undefined) props.dc = props.mode === "SIN" ? props.offset : props.mode === "PULSE" ? props.pulseV1 : "0";
-  if (props.acMagnitude === undefined) props.acMagnitude = "0";
-  if (props.acPhase === undefined) props.acPhase = "0";
+  if (props.mode === "DC" && props.dc === undefined) props.dc = "0";
+  const ac = props.acMagnitude, acPhase = props.acPhase ?? "0";
+  delete props.acMagnitude;
+  delete props.acPhase;
+  if (ac !== undefined && Number(parseValue(ac)) !== 0) {
+    if (props.mode === "DC") {
+      Object.assign(props, { mode: "SIN", offset: props.dc, amplitude: ac, frequency: "1k", phase: String(Number(parseValue(acPhase)) + 90) });
+      warn("AC " + ac + "은(는) 1 kHz 사인(진폭 " + ac + ", 오프셋 " + props.offset + ")으로 읽었습니다. 시간응답 주파수는 속성에서 바꾸세요.");
+    } else warn("AC 값은 쓰지 않습니다. AC 해석은 이 전원의 사인 진폭·위상으로 계산합니다.");
+  }
   return props;
 }
 
@@ -226,9 +234,6 @@ export function layoutNetlist(parsed) {
     else if (p.nodes.every(isGround)) floating.push(p);
     else series.push(p);
   }
-  // No AC part anywhere: the main source carries AC 1 so a later switch to the AC analysis has an input (only that one: SPICE semantics).
-  const anyAc = parts.some((p) => (p.type === "V" || p.type === "I") && valueOf(p.props.acMagnitude ?? "0") !== 0);
-  const propsOf = (p) => (p === source && !anyAc ? { ...p.props, acMagnitude: p.type === "V" ? "1" : "1m" } : p.props);
   if (source && grounded(source)) { const list = shunts.get(source.nodes.find((n) => !isGround(n))); list.splice(list.indexOf(source), 1); list.unshift(source); }
   // Node x positions: each node's shunts side by side, then a gap for the part to the next node.
   const left = new Map(), right = new Map();
@@ -240,7 +245,7 @@ export function layoutNetlist(parsed) {
     x += COLUMN;
   }
   const components = [];
-  const place = (p, cx, cy, rotation) => { components.push({ id: p.ref, type: p.type, x: cx, y: cy, rotation, props: { ...componentDefaults(p.type, Number(p.ref.match(/\d+/)?.[0] ?? 1)), ...propsOf(p), ref: p.ref } }); };
+  const place = (p, cx, cy, rotation) => { components.push({ id: p.ref, type: p.type, x: cx, y: cy, rotation, props: { ...componentDefaults(p.type, Number(p.ref.match(/\d+/)?.[0] ?? 1)), ...p.props, ref: p.ref } }); };
   for (const node of order) shunts.get(node).forEach((p, k) => {
     // Vertical, live pin up (pin 0 is at the top at 90°, at the bottom at 270°).
     place(p, left.get(node) + SHUNT * k, MID, isGround(p.nodes[0]) ? 270 : 90);
@@ -339,12 +344,7 @@ export function describePart(p) {
   let value = "";
   if (unit) value = si(p.props.value, unit);
   else if (p.type === "V" || p.type === "I") {
-    const u = p.type === "V" ? "V" : "A", q = p.props;
-    value = q.mode === "DC" && valueOf(q.dc) === 0 && q.acMagnitude !== undefined && valueOf(q.acMagnitude) !== 0 ? "AC 해석용 (직류 0)"
-      : q.mode === "SIN" ? "정현파 진폭 " + si(q.amplitude, u) + " (" + si(Number(valueOf(q.amplitude)) * 2, u + "pp") + "), " + si(q.frequency, "Hz") + (Number(valueOf(q.offset)) ? ", 오프셋 " + si(q.offset, u) : "")
-      : q.mode === "PULSE" ? "펄스 " + si(q.pulseV1, u) + " ↔ " + si(q.pulseV2, u) + ", 주기 " + si(q.pulsePeriod, "s") + " (" + si(1 / valueOf(q.pulsePeriod), "Hz") + "), 폭 " + si(q.pulseWidth, "s")
-      : "DC " + si(q.dc, u);
-    if (q.acMagnitude !== undefined && valueOf(q.acMagnitude) !== 0) value += " · AC " + si(q.acMagnitude, u);
+    value = generatorLabel({ type: p.type, props: { ...componentDefaults(p.type), ...p.props } });
   } else if (p.type === "OPAMP_IDEAL") value = "+ " + p.nodes[0] + ", − " + p.nodes[1] + ", 출력 " + p.nodes[2];
   const nodes = p.type === "OPAMP_IDEAL" ? "" : p.nodes.map((n) => (isGround(n) ? "접지" : n)).join(" – ");
   return [p.ref, p.kind, nodes, value].filter(Boolean).join("  ");

@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseNetlist, layoutNetlist, describePart, editorValue, inferredSettings, CLAUDE_PROMPT } from "../../../src/netlist-import.js";
+import { analysisCircuit } from "../../../src/source-model.js";
 import { simulateACAtFrequency, simulateDC, parseValue } from "../../../src/circuit-engine.js";
 import { deserializeProject, serializeProject } from "../../../src/project-format.js";
 import { bodyBox } from "../../../src/wire-router.js";
@@ -42,13 +43,13 @@ test("lab sheet RC: a fenced block with units reads as V1, R1, C1 and a ±2.5 V 
   assert.equal(parsed.title, "RC 1차 회로 (실험 1-1)");
   assert.deepEqual(parsed.description, ["신호 5Vpp 1kHz 구형파, C는 11nF와 47nF 각각"]);
   assert.deepEqual(parsed.parts.map((p) => [p.ref, p.type, p.nodes.join(" ")]), [["V1", "V", "in 0"], ["R1", "R", "in out"], ["C1", "C", "out 0"]]);
-  assert.deepEqual(parsed.parts[0].props, { mode: "PULSE", pulseV1: "-2.5", pulseV2: "2.5", pulseDelay: "0", pulseRise: "1u", pulseFall: "1u", pulseWidth: "0.5m", pulsePeriod: "1m",
-    dc: "-2.5", acMagnitude: "0", acPhase: "0" }, "every value set as SPICE reads it (DC = the value at t = 0, no AC part)");
+  assert.deepEqual(parsed.parts[0].props, { mode: "PULSE", pulseV1: "-2.5", pulseV2: "2.5", pulseDelay: "0", pulseRise: "1u", pulseFall: "1u", pulseWidth: "0.5m", pulsePeriod: "1m" },
+    "the waveform only: DC and AC values follow it (source-model.js)");
   assert.equal(parsed.parts[1].props.value, "1.5k");
   assert.equal(parsed.parts[2].props.value, "11n");
   assert.deepEqual(layout.settings, { analysis: "transient", step: "5u", end: "3m", start: "0" });
   assert.deepEqual(layout.probes, [{ kind: "voltage", componentId: "V1", pin: 0 }, { kind: "voltage", componentId: "R1", pin: 1 }]);
-  assert.equal(describePart(parsed.parts[0]), "V1  전압원  in – 접지  펄스 -2.5 V ↔ 2.5 V, 주기 1 ms (1 kHz), 폭 500 µs");
+  assert.equal(describePart(parsed.parts[0]), "V1  전압원  in – 접지  구형 5 Vpp · 1 kHz");
   assert.equal(describePart(parsed.parts[2]), "C1  커패시터  out – 접지  11 nF");
 });
 
@@ -72,10 +73,11 @@ test("lab sheet RL: at 10 kHz the MNA phasors match |V_R| = Vm·R/|R + jωL| and
   assert.equal(layout.settings.analysis, "transient", "a SIN source without .tran gets three periods");
   assert.equal(layout.settings.end, "0.0003"); assert.equal(layout.settings.step, "5e-7");
   const w = 2 * Math.PI * 1e4, R = 500, L = 0.01, Vm = 2.5;
-  const result = simulateACAtFrequency(circuit, "10k");
+  // The run reads V1 as a generator: AC = the sine's peak 2.5 V at its phase, SIN phase 0 = cos −90° (the line's "AC 2.5" is not used).
+  const result = simulateACAtFrequency(analysisCircuit(circuit).circuit, "10k");
   const vr = nodeVoltage(result, "R1", 0);
   near(mag(vr), Vm * R / Math.hypot(R, w * L), 1e-9, "|V_R|");
-  near(deg(vr), -Math.atan(w * L / R) * 180 / Math.PI, 1e-6, "∠V_R");
+  near(deg(vr), -90 - Math.atan(w * L / R) * 180 / Math.PI, 1e-6, "∠V_R lags the source by atan(ωL/R)");
   const vl = { re: nodeVoltage(result, "L1", 0).re - vr.re, im: nodeVoltage(result, "L1", 0).im - vr.im };
   near(deg(vl) - deg(vr), 90, 1e-6, "V_L leads V_R by 90°");
 });
@@ -117,8 +119,9 @@ test("reading rules: values, sources, directives and every refusal names its lin
   assert.equal(parseValue(editorValue("4.7u", "F")), 4.7e-6);
   const sources = parseNetlist("V1 a 0 5\nV2 b 0 DC 3 AC 1 30\nI1 c 0 AC 2m\nR1 a b 1\nR2 b c 1\nR3 c 0 1");
   assert.deepEqual(sources.errors, []);
-  assert.deepEqual(sources.parts.slice(0, 3).map((p) => p.props), [{ mode: "DC", dc: "5", acMagnitude: "0", acPhase: "0" }, { mode: "DC", dc: "3", acMagnitude: "1", acPhase: "30" },
-    { mode: "DC", dc: "0", acMagnitude: "2m", acPhase: "0" }]);
+  // An "AC" part becomes the sine it stands for (cos phase = AC phase, so SIN phase = AC phase + 90°), at 1 kHz with the DC as offset.
+  assert.deepEqual(sources.parts.slice(0, 3).map((p) => p.props), [{ mode: "DC", dc: "5" }, { mode: "SIN", dc: "3", offset: "3", amplitude: "1", frequency: "1k", phase: "120" },
+    { mode: "SIN", dc: "0", offset: "0", amplitude: "2m", frequency: "1k", phase: "90" }]);
   assert.deepEqual(parseNetlist("V1 a 0 1\nR1 a 0 1\n.ac dec 40 10 100k").settings, { analysis: "ac", pointsPerDecade: "40", startFrequency: "10", endFrequency: "100k" });
   assert.deepEqual(inferredSettings(parseNetlist("V1 a 0 DC 1\nR1 a 0 1").parts), { analysis: "dc" });
   const bad = parseNetlist("* t\nR1 a 0 1M\nQ1 c b e\nR1 a 0 1k\nZ9 a 0 1\nC1 a\nV1 a 0 TRI(1 2)\n.foo\nR2 a 0 0");
@@ -139,15 +142,16 @@ test("reading rules: values, sources, directives and every refusal names its lin
 });
 
 test("review fixes: AC-only sources, no hidden editor defaults, spaced prefixes, op amp supply pins, node case, pasted chat answers, bad analysis settings", () => {
-  // "AC 1" alone: a 0 V source with an AC part — it previews, opens, and in the AC analysis only it drives the circuit (V2 has AC 0).
+  // "AC 1" alone: a 1 V-peak sine — it previews, opens, and in the AC analysis only it drives the circuit (V2, a DC source, has AC 0).
   const ac = parseNetlist("V1 in 0 AC 1\nV2 b 0 DC 5\nR1 in out 1k\nR2 b out 1k\nR3 out 0 1k\n.ac dec 10 10 1k");
   assert.deepEqual(ac.errors, []);
-  assert.equal(describePart(ac.parts[0]), "V1  전압원  in – 접지  AC 해석용 (직류 0) · AC 1 V");
+  assert.equal(describePart(ac.parts[0]), "V1  전압원  in – 접지  사인 2 Vpp · 1 kHz");
+  assert.match(ac.warnings[0], /AC 1은\(는\) 1 kHz 사인/);
   const { circuit } = open("V1 in 0 AC 1\nV2 b 0 DC 5\nR1 in out 1k\nR2 b out 1k\nR3 out 0 1k\n.ac dec 10 10 1k");
-  near(mag(nodeVoltage(simulateACAtFrequency(circuit, "100"), "R3", 0)), 1 / 3, 1e-9, "|V(out)| = 1/3 (SPICE), not 2/3");
-  // A SIN source: DC value = its offset (no hidden 5 V bias), and without any AC part the main source alone gets AC 1.
-  const sin = open("V1 in 0 SIN(0 0.1 1k)\nR1 in a 1k\nR2 a 0 1k").circuit.components.find((c) => c.id === "V1").props;
-  assert.equal(sin.dc, "0"); assert.equal(sin.acMagnitude, "1");
+  near(mag(nodeVoltage(simulateACAtFrequency(analysisCircuit(circuit).circuit, "100"), "R3", 0)), 1 / 3, 1e-9, "|V(out)| = 1/3 (SPICE), not 2/3");
+  // A SIN source: the run's DC value is its offset (no hidden 5 V bias), and its AC input is its own peak.
+  const sin = analysisCircuit(open("V1 in 0 SIN(0 0.1 1k)\nR1 in a 1k\nR2 a 0 1k").circuit).circuit.components.find((c) => c.id === "V1").props;
+  assert.equal(sin.dc, "0"); assert.equal(sin.acMagnitude, "0.1");
   // "1.5 k" and "11 nF" are one value; anything else after a value is pointed out.
   const spaced = parseNetlist("V1 a 0 DC 1\nR1 a b 1.5 k\nC1 b 0 11 nF\nL1 a 0 10m extra");
   assert.deepEqual(spaced.parts.slice(1).map((p) => p.props.value), ["1.5k", "11n", "10m"]);

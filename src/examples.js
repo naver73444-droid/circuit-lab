@@ -62,7 +62,7 @@ export const examples = [
     settings: { analysis: "ac", startFrequency: "10", endFrequency: "100k", pointsPerDecade: "30" },
     circuit: circuit(
       [
-        component("V1", "V", 140, 240, { mode: "SIN", dc: "0", acMagnitude: "1", acPhase: "0", ref: "V1" }, 90),
+        component("V1", "V", 140, 240, { mode: "SIN", dc: "0", amplitude: "1", frequency: "159.155", offset: "0", phase: "90", acMagnitude: "1", acPhase: "0", ref: "V1" }, 90),
         component("R1", "R", 330, 140, { value: "1k", ref: "R1" }),
         component("C1", "C", 500, 260, { value: "1u", ic: "0", ref: "C1" }, 90),
         component("G1", "GND", 320, 400, { ref: "GND" }),
@@ -223,7 +223,7 @@ export const examples = [
     settings: { analysis: "ac", startFrequency: "0.01", endFrequency: "10", pointsPerDecade: "20", phasorFrequency: "0.1591549431" },
     circuit: circuit(
       [
-        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", acMagnitude: "16.970562748477143", acPhase: "0", ref: "V1" }, 90),
+        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", amplitude: "16.970562748477143", frequency: "0.1591549431", offset: "0", phase: "90", acMagnitude: "16.970562748477143", acPhase: "0", ref: "V1" }, 90),
         component("C1", "C", 240, 200, { value: "250m", ic: "0", ref: "C1" }),
         // The textbook's I2 leaves the secondary dot: the shown winding-2 reference is flipped (2b→2a) so I(K1.2) reads 2.91∠14.04° A.
         { ...component("K1", "COUPLED_L", 400, 240, { L1: "5", L2: "6", coupling: "M", M: "3", dots: "same", ref: "K1" }), flipCurrent2: true },
@@ -249,7 +249,7 @@ export const examples = [
     settings: { analysis: "ac", startFrequency: "0.01", endFrequency: "10", pointsPerDecade: "20", phasorFrequency: "0.1591549431" },
     circuit: circuit(
       [
-        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", acMagnitude: "169.7056274847714", acPhase: "0", ref: "V1" }, 90),
+        component("V1", "V", 120, 240, { mode: "SIN", dc: "0", amplitude: "169.7056274847714", frequency: "0.1591549431", offset: "0", phase: "90", acMagnitude: "169.7056274847714", acPhase: "0", ref: "V1" }, 90),
         component("R1", "R", 240, 200, { value: "4", ref: "R1" }),
         component("C1", "C", 360, 200, { value: "0.16666666666667", ic: "0", ref: "C1" }),
         component("T1", "XFMR_IDEAL", 520, 240, { n: "2", dots: "same", ref: "T1" }),
@@ -282,7 +282,7 @@ export const examples = [
     settings: { analysis: "ac", startFrequency: "5020.999013", endFrequency: "12612.17929", pointsPerDecade: "200", phasorFrequency: "7957.747155" },
     circuit: circuit(
       [
-        component("V1", "V", 120, 250, { mode: "SIN", dc: "0", acMagnitude: "20", acPhase: "0", ref: "V1" }, 90),
+        component("V1", "V", 120, 250, { mode: "SIN", dc: "0", amplitude: "20", frequency: "7957.747155", offset: "0", phase: "90", acMagnitude: "20", acPhase: "0", ref: "V1" }, 90),
         component("R1", "R", 280, 130, { value: "2", ref: "R1" }),
         component("L1", "L", 450, 130, { value: "1m", ic: "0", ref: "L1" }),
         component("C1", "C", 570, 270, { value: "0.4u", ic: "0", ref: "C1" }, 90),
@@ -310,7 +310,7 @@ export const examples = [
     settings: { analysis: "ac", startFrequency: "1.181335064", endFrequency: "1181.335064", pointsPerDecade: "200", phasorFrequency: "118.1335064" },
     circuit: circuit(
       [
-        component("V1", "V", 120, 280, { mode: "SIN", dc: "0", acMagnitude: "1", acPhase: "0", ref: "V1" }, 90),
+        component("V1", "V", 120, 280, { mode: "SIN", dc: "0", amplitude: "1", frequency: "118.1335064", offset: "0", phase: "90", acMagnitude: "1", acPhase: "0", ref: "V1" }, 90),
         component("L1", "L", 280, 150, { value: "2", ic: "0", ref: "L1" }),
         component("R1", "R", 440, 280, { value: "2k", ref: "R1" }, 90),
         component("C1", "C", 580, 280, { value: "2u", ic: "0", ref: "C1" }, 90),

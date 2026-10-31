@@ -1,4 +1,5 @@
 import { CircuitError, deserializeCircuit, parseValue, pinCount, serializeCircuit } from "./circuit-engine.js";
+import { migrateGeneratorSource } from "./source-model.js";
 import { isSafeColor } from "./safe-dom.js";
 import { sanitizeCurrentReferences } from "./current-direction.js";
 
@@ -92,6 +93,7 @@ export function deserializeProject(text, fallbackSettings = {}) {
   const circuit = deserializeCircuit(JSON.stringify(wrapped ? payload.circuit : payload));
   // Optional display field (no version bump): flipCurrent / flipCurrent2 = true flips a part's shown current reference. Anything else is dropped.
   sanitizeCurrentReferences(circuit.components);
+  circuit.components.forEach(migrateGeneratorSource);
   const probes = wrapped ? structuredClone(payload.probes ?? []) : [];
   if (wrapped) {
     const componentIds = new Set(circuit.components.map((component) => component.id));

@@ -18,6 +18,7 @@ import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { sourceInlineDescriptor } from "./ui-model.js";
+import { generatorLabel, isGeneratorSource } from "./source-model.js";
 import { isSelected, selectedKeys } from "./selection-model.js";
 import { diagnosticHighlightIds } from "./analysis-diagnostics.js";
 
@@ -185,16 +186,19 @@ export function createCanvasRenderer(deps) {
 
   function componentMarkup(component, connection) {
     const ref = escapeHtml(component.props?.ref ?? component.id);
-    const sourceDescriptor = ["V", "I", "VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component, state.settings.analysis) : null;
+    // V/I: the generator setting ("사인 5 Vpp · 1 kHz"), edited in the inspector; controlled sources: their gain, edited on the label.
+    const generator = isGeneratorSource(component) ? generatorLabel(component) : null;
+    const sourceDescriptor = ["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component, state.settings.analysis) : null;
     const magnetic = component.type === "COUPLED_L" || component.type === "XFMR_IDEAL";
     const valueLabel = magnetic ? magneticValueLabel(component) : formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
     // A source's wording ("DC bias ") is its own tspan, hidden when the labels have to grow (svg[data-text-compact]); textContent is unchanged.
-    const value = sourceDescriptor
+    const value = generator !== null ? escapeHtml(generator)
+      : sourceDescriptor
       ? `<tspan class="value-extra">${escapeHtml(sourceDescriptor.label)} </tspan>${escapeHtml(`${valueLabel} ${sourceDescriptor.unit}`)}`
       : escapeHtml(valueLabel);
     const editProp = magnetic
       ? (component.type === "XFMR_IDEAL" ? "n" : component.props?.coupling === "M" ? "M" : "k")
-      : sourceDescriptor?.prop ?? (component.props?.value !== undefined ? "value" : component.props?.gain !== undefined ? "gain" : "");
+      : generator !== null ? "" : sourceDescriptor?.prop ?? (component.props?.value !== undefined ? "value" : component.props?.gain !== undefined ? "gain" : "");
     const geometryVersion = circuitGeometryVersion(state.circuit);
     const mode = component.props?.mode ?? "DC";
     let symbol = "";

@@ -20,19 +20,11 @@ const TYPE_FIELDS = {
 };
 
 /**
- * The one value the sheet adjusts for a part, or null. kind "positive" (R, C, L: must stay > 0, E-series steps) or "signed" (sources).
- * Sources follow the field the inspector marks as active for the current analysis.
+ * The one value the sheet adjusts for a part, or null. kind "positive" (R, C, L: must stay > 0, E-series steps). Sources have no
+ * slider: they are set like a function generator in the inspector (several knobs, none of them "the" value).
  */
-export function primaryValueField(component, analysis = "dc") {
-  if (!component) return null;
-  if (TYPE_FIELDS[component.type]) return { ...TYPE_FIELDS[component.type], kind: "positive" };
-  if (component.type !== "V" && component.type !== "I") return null;
-  const unit = component.type === "V" ? "V" : "A";
-  const mode = component.props?.mode ?? "DC";
-  if (analysis === "ac") return { prop: "acMagnitude", unit: `${unit}pk`, label: "AC 크기", kind: "signed" };
-  if (analysis === "transient" && mode === "SIN") return { prop: "amplitude", unit: `${unit}pk`, label: "진폭", kind: "signed" };
-  if (analysis === "transient" && mode === "PULSE") return { prop: "pulseV2", unit, label: "높은 값", kind: "signed" };
-  return { prop: "dc", unit, label: "DC 값", kind: "signed" };
+export function primaryValueField(component) {
+  return component && TYPE_FIELDS[component.type] ? { ...TYPE_FIELDS[component.type], kind: "positive" } : null;
 }
 
 const BARE_UNITS = new Set(["v", "a", "s", "hz", "h", "ohm", "deg"]); // plus "F" (farad); a lower-case f is femto

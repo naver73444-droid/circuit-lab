@@ -358,6 +358,10 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .wave-actions button { min-height: 28px; padding: 3px 8px; font-size: 12px; white-space: nowrap; }
 .segmented { display: flex; gap: 1px; }
 .ac-basis button { min-height: 40px; min-width: 64px; padding: 0 14px; }
+.generator-waves { margin: 2px 0 10px; gap: 4px; }
+.generator-waves button { flex: 1 1 0; min-height: 44px; font-weight: 600; }
+.generator-more { margin: 2px 0 8px; }
+.generator-more summary { min-height: 32px; display: flex; align-items: center; color: var(--muted); font-size: 12px; cursor: pointer; }
 .probe-empty { color: var(--muted); font-size: 12px; }
 .probe-chip { display: flex; align-items: center; gap: 5px; min-height: 25px; padding: 2px 4px 2px 6px; border: 1px solid var(--line-soft); border-left: 3px solid var(--chip-color); border-radius: 7px; font-size: 12px; background: var(--raised); }
 .probe-chip i { display: none; }
