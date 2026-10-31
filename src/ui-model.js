@@ -2,19 +2,15 @@ import { parseValue } from "./circuit-engine.js";
 
 const PASSIVE_RANGES = { R: [0, 6], C: [-12, -3], L: [-9, 1] };
 
-export function sourceInlineDescriptor(component, analysis) {
+/** The one value a controlled source shows and edits on its canvas label (its gain); null for any other part. */
+export function sourceInlineDescriptor(component) {
   const props = component.props ?? {};
   if (component.type === "VCVS") return { prop: "g", label: "전압 이득", unit: "V/V", value: props.g ?? "1" };
   if (component.type === "VCCS") return { prop: "gm", label: "상호컨덕턴스", unit: "S", value: props.gm ?? "1mS" };
   if (component.type === "CCCS") return { prop: "beta", label: "전류 이득", unit: "A/A", value: props.beta ?? "1" };
   if (component.type === "CCVS") return { prop: "rm", label: "전달저항", unit: "Ω", value: props.rm ?? "1k" };
-  const unit = component.type === "I" ? "A" : "V";
-  const mode = props.mode ?? "DC";
-  if (analysis === "ac") return { prop: "acMagnitude", label: "AC peak", unit: `${unit}pk`, value: props.acMagnitude ?? "0" };
-  if (analysis === "dc") return { prop: "dc", label: "DC bias", unit, value: props.dc ?? "0" };
-  if (mode === "SIN") return { prop: "amplitude", label: "SIN peak", unit: `${unit}pk`, value: props.amplitude ?? "0" };
-  if (mode === "PULSE") return { prop: "pulseV2", label: "PULSE high", unit, value: props.pulseV2 ?? "0" };
-  return { prop: "dc", label: "DC level", unit, value: props.dc ?? "0" };
+  // Independent V/I sources are labelled and set as function generators (source-model.js), not through one inline value.
+  return null;
 }
 
 export function controlledSourceInputModel(type, input) {

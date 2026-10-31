@@ -354,7 +354,7 @@ export function createAnalysisRunner(deps) {
       return `<span class="probe-chip" data-probe-key="${escapeHtml(probe.key)}" title="우클릭하면 이 프로브만 제거" style="--chip-color:${traceColor(probe.color)}"><i></i><span>${escapeHtml(probe.label)}</span><small>${reading}</small><button data-remove-probe="${escapeHtml(probe.key)}" type="button" aria-label="프로브 제거">×</button></span>`;
     }).join("");
     const guide = visibleProbes.some((probe) => probe.kind === "current")
-      ? `<span class="current-direction-note">${escapeHtml(currentDirectionGuide(state.result?.analysis ?? state.settings.analysis))}</span>`
+      ? `<details class="current-direction-note"><summary aria-label="전류 부호 읽는 법" title="전류 부호 읽는 법">ⓘ</summary><span>${escapeHtml(currentDirectionGuide(state.result?.analysis ?? state.settings.analysis))}</span></details>`
       : "";
     elements["probe-list"].innerHTML = `${chips}${guide}`;
     elements["probe-list"].querySelectorAll("[data-remove-probe]").forEach((button) => button.addEventListener("click", () => removeProbe(button.dataset.removeProbe)));

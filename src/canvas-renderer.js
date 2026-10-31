@@ -188,7 +188,7 @@ export function createCanvasRenderer(deps) {
     const ref = escapeHtml(component.props?.ref ?? component.id);
     // V/I: the generator setting ("사인 5 Vpp · 1 kHz"), edited in the inspector; controlled sources: their gain, edited on the label.
     const generator = isGeneratorSource(component) ? generatorLabel(component) : null;
-    const sourceDescriptor = ["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component, state.settings.analysis) : null;
+    const sourceDescriptor = ["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component) : null;
     const magnetic = component.type === "COUPLED_L" || component.type === "XFMR_IDEAL";
     const valueLabel = magnetic ? magneticValueLabel(component) : formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
     // A source's wording ("DC bias ") is its own tspan, hidden when the labels have to grow (svg[data-text-compact]); textContent is unchanged.
@@ -263,10 +263,9 @@ export function createCanvasRenderer(deps) {
     // from the name, the body and the pins.
     const hangY = valueY - 11;
     const hanging = `dominant-baseline:text-before-edge;text-anchor:${anchor}`;
-    const modeMarkup = ["V", "I"].includes(component.type) && !sourceDescriptor ? `<text class="source-mode-label" x="0" y="19" style="${hanging}">${escapeHtml(mode)}</text>` : "";
     const valueMarkup = value ? `<text class="value-label" data-edit-prop="${escapeHtml(editProp)}" x="0" y="0" style="${hanging}">${value}</text>` : "";
     const labels = `<g class="upright-labels" transform="rotate(${upright})"><g transform="translate(${labelX} ${labelY})"><g class="label-zoom"><text class="label" x="0" y="0" style="text-anchor:${anchor}">${ref}</text></g></g>`
-      + (valueMarkup || modeMarkup ? `<g transform="translate(${labelX} ${hangY})"><g class="label-zoom">${valueMarkup}${modeMarkup}</g></g>` : "") + `</g>`;
+      + (valueMarkup ? `<g transform="translate(${labelX} ${hangY})"><g class="label-zoom">${valueMarkup}</g></g>` : "") + `</g>`;
     const diagnostic = diagnosticIds.has(component.id) ? ` data-diagnostic="1"` : "";
     const diagnosticMarkup = diagnostic ? `<rect class="diagnostic-halo" x="-52" y="-52" width="104" height="104" rx="8"/>` : "";
     return `<g class="component${selected}${probed}" data-id="${escapeHtml(component.id)}" data-connection-status="${escapeHtml(connectionStatus)}"${diagnostic} aria-label="${ref}: ${escapeHtml(connection?.label ?? "상태 확인 필요")}" transform="${componentTransform(component)}"${color}>${diagnosticMarkup}${connectionMarkup}<path class="component-hit" d="M-30 0H30"/>${symbol}${pins}${directionMarkup}${acrossMarkup}${labels}${deleteMarkup}</g>`;

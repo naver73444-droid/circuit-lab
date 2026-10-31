@@ -312,7 +312,7 @@ export function createInspector(deps) {
         + `<button type="button" data-flip-current="${winding}" aria-pressed="${flipped}" title="AC 페이저·그래프 부호의 기준 방향을 반대로 (계산은 그대로)"><b aria-hidden="true">⇄</b> 기준 뒤집기</button></div>`;
     }).join("");
     return `<fieldset class="source-group current-reference"><legend>전류 기준 방향 · 결과</legend>${rows}`
-      + `<p class="field-help">AC 페이저와 그래프 부호(±)의 기준입니다. 교재 그림과 방향이 다르면 뒤집으세요: 표시 값이 ×(−1)이 되고 계산은 그대로입니다. DC·순간값은 늘 실제로 흐르는 방향과 크기로 보입니다.</p></fieldset>`;
+      + `<details class="field-info"><summary>ⓘ 기준 방향이란</summary><p class="field-help">AC 페이저와 그래프 부호(±)의 기준입니다. 교재 그림과 방향이 다르면 뒤집으세요: 표시 값이 ×(−1)이 되고 계산은 그대로입니다. DC·순간값은 늘 실제로 흐르는 방향과 크기로 보입니다.</p></details></fieldset>`;
   }
 
   function selectedConnectionStatus(componentId) {

@@ -17,7 +17,7 @@ const URGENT = new Set(["runAnalysis", "runPortAnalysis", "assignPortEndpoint", 
 /** Answers while nothing is loaded: no job to invalidate, no result series, no sweep overlay. */
 const IDLE_ANSWERS = { invalidateActiveAnalysis: false, seriesForProbes: [], sweepView: null };
 /** Result-panel controls whose clicks before the load are replayed on the real listeners afterwards. */
-const REPLAYED_CLICKS = ["cancel-analysis-button", "port-p-button", "port-n-button", "port-load-button", "port-clear-button", "port-run-button", "ac-view-toggle", "phasor-circuit-tab", "phasor-practice-tab"];
+const REPLAYED_CLICKS = ["cancel-analysis-button", "port-p-button", "port-n-button", "port-load-button", "port-clear-button", "port-run-button", "ac-view-toggle"];
 
 /** The scope as the editor sees it before the real ScopeView exists: no result, no cursor; subscribers are handed over on bind. */
 function lateScopeView() {

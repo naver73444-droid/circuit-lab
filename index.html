@@ -199,11 +199,7 @@
 </div>
 </section>
 <section aria-labelledby="results-tab" class="side-body" hidden="" id="results-panel" role="tabpanel">
-<div aria-label="결과 보기" class="segmented result-switch" role="group">
-<button aria-pressed="true" data-result-view="phasor" type="button">페이저</button>
-<button aria-pressed="false" data-result-view="port" type="button">테브난·노턴</button>
-</div>
-<section aria-label="단일 주파수 페이저 학습" class="phasor-panel" id="phasor-panel"><div aria-label="페이저 학습 보기" class="study-tabs" role="tablist"><button aria-controls="phasor-circuit-view" aria-selected="true" id="phasor-circuit-tab" role="tab" tabindex="0" type="button">회로 페이저</button><button aria-controls="phasor-practice-view" aria-selected="false" id="phasor-practice-tab" role="tab" tabindex="-1" type="button">복소수 연습</button></div><div aria-labelledby="phasor-circuit-tab" id="phasor-circuit-view" role="tabpanel"><p class="study-notice" id="phasor-validity" role="status">AC 해석 후 표시됩니다.</p>
+<section aria-label="단일 주파수 페이저 학습" class="phasor-panel" id="phasor-panel"><div id="phasor-circuit-view"><p class="study-notice" id="phasor-validity" role="status">AC 해석 후 표시됩니다.</p>
 <div class="phasor-header">
 <span id="phasor-summary"></span>
 <div aria-label="AC 크기 표시 기준 (전압·전류)" class="segmented ac-basis" role="group" title="페이저·호버 판독·CSV의 크기를 peak 또는 rms로 표시"><button aria-pressed="true" data-ac-basis="peak" type="button">peak</button><button aria-pressed="false" data-ac-basis="rms" type="button">rms</button></div>
@@ -231,8 +227,9 @@
 </article>
 </div>
 <p class="small-signal-note" hidden="" id="small-signal-note">다이오드 AC 결과는 DC 동작점 주위 소신호입니다. 간략 OP AMP는 유한 이득, 이상 OP AMP는 V+=V− 제약이며 전원·포화·대역폭은 없습니다.</p>
-<section class="phase-compare"><strong>두 신호의 위상차</strong><div><label>비교 A <select aria-label="위상 비교 A" id="phase-reference-a"></select></label><label>기준 B <select aria-label="위상 기준 B" id="phase-reference-b"></select></label></div><output aria-live="polite" id="phase-comparison">같은 주파수에서 비교합니다. 크기 0인 신호의 위상은 미정입니다.</output></section></div><div aria-labelledby="phasor-practice-tab" hidden="" id="phasor-practice-view" role="tabpanel"><p class="study-notice">연습용 복소수입니다. 아래 입력은 실제 회로·전원·해석 결과를 바꾸지 않습니다. 덧셈·뺄셈은 같은 주파수와 같은 단위의 페이저에 적용하세요.</p><form id="phasor-practice-form"><fieldset><legend>A</legend><label class="practice-mode">입력 형식<select id="practice-a-mode"><option value="rect">직교형 (실수 + j허수)</option><option value="polar">극형 (크기 ∠ 위상°)</option></select></label><label><span id="practice-a-re-label">실수</span><input autocomplete="off" id="practice-a-re" inputmode="decimal" value="3"/></label><label><span id="practice-a-im-label">허수</span><input autocomplete="off" id="practice-a-im" inputmode="decimal" value="4"/></label></fieldset><fieldset><legend>B</legend><label class="practice-mode">입력 형식<select id="practice-b-mode"><option value="rect">직교형 (실수 + j허수)</option><option value="polar">극형 (크기 ∠ 위상°)</option></select></label><label><span id="practice-b-re-label">실수</span><input autocomplete="off" id="practice-b-re" inputmode="decimal" value="1"/></label><label><span id="practice-b-im-label">허수</span><input autocomplete="off" id="practice-b-im" inputmode="decimal" value="-2"/></label></fieldset><button type="submit">변환·연산</button></form><div aria-live="polite" class="practice-result" id="practice-result"></div><details class="practice-help"><summary>왜 이렇게 계산하나요?</summary><p>극형→직교형: a=X cos φ, b=X sin φ (입력 위상은 도 단위). 형식을 바꿀 때 기존 입력 숫자는 자동 변환하지 않으므로 새 형식에 맞춰 다시 입력하세요.</p><p>크기 = √(a²+b²), 위상 = atan2(b,a). atan(b/a)만 쓰면 사분면을 놓칠 수 있습니다.</p><p>A+B는 실수끼리·허수끼리 더합니다. 곱셈은 크기의 곱과 위상의 합, 나눗셈은 크기의 비와 위상의 차입니다. j²=−1입니다.</p><p>X∠φ가 peak·cos 기준이면 x(t)=X cos(2πft+φ), RMS는 X/√2입니다. 크기 0의 위상과 0으로 나누기는 정의하지 않습니다.</p></details></div></section>
+<section class="phase-compare"><strong>두 신호의 위상차</strong><div><label>비교 A <select aria-label="위상 비교 A" id="phase-reference-a"></select></label><label>기준 B <select aria-label="위상 기준 B" id="phase-reference-b"></select></label></div><output aria-live="polite" id="phase-comparison">같은 주파수에서 비교합니다. 크기 0인 신호의 위상은 미정입니다.</output></section></div><button class="result-more" data-result-view="port" type="button">테브난·노턴 등가 (DC) ›</button></section>
 <section aria-label="DC 테브난·노턴 포트" class="port-panel" hidden="" id="port-panel">
+<button class="result-more" data-result-view="phasor" type="button">‹ 페이저로</button>
 <div class="port-summary"><strong>DC 테브난·노턴 포트</strong><span class="port-status" id="port-status">DC 선형 회로 전용</span></div>
 <div class="port-controls">
 <button id="port-p-button" type="button">p 선택</button>

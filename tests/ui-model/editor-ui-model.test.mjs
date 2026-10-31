@@ -84,16 +84,10 @@ test("연결 상태는 미배선·무접지·분석 floating·정상 RC를 구�
   }
 });
 
-test("source inline 의미는 분석·파형별 필드와 엔진 fallback을 따른다", () => {
-  const voltage = { type: "V", props: { mode: "SIN", dc: "7", amplitude: "2", pulseV2: "3", acMagnitude: "4" } };
-  assert.deepEqual(sourceInlineDescriptor(voltage, "dc"), { prop: "dc", label: "DC bias", unit: "V", value: "7" });
-  assert.deepEqual(sourceInlineDescriptor(voltage, "transient"), { prop: "amplitude", label: "SIN peak", unit: "Vpk", value: "2" });
-  voltage.props.mode = "PULSE";
-  assert.equal(sourceInlineDescriptor(voltage, "transient").prop, "pulseV2");
-  assert.deepEqual(sourceInlineDescriptor(voltage, "ac"), { prop: "acMagnitude", label: "AC peak", unit: "Vpk", value: "4" });
-  assert.deepEqual(sourceInlineDescriptor({ type: "I", props: { mode: "SIN" } }, "transient"), { prop: "amplitude", label: "SIN peak", unit: "Apk", value: "0" });
-  assert.equal(sourceInlineDescriptor({ type: "V", props: { mode: "PULSE" } }, "transient").value, "0");
-  assert.equal(sourceInlineDescriptor({ type: "V", props: {} }, "ac").value, "0");
+test("source inline: controlled sources edit their gain on the label; V/I sources have none (set as a generator in the inspector)", () => {
+  assert.deepEqual(sourceInlineDescriptor({ type: "VCVS", props: { g: "2" } }), { prop: "g", label: "전압 이득", unit: "V/V", value: "2" });
+  for (const mode of ["DC", "SIN", "PULSE"]) assert.equal(sourceInlineDescriptor({ type: "V", props: { mode } }), null, mode);
+  assert.equal(sourceInlineDescriptor({ type: "I", props: {} }), null);
 });
 
 test("직접 만든 R/C/L slider는 예제 ID 없이 제공되고 범위 밖 값을 보존 표시한다", () => {
