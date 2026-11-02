@@ -18,7 +18,7 @@ import { engineering } from "./scope-model.js";
 import { escapeHtml } from "./safe-dom.js";
 import { traceColor } from "./trace-color.js";
 import { sourceInlineDescriptor } from "./ui-model.js";
-import { generatorLabel, isGeneratorSource } from "./source-model.js";
+import { generatorLabelParts, isGeneratorSource } from "./source-model.js";
 import { isSelected, selectedKeys } from "./selection-model.js";
 import { diagnosticHighlightIds } from "./analysis-diagnostics.js";
 
@@ -187,13 +187,13 @@ export function createCanvasRenderer(deps) {
   function componentMarkup(component, connection) {
     const ref = escapeHtml(component.props?.ref ?? component.id);
     // V/I: the generator setting ("사인 5 Vpp · 1 kHz"), edited in the inspector; controlled sources: their gain, edited on the label.
-    const generator = isGeneratorSource(component) ? generatorLabel(component) : null;
+    const generator = isGeneratorSource(component) ? generatorLabelParts(component) : null;
     const sourceDescriptor = ["VCVS", "VCCS", "CCCS", "CCVS"].includes(component.type) ? sourceInlineDescriptor(component) : null;
     const magnetic = component.type === "COUPLED_L" || component.type === "XFMR_IDEAL";
     const valueLabel = magnetic ? magneticValueLabel(component) : formatCanvasValueLabel(sourceDescriptor?.value ?? component.props?.value ?? component.props?.gain ?? "");
     // A source's wording ("DC bias ") is its own tspan, hidden when the labels have to grow (svg[data-text-compact]); textContent is unchanged.
     // The waveform word ("사인 ") is dropped with the other source wording when the labels have to grow (svg[data-text-compact]).
-    const value = generator !== null ? generator.replace(/^(\S+ )?(.*)$/, (_, word = "", rest) => `${word ? `<tspan class="value-extra">${escapeHtml(word)}</tspan>` : ""}${escapeHtml(rest)}`)
+    const value = generator !== null ? (generator.rest ? `<tspan class="value-extra">${escapeHtml(generator.word)} </tspan>${escapeHtml(generator.rest)}` : escapeHtml(generator.word))
       : sourceDescriptor
       ? `<tspan class="value-extra">${escapeHtml(sourceDescriptor.label)} </tspan>${escapeHtml(`${valueLabel} ${sourceDescriptor.unit}`)}`
       : escapeHtml(valueLabel);

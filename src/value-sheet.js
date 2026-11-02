@@ -1,10 +1,10 @@
 /**
- * Value adjuster for the selected R / C / L / source.
+ * Value adjuster for the selected R / C / L (a source is set like a function generator in the inspector).
  *  - Phone: a bottom sheet docked above the panel tab bar. It opens only on an explicit choice (a tap on the part or its value, "값" on the selection
  *    bar), never because a part merely became selected (placing a part, a long-press pick-up, a diagnostic link): popping up on its own
  *    would cover the lower canvas right after the student placed a part. ✕ hides it until the part is chosen again.
- *    The text field asks for the number pad (inputmode="decimal"); prefixes come from the chips, so no letter keyboard is needed, and a
- *    signed value (a source) gets a ± button because the iOS number pad has no minus key. A tap into the field selects the old value.
+ *    The text field asks for the number pad (inputmode="decimal"); prefixes come from the chips, so no letter keyboard is needed.
+ *    A tap into the field selects the old value.
  *    Collapsed (phone): only the value row with ◀ ▶ (no slider, no prefix chips), so the sheet covers less of the canvas. Dragging the
  *    canvas (pan, pinch, moving a part) or tapping another part collapses it, and it stays collapsed for the next parts until the handle
  *    on top is tapped or dragged up (dragging it down collapses again). When the chosen part ends up under the sheet, the circuit slides
@@ -22,16 +22,6 @@ import { selectAllOnUserFocus } from "./field-select.js";
 const REPEAT_DELAY_MS = 420;
 const REPEAT_EVERY_MS = 110;
 
-/** "5" ↔ "-5", "−2m" → "2m", "+3" → "-3"; null for an empty text or a zero (nothing to flip). */
-export function flipSign(text) {
-  const trimmed = String(text ?? "").trim();
-  if (!trimmed) return null;
-  const body = trimmed.replace(/^[-−+]\s*/, "");
-  const checked = classifyNumericInput(body, { positive: false });
-  if (checked.status === "valid" && checked.value === 0) return null;
-  return /^[-−]/.test(trimmed) ? body : `-${body}`;
-}
-
 const chipMarkup = ([prefix, label]) => `<button type="button" data-prefix="${prefix}" aria-pressed="false" aria-label="접두사 ${prefix ? label : "없음"}">${label}</button>`;
 const MARKUP = `
 <div class="value-sheet-handle" role="button" tabindex="0" aria-expanded="true" aria-label="값 조절 접기"><i></i></div>
@@ -39,7 +29,6 @@ const MARKUP = `
   <strong class="value-sheet-name" id="value-sheet-name"></strong>
   <input id="value-sheet-input" class="value-sheet-input" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false" aria-label="값"/>
   <span class="value-sheet-unit" id="value-sheet-unit"></span>
-  <button type="button" class="value-sheet-sign" data-sheet-action="sign" aria-label="부호 바꾸기 (+/−)" title="부호 바꾸기 · 숫자 키패드에 − 가 없을 때">±</button>
   <button type="button" class="value-sheet-series" data-sheet-action="series" title="◀ ▶ 표준값 계열">E12</button>
   <button type="button" data-sheet-action="inspect" title="모든 속성 보기">속성</button>
   <button type="button" class="value-sheet-close" data-sheet-action="close" aria-label="값 조절 닫기">✕</button>
@@ -66,7 +55,6 @@ export function createValueSheet(deps) {
   const $ = (selector) => sheet.querySelector(selector);
   const input = $("#value-sheet-input"), slider = $("#value-sheet-slider"), seriesButton = $('[data-sheet-action="series"]');
   const handle = $(".value-sheet-handle");
-  const signButton = $('[data-sheet-action="sign"]');
   selectAllOnUserFocus(sheet, { doc, win });
   const gesture = createValueGesture({ mutateGrouped, closeEditGroup });
   let series = "E12";
@@ -83,7 +71,7 @@ export function createValueSheet(deps) {
     const items = selectedItems(state);
     if (items.length !== 1 || items[0].kind !== "component") return null;
     const component = state.circuit.components.find((item) => item.id === items[0].id);
-    const field = primaryValueField(component, state.settings.analysis);
+    const field = primaryValueField(component);
     return field ? { component, field } : null;
   }
   const valueText = (component, field) => String(component.props?.[field.prop] ?? "0");
@@ -135,13 +123,10 @@ export function createValueSheet(deps) {
     $("#value-sheet-unit").textContent = field.unit;
     input.setAttribute("aria-label", `${component.props?.ref ?? component.id} ${field.label} (${field.unit})`);
     if (doc.activeElement !== input || gesture.open) { input.value = text; input.classList.remove("sheet-invalid"); input.removeAttribute("aria-invalid"); }
-    const parsed = classifyNumericInput(text, { positive: field.kind === "positive" });
+    const parsed = classifyNumericInput(text, { positive: true });
     if (slideBase === null) slider.value = "0";
     slider.disabled = !(parsed.status === "valid" && parsed.value !== 0);
-    seriesButton.hidden = field.kind !== "positive";
     seriesButton.textContent = series;
-    // A signed value (sources) can go negative: the number pad of iOS has no "−", so the sheet offers ± instead.
-    signButton.hidden = field.kind === "positive";
     const prefix = prefixOf(text);
     for (const chip of sheet.querySelectorAll("[data-prefix]")) chip.setAttribute("aria-pressed", String(chip.dataset.prefix === prefix));
     if (phone.matches && shownFor !== component.id) { shownFor = component.id; win.requestAnimationFrame(() => { measure(); reveal(component.id); }); }
@@ -152,8 +137,8 @@ export function createValueSheet(deps) {
     if (!current) return false;
     const component = state.circuit.components.find((item) => item.id === current.id);
     if (!component) return false;
-    const checked = classifyNumericInput(text, { positive: current.field.kind === "positive" });
-    if (checked.status !== "valid") { setStatus(current.field.kind === "positive" ? "0보다 큰 값을 입력하세요" : "잘못된 값", "error"); return false; }
+    const checked = classifyNumericInput(text, { positive: true });
+    if (checked.status !== "valid") { setStatus("0보다 큰 값을 입력하세요", "error"); return false; }
     if (String(component.props?.[current.field.prop] ?? "") === text) return true;
     const { prop } = current.field;
     inputDrafts.delete("prop", component.id, prop);
@@ -189,7 +174,7 @@ export function createValueSheet(deps) {
     if (!current) return false;
     const component = state.circuit.components.find((item) => item.id === current.id);
     if (!component) return false;
-    const next = stepValue(valueText(component, current.field), direction, { kind: current.field.kind, series });
+    const next = stepValue(valueText(component, current.field), direction, { series });
     return next ? apply(next.text) : false;
   }
   function stopRepeat() { if (repeat !== null) win.clearTimeout(repeat); repeat = null; }
@@ -204,7 +189,7 @@ export function createValueSheet(deps) {
 
   // ---- events
   input.addEventListener("input", () => {
-    const checked = classifyNumericInput(input.value, { positive: current?.field.kind === "positive" });
+    const checked = classifyNumericInput(input.value, { positive: true });
     input.classList.toggle("sheet-invalid", checked.status === "invalid");
     input.setAttribute("aria-invalid", String(checked.status === "invalid"));
   });
@@ -263,21 +248,9 @@ export function createValueSheet(deps) {
     });
   }
 
-  signButton.addEventListener("pointerdown", (event) => { if (doc.activeElement === input) event.preventDefault(); }); // keep typing
   sheet.addEventListener("click", (event) => {
     const action = event.target.closest?.("[data-sheet-action]")?.dataset.sheetAction;
     if (!action) return;
-    if (action === "sign") {
-      if (!current || current.field.kind === "positive") return;
-      const component = state.circuit.components.find((item) => item.id === current.id);
-      if (!component) return;
-      const typing = doc.activeElement === input;
-      const text = flipSign(typing ? input.value : valueText(component, current.field));
-      if (text === null) return;
-      if (typing) input.value = text;
-      applyOnce(text);
-      return;
-    }
     if (action === "series") { series = series === "E12" ? "E24" : "E12"; seriesButton.textContent = series; return; }
     if (action === "close" || action === "inspect") { requested = null; sync(); }
     if (action === "inspect") showInspector();
@@ -334,7 +307,7 @@ export function createValueSheet(deps) {
       if (showing() && current && current.id !== id) collapsed = true;
       requested = id; shownFor = null; sync(); return !sheet.hidden;
     },
-    canAdjust: (component) => Boolean(primaryValueField(component, state.settings.analysis)),
+    canAdjust: (component) => Boolean(primaryValueField(component)),
     inspect: () => ({
       visible: !sheet.hidden, phone: phone.matches, collapsed: phone.matches && collapsed, id: current?.id ?? null, prop: current?.field.prop ?? null,
       series, value: input.value, sliding: slideBase !== null,

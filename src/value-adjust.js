@@ -1,14 +1,14 @@
 /**
  * 값 조절 시트(폰 바텀시트 · 데스크톱 속성 카드)의 순수 모델. DOM 없음.
- *  - 어떤 속성을 조절할지 (R/C/L 값, 전원은 해석 종류·파형에 따라 DC/진폭/높은 값/AC 크기)
- *  - ◀ ▶ 한 칸: R/C/L은 E12/E24 표준값, 전원은 1·1.2·1.5·2·2.5·3·4·5… (부호 유지, 0은 ±1로)
+ *  - 어떤 속성을 조절할지 (R/C/L 값; 전원은 속성의 함수 발생기 칸에서 정함)
+ *  - ◀ ▶ 한 칸: E12/E24 표준값
  *  - 접두사 칩: 숫자는 그대로 두고 접두사만 바꿈 ("4.7" + k → "4.7k")
  *  - 로그 슬라이더: 끌기 시작 값 기준 ×0.1 … ×10, 유효숫자 3자리
  * 값 문자열은 엔진 파서(parseValue)가 읽는 표기만 만든다 (마이크로는 u, 메가는 M 또는 원래의 meg).
  */
-import { E12, E24, NICE, parseSeriesText, stepSeriesText } from "./value-series.js";
+import { E12, E24, parseSeriesText, stepSeriesText } from "./value-series.js";
 
-export const SERIES = Object.freeze({ E12, E24, NICE });
+export const SERIES = Object.freeze({ E12, E24 });
 
 /** [저장 표기, 칩 글자]. "—"는 접두사 없음. */
 export const PREFIX_CHIPS = Object.freeze([["p", "p"], ["n", "n"], ["u", "µ"], ["m", "m"], ["", "—"], ["k", "k"], ["M", "M"]]);
@@ -20,11 +20,11 @@ const TYPE_FIELDS = {
 };
 
 /**
- * The one value the sheet adjusts for a part, or null. kind "positive" (R, C, L: must stay > 0, E-series steps). Sources have no
+ * The one value the sheet adjusts for a part (R, C, L: must stay > 0, E-series steps), or null. Sources have no
  * slider: they are set like a function generator in the inspector (several knobs, none of them "the" value).
  */
 export function primaryValueField(component) {
-  return component && TYPE_FIELDS[component.type] ? { ...TYPE_FIELDS[component.type], kind: "positive" } : null;
+  return component && TYPE_FIELDS[component.type] ? { ...TYPE_FIELDS[component.type] } : null;
 }
 
 const BARE_UNITS = new Set(["v", "a", "s", "hz", "h", "ohm", "deg"]); // plus "F" (farad); a lower-case f is femto
@@ -74,24 +74,10 @@ export function formatValue(value, { tail = "", megStyle = "M", digits = 3 } = {
   return `${sign}${mantissa}${prefix}${tail}`;
 }
 
-/**
- * One step up (+1) or down (-1). Positive values walk the E12/E24 series; signed (source) values walk NICE on their magnitude with the
- * sign kept, and 0 steps to ±1. Returns { text, value } or null (unreadable, not positive where required, out of range).
- */
-export function stepValue(text, direction, { kind = "positive", series = "E12" } = {}) {
+/** One step up (+1) or down (-1) along the E12/E24 series. Returns { text, value } or null (unreadable, not positive, out of range). */
+export function stepValue(text, direction, { series = "E12" } = {}) {
   if (direction !== 1 && direction !== -1) return null;
-  if (kind === "positive") return stepSeriesText(text, direction, SERIES[series] ?? E12);
-  const parsed = parseSeriesText(text);
-  if (!parsed) return null;
-  if (parsed.value === 0) {
-    const stepped = `${direction > 0 ? "" : "-"}1${parsed.tail}`;
-    return { text: stepped, value: direction };
-  }
-  const negative = parsed.value < 0;
-  const magnitudeText = String(text).trim().replace(/^[+-]/, "");
-  const next = stepSeriesText(magnitudeText, negative ? -direction : direction, NICE);
-  if (!next) return null;
-  return negative ? { text: `-${next.text}`, value: -next.value } : next;
+  return stepSeriesText(text, direction, SERIES[series] ?? E12);
 }
 
 /** Slider position (−1 … 1) → base × 10^position, rounded to 3 significant figures. */

@@ -15,8 +15,7 @@ import { createSweepRunner } from "./sweep-runner.js";
 import { sweepLegendMarkup, syncSweepStatus } from "./sweep-panel.js";
 import { setSingleSelection } from "./selection-model.js";
 import { engineering, pulseWindowHint } from "./scope-model.js";
-import { refinedTransientStep, steadyStateRun, triggeredResult } from "./analysis-policy.js";
-import { analysisCircuit } from "./source-model.js";
+import { refinedTransientStep, steadyStateRun } from "./analysis-policy.js";
 import { presentProbe as presentProbeIn, synchronizeIntent as synchronizeIntentIn } from "./run-state.js";
 
 export { createRunState } from "./run-state.js";
@@ -264,21 +263,20 @@ export function createAnalysisRunner(deps) {
     const plan = state.scopeSteady ? steadyStateRun(circuit, settings) : null;
     const steady = plan && !plan.refused ? plan : null;
     if (steady) Object.assign(settings, { start: "0", end: String(steady.end), step: String(steady.step) });
-    // With no sine source the AC run takes the first source as its 1 V (1 A) input: say so, it is not a value the user typed.
-    const acInput = settings.analysis === "ac" ? analysisCircuit(circuit).acInput : null;
     const startedAt = requestedAt;
     state.runState = { status: "running", analysis: state.settings.analysis, generation, error: null };
     setStatus(automatic ? "자동 해석 중…" : "해석 중…", "running");
     elements["error-box"].classList.add("hidden");
     await new Promise((resolve) => { requestAnimationFrame(resolve); setTimeout(resolve, 50); });
     if (serial !== state.runSerial || !acceptsRunGeneration(generation, state.generation)) return;
-    const workerRequest = analysisWorkerClient.start("normal", { circuit, settings });
+    const workerRequest = analysisWorkerClient.start("normal", { circuit, settings, ...(steady ? { trigger: steady.trigger } : {}) });
     activeAnalysisJob = { kind: "normal", serial, requestId: workerRequest.requestId, generation };
     updateAnalysisControls();
     try {
-      const { result, phasorResult } = await workerRequest.promise;
+      // acInput: with no sine source the AC run took this source as its 1 V (1 A) input; the status says so, it is not a typed value.
+      const { result, phasorResult, acInput } = await workerRequest.promise;
       if (serial !== state.runSerial || !acceptsRunGeneration(generation, state.generation)) return;
-      state.result = steady ? triggeredResult(result, steady.trigger) : result;
+      state.result = result;
       state.phasorResult = phasorResult;
       state.stale = false;
       sweepRunner.clear({ quiet: true });

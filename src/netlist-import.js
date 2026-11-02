@@ -14,7 +14,7 @@
 import { parseValue, componentDefaults, pinCount } from "./circuit-engine.js";
 import { CURRENT_GEOMETRY_VERSION, pinPosition } from "./circuit-geometry.js";
 import { rerouteWires, pinOutwardDirection } from "./wire-router.js";
-import { generatorLabel } from "./source-model.js";
+import { generatorLabel, toEnginePhase } from "./source-model.js";
 
 export const NETLIST_MAX_CHARS = 20000;
 export const NETLIST_MAX_PARTS = 60;
@@ -80,7 +80,7 @@ function sourceProps(rest, unit, error, warn) {
   delete props.acPhase;
   if (ac !== undefined && Number(parseValue(ac)) !== 0) {
     if (props.mode === "DC") {
-      Object.assign(props, { mode: "SIN", offset: props.dc, amplitude: ac, frequency: "1k", phase: String(Number(parseValue(acPhase)) + 90) });
+      Object.assign(props, { mode: "SIN", offset: props.dc, amplitude: ac, frequency: "1k", phase: toEnginePhase(Number(parseValue(acPhase))) });
       warn("AC " + ac + "은(는) 1 kHz 사인(진폭 " + ac + ", 오프셋 " + props.offset + ")으로 읽었습니다. 시간응답 주파수는 속성에서 바꾸세요.");
     } else warn("AC 값은 쓰지 않습니다. AC 해석은 이 전원의 사인 진폭·위상으로 계산합니다.");
   }

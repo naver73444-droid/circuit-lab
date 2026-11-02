@@ -298,7 +298,6 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .value-sheet-unit { flex: 0 0 auto; color: var(--muted); font: 14px var(--mono); }
 .value-sheet.is-phone .value-sheet-head button { flex: 0 0 auto; min-width: 44px; min-height: 44px; padding: 0 8px; font-size: 14px; }
 .value-sheet-series { font: 600 13px var(--mono); color: var(--muted); }
-.value-sheet-sign { font: 600 18px var(--mono); color: var(--accent); }
 .value-sheet-head button[hidden] { display: none; }
 .value-sheet.is-phone .value-sheet-stepper { min-width: 52px; min-height: 48px; font-size: 18px; }
 .value-sheet.is-phone .value-sheet-slide input[type="range"] { height: 44px; }
@@ -333,7 +332,6 @@ body :has(.topbar) { height: 100%; min-height: 0; }
 .field-slider { display: grid; grid-template-columns: minmax(0, 1fr) 71px; gap: 6px; align-items: center; }
 .field-slider input[type="range"] { padding: 0; accent-color: var(--accent); }
 .range-note { color: var(--warning); }
-.active-field { border-left: 2px solid var(--accent); padding-left: 6px; }
 .source-group { min-width: 0; margin: 0 0 10px; padding: 7px; border: 1px solid var(--line-soft); border-radius: 7px; }
 .source-group legend { color: var(--accent); font-weight: 600; font-size: 12px; }
 .source-group.active-group { border-color: var(--accent); }

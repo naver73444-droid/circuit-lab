@@ -32,6 +32,7 @@ export function restoreAnalysisError(serialized) {
 export class AnalysisWorkerClient {
   constructor({ workerFactory = () => new Worker(new URL("./analysis-worker.js", import.meta.url), { type: "module" }) } = {}) {
     this.workerFactory = workerFactory;
+    this.idle = null;
     this.sequence = 0;
     this.active = null;
   }
@@ -48,9 +49,12 @@ export class AnalysisWorkerClient {
     let resolvePromise;
     let rejectPromise;
     const promise = new Promise((resolve, reject) => { resolvePromise = resolve; rejectPromise = reject; });
-    let worker;
+    // A worker that finished its last job is reused: a new module worker costs its module loading on every run. A cancelled or failed one
+    // was terminated (that is how a running solve is stopped), so a new one is made then.
+    let worker = this.idle;
+    this.idle = null;
     try {
-      worker = this.workerFactory();
+      worker ??= this.workerFactory();
     } catch (error) {
       rejectPromise(new AnalysisWorkerError("해석 Worker를 만들 수 없습니다.", error));
       return { requestId, promise };
@@ -60,8 +64,8 @@ export class AnalysisWorkerClient {
     worker.onmessage = (event) => {
       const message = event.data ?? {};
       if (!this.isActive(requestId, kind) || message.requestId !== requestId || message.kind !== kind) return;
-      if (message.ok) this.settleActive(active, "resolve", message.value);
-      else this.settleActive(active, "reject", restoreAnalysisError(message.error));
+      if (message.ok) this.settleActive(active, "resolve", message.value, { keep: true });
+      else this.settleActive(active, "reject", restoreAnalysisError(message.error), { keep: true });
     };
     worker.onerror = (event) => {
       event.preventDefault?.();
@@ -84,13 +88,15 @@ export class AnalysisWorkerClient {
     return true;
   }
 
-  settleActive(active, mode, value) {
+  /** keep: the worker answered (a result or an analysis error) and is idle, so the next job can use it; otherwise it is terminated. */
+  settleActive(active, mode, value, { keep = false } = {}) {
     if (!active || active.settled) return false;
     active.settled = true;
     active.worker.onmessage = null;
     active.worker.onerror = null;
     active.worker.onmessageerror = null;
-    active.worker.terminate();
+    if (keep) { this.idle?.terminate(); this.idle = active.worker; }
+    else active.worker.terminate();
     if (this.active === active) this.active = null;
     if (mode === "resolve") active.resolvePromise(value);
     else active.rejectPromise(value);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { E12, E24, NICE, stepSeriesText } from "../../src/value-series.js";
+import { E12, E24, stepSeriesText } from "../../src/value-series.js";
 import { createValueGesture, formatValue, prefixOf, primaryValueField, slideText, sliderToValue, splitValueText, stepValue, valueToSlider, withPrefix } from "../../src/value-adjust.js";
 import { createEditorSession, createEditorState } from "../../src/editor-session.js";
 import { parseValue } from "../../src/circuit-engine.js";
@@ -31,17 +31,6 @@ test("◀ ▶ E12/E24: 위·아래 한 칸, 계열 밖 값은 가까운 계열 �
   for (const text of walk("1p", 1, 30, { series: "E24" })) assert.ok(parseValue(text) > 0, `${text}는 엔진이 읽는다`);
 });
 
-test("전원 ◀ ▶: 1·1.2·1.5·2·2.5·3·4·5·6·7·8·9 (부호 유지, 0은 ±1)", () => {
-  assert.deepEqual([...NICE], [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 9]);
-  assert.deepEqual(walk("5", 1, 6, { kind: "signed" }), ["5", "6", "7", "8", "9", "10", "12"]);
-  assert.deepEqual(walk("12", -1, 3, { kind: "signed" }), ["12", "10", "9", "8"]);
-  assert.deepEqual(walk("-5", 1, 2, { kind: "signed" }), ["-5", "-4", "-3"], "음수에서 ▶는 0 쪽으로");
-  assert.deepEqual(walk("-5", -1, 2, { kind: "signed" }), ["-5", "-6", "-7"]);
-  assert.equal(stepValue("0", 1, { kind: "signed" }).text, "1");
-  assert.equal(stepValue("0", -1, { kind: "signed" }).text, "-1");
-  assert.equal(stepValue("500m", 1, { kind: "signed" }).text, "600m");
-  assert.equal(stepValue("2.5V", 1, { kind: "signed" }).text, "3V", "단위 꼬리 유지");
-});
 
 test("접두사 칩: 숫자는 그대로, 접두사만 바꾼다 (µ는 u로 저장, M은 메가)", () => {
   assert.deepEqual(splitValueText("4.7kohm"), { number: "4.7", prefix: "k", tail: "ohm" });
@@ -86,7 +75,7 @@ test("로그 슬라이더: 기준값 ×10^위치 (−1…1), 유효숫자 3자�
 test("조절할 속성: R/C/L 값만 (전원은 함수 발생기처럼 속성 패널에서 여러 칸으로 정함)", () => {
   assert.equal(primaryValueField({ type: "R", props: {} }).prop, "value");
   assert.equal(primaryValueField({ type: "C", props: {} }).unit, "F");
-  assert.equal(primaryValueField({ type: "L", props: {} }).kind, "positive");
+  assert.equal(primaryValueField({ type: "L", props: {} }).prop, "value");
   for (const mode of ["DC", "SIN", "PULSE"]) {
     assert.equal(primaryValueField({ type: "V", props: { mode } }), null, mode);
     assert.equal(primaryValueField({ type: "I", props: { mode } }), null, mode);

@@ -10,14 +10,14 @@ import { acScale, amplitudeText, normalizeAcBasis } from "./ac-basis.js";
 import { circuitGeometryVersion } from "./circuit-geometry.js";
 import { actualCurrentText, currentReferenceSign, isCurrentReferenceFlipped, isMagneticPart, pointCurrentScale, probeCurrentKey, referenceDirection, signedCurrent } from "./current-direction.js";
 import { selectAllOnUserFocus } from "./field-select.js";
-import { WAVES, generatorEdit, generatorFieldText, generatorView } from "./source-model.js";
+import { WAVES, generatorEdit, generatorFieldText, generatorPatch, generatorView, unitOf } from "./source-model.js";
 import { generatorTimebase } from "./analysis-policy.js";
 
 /** Property inspector, analysis settings, inline value editor and the draft/validation/commit flow behind them. */
 const TYPE_NAMES = { R: "저항", C: "커패시터", L: "인덕터", GND: "접지", V: "전압원", I: "전류원", D: "다이오드", OPAMP: "간략 OP AMP", OPAMP_IDEAL: "이상 OP AMP", VCVS: "전압 제어 전압원", VCCS: "전압 제어 전류원", CURRENT_SENSOR: "0 V 전류 센서", CCCS: "전류 제어 전류원", CCVS: "전류 제어 전압원", COUPLED_L: "결합 인덕터", XFMR_IDEAL: "이상 변압기" };
 
 /** Props that hold text choices, not numbers: they skip the numeric input classification. */
-const TEXT_PROPS = new Set(["ref", "mode", "coupling", "dots"]);
+const TEXT_PROPS = new Set(["ref", "coupling", "dots"]);
 /** Props that must be strictly positive (R, C, L value; coupled-inductor L1/L2; transformer ratio n). */
 /** A source's generator knobs (gen:vpp, gen:frequency, …) are not stored props: they read and write the engine props (source-model.js). */
 const isDerived = (key) => key.startsWith("gen:");
@@ -111,25 +111,17 @@ export function createInspector(deps) {
       update.control?.focus();
       return false;
     }
-    // Generator knobs are not stored: each edited one becomes the engine props it implies. Several on one part apply in turn to a working
-    // copy (frequency, then duty, …), so a later knob builds on an earlier one instead of overwriting it.
-    const working = new Map();
+    // Generator knobs are not stored: the knobs edited on one part become the engine props they imply, applied in turn (source-model.js).
+    const knobEdits = new Map();
     for (const [mapKey, update] of [...updates]) {
       if (update.kind !== "prop" || !isDerived(update.key)) continue;
       updates.delete(mapKey);
       inputDrafts.delete("prop", update.id, update.key);
-      if (!working.has(update.id)) working.set(update.id, { ...update.component, props: { ...update.component.props } });
-      const part = working.get(update.id);
-      if (update.value === committedValue(part, update.key)) continue;
-      Object.assign(part.props, derivedEdit(part, update.key, update.value));
+      if (!knobEdits.has(update.id)) knobEdits.set(update.id, { component: update.component, edits: [] });
+      if (update.value !== committedValue(update.component, update.key)) knobEdits.get(update.id).edits.push([update.key.slice(4), update.value]);
     }
-    for (const [id, part] of working) {
-      const component = state.circuit.components.find((item) => item.id === id);
-      for (const [key, value] of Object.entries(part.props)) {
-        if (String(component.props[key] ?? "") === String(value)) continue;
-        const stored = inputDrafts.key("prop", id, key), other = updates.get(stored);
-        if (!other || other.value === String(component.props[key] ?? "")) updates.set(stored, { kind: "prop", id, key, value: String(value), control: null, component, object: component.props });
-      }
+    for (const [id, { component, edits }] of knobEdits) {
+      for (const [key, value] of Object.entries(generatorPatch(component, edits) ?? {})) updates.set(inputDrafts.key("prop", id, key), { kind: "prop", id, key, value, control: null, component, object: component.props });
     }
     const changed = [...updates.values()].filter((update) => String(update.object[update.key] ?? "") !== update.value);
     for (const update of updates.values()) inputDrafts.delete(update.kind, update.id, update.key);
@@ -193,39 +185,38 @@ export function createInspector(deps) {
   }
 
   // Quick adjustment (◀ ▶ standard values, log slider, prefix chips) lives in the value sheet/card (value-sheet.js), outside this re-rendered markup.
-  function field(label, key, value, help = "", options = null, _unused = null, active = false) {
+  function field(label, key, value, help = "", options = null) {
     const control = options
       ? `<select data-prop="${key}" aria-label="${escapeHtml(label)}">${options.map(([optionValue, optionLabel]) => `<option value="${optionValue}"${value === optionValue ? " selected" : ""}>${optionLabel}</option>`).join("")}</select>`
       // Plain text keyboard on purpose: it has "−" and the unit letters (k, m, u …) on every phone; a number pad (inputmode=decimal) has no minus on iOS.
       : `<input data-prop="${key}" aria-label="${escapeHtml(label)}" value="${escapeHtml(value)}" inputmode="text" autocomplete="off" />`;
-    return `<div class="field${active ? " active-field" : ""}"><label>${label}</label>${control}${help ? `<span class="field-help">${help}</span>` : ""}</div>`;
+    return `<div class="field"><label>${label}</label>${control}${help ? `<span class="field-help">${help}</span>` : ""}</div>`;
   }
 
   /**
    * Autoset: a new generator frequency (or a switch to 사인/구형) sets the transient window to five periods, as a scope's Autoset would.
-   * Only for settings that are the project's own (manual intent); the automatic plan already follows the source. Runs inside mutate().
+   * Only for settings that are the project's own (manual intent); the automatic plan already follows the source. Runs inside mutate();
+   * returns the note to show once the change is in (showAutoset), or "".
    */
   function autosetTimebase(component) {
     const view = generatorView(component.props);
-    if (view.wave === "DC" || state.intent !== "manual" || state.settings.analysis !== "transient") return;
+    if (view.wave === "DC" || state.intent !== "manual" || state.settings.analysis !== "transient") return "";
     let start = 0;
     try { start = parseValue(state.settings.start ?? 0); } catch { /* an invalid start keeps 0 */ }
     const timebase = generatorTimebase(view.frequency, start);
-    if (!timebase) return;
+    if (!timebase) return "";
     Object.assign(state.settings, timebase);
-    autosetNote = `시간축을 5주기(${engineering(5 / view.frequency, "s", 3)})에 맞췄습니다`;
+    return `시간축을 5주기(${engineering(5 / view.frequency, "s", 3)})에 맞췄습니다`;
   }
-  let autosetNote = "";
-  function showAutoset() {
-    if (!autosetNote) return;
+  function showAutoset(note) {
+    if (!note) return;
     renderAnalysisSettings();
-    setStatus(autosetNote, "ready");
-    autosetNote = "";
+    setStatus(note, "ready");
   }
 
   /** A V/I source as a function generator: [DC] [사인] [구형] and only that waveform's knobs; DC and AC analyses follow it (source-model.js). */
   function generatorFields(component) {
-    const p = component.props, unit = component.type === "I" ? "A" : "V", view = generatorView(p);
+    const p = component.props, unit = unitOf(component), view = generatorView(p);
     const value = (key) => generatorFieldText(p, key);
     const n = (x) => String(Number(x.toPrecision(4)));
     const waves = WAVES.map(([wave, label]) => `<button type="button" data-wave="${wave}" aria-pressed="${view.wave === wave}">${label}</button>`).join("");
@@ -479,11 +470,12 @@ export function createInspector(deps) {
         const patch = isDerived(control.dataset.prop) ? derivedEdit(current, control.dataset.prop, control.value) : null;
         // The same setting written another way ("1000" for the shown "1k") changes nothing: no history step, no Autoset.
         if (patch && Object.entries(patch).every(([key, value]) => String(current.props[key] ?? "") === String(value))) { renderInspector(); return; }
+        let note = "";
         mutate(() => {
           if (patch) Object.assign(current.props, patch); else current.props[control.dataset.prop] = control.value;
-          if (control.dataset.prop === "gen:frequency") autosetTimebase(current);
+          if (control.dataset.prop === "gen:frequency") note = autosetTimebase(current);
         });
-        showAutoset();
+        showAutoset(note);
         // Linked fields show the new values: coupling changes the field set; a generator knob changes the lines under the others.
         if (control.dataset.prop === "coupling" || isDerived(control.dataset.prop)) renderInspector();
       };
@@ -506,8 +498,9 @@ export function createInspector(deps) {
       const current = state.circuit.components.find((item) => item.id === selected.id);
       const patch = current ? generatorEdit(current, "wave", button.dataset.wave) : null;
       if (!patch || !Object.keys(patch).length) return;
-      mutate(() => { Object.assign(current.props, patch); autosetTimebase(current); });
-      showAutoset();
+      let note = "";
+      mutate(() => { Object.assign(current.props, patch); note = autosetTimebase(current); });
+      showAutoset(note);
       renderInspector();
     }));
     const controlTarget = elements["inspector-content"].querySelector("[data-control-target]");

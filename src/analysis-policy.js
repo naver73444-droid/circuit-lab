@@ -64,10 +64,16 @@ export function suggestAnalysis(circuit, previous, intent = "auto") {
   return { settings, reason: `${intent === "auto" ? "자동: " : ""}시간응답${focusedStep ? " · 첫 계단응답 중심" : ""} · 회로 값으로 범위 자동 설정${limited}` };
 }
 
+/** The readable positive values of one part type (R, C or L). */
+const positiveValues = (circuit, type) => circuit.components.filter((component) => component.type === type).map((component) => number(component.props?.value)).filter((value) => value > 0 && Number.isFinite(value));
+/** A transient run's start, end and step as numbers, or null when one cannot be read. */
+function readWindow(settings) {
+  try { return { start: parseValue(settings.start ?? 0), end: parseValue(settings.end), step: parseValue(settings.step) }; } catch { return null; }
+}
+
 /** The fastest natural time scale of the R, L, C values (R·C, L/R, √(LC)), or 0 when the circuit has none. A heuristic like the one above. */
 export function fastestTimeConstant(circuit) {
-  const values = (type) => circuit.components.filter((component) => component.type === type).map((component) => number(component.props?.value)).filter((value) => value > 0 && Number.isFinite(value));
-  const r = values("R"), c = values("C"), l = values("L");
+  const r = positiveValues(circuit, "R"), c = positiveValues(circuit, "C"), l = positiveValues(circuit, "L");
   const scales = [];
   if (r.length && c.length) scales.push(Math.min(...r) * Math.min(...c));
   if (r.length && l.length) scales.push(Math.min(...l) / Math.max(...r));
@@ -83,8 +89,9 @@ const floor125 = (value) => { const decade = 10 ** Math.floor(Math.log10(value))
  * τ/20 on a 1-2-5 grid, never past the solver's 20 000 points. The settings stay as typed; null when nothing changes.
  */
 export function refinedTransientStep(circuit, settings) {
-  let start, end, step;
-  try { start = parseValue(settings.start ?? 0); end = parseValue(settings.end); step = parseValue(settings.step); } catch { return null; }
+  const run = readWindow(settings);
+  if (!run) return null;
+  const { start, end, step } = run;
   const tau = fastestTimeConstant(circuit);
   if (!(tau > 0) || !(end > start) || !(step > tau / 10)) return null;
   const limit = (end - start) / 19990;
@@ -107,15 +114,15 @@ export function steadyStateRun(circuit, settings) {
   if (settings?.analysis !== "transient") return null;
   const source = circuit.components.find((component) => ["V", "I"].includes(component.type) && ["SIN", "PULSE"].includes(component.props?.mode));
   if (!source) return null;
-  let start, end, step;
-  try { start = parseValue(settings.start ?? 0); end = parseValue(settings.end); step = parseValue(settings.step); } catch { return null; }
+  const run = readWindow(settings);
+  if (!run) return null;
+  const { start, end, step } = run;
   const span = end - start;
   if (!(span > 0) || !(step > 0)) return null;
   const p = source.props;
   const period = p.mode === "SIN" ? 1 / number(p.frequency, 60) : number(p.pulsePeriod, 2);
   if (!(period > 0) || !Number.isFinite(period)) return null;
-  const values = (type) => circuit.components.filter((component) => component.type === type).map((component) => number(component.props?.value)).filter((value) => value > 0 && Number.isFinite(value));
-  const r = values("R"), c = values("C"), l = values("L");
+  const r = positiveValues(circuit, "R"), c = positiveValues(circuit, "C"), l = positiveValues(circuit, "L");
   const settle = Math.max(period, r.length && c.length ? 10 * Math.max(...r) * c.reduce((a, b) => a + b, 0) : 0, r.length && l.length ? 10 * l.reduce((a, b) => a + b, 0) / Math.min(...r) : 0);
   // First rising edge at or after the settled time: the edge repeats every period from `phase0` (a square's delay is also when it starts).
   const delay = p.mode === "PULSE" ? Math.max(0, number(p.pulseDelay, 0)) : 0;

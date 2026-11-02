@@ -98,7 +98,7 @@ class ControlledWorker {
   terminate() { this.terminated += 1; }
 }
 
-test("client terminates A, ignores late A, and lets B settle once", async () => {
+test("client terminates A, ignores late A, lets B settle once, and reuses the worker that answered", async () => {
   const workers = [];
   const client = new AnalysisWorkerClient({ workerFactory: () => { const worker = new ControlledWorker(); workers.push(worker); return worker; } });
   const a = client.start("normal", { circuit: {}, settings: {} });
@@ -113,8 +113,12 @@ test("client terminates A, ignores late A, and lets B settle once", async () => 
   assert.equal(client.isActive(b.requestId, "port"), true);
   workers[1].onmessage({ data: { requestId: b.requestId, kind: "port", ok: true, value: { result: "B" } } });
   assert.deepEqual(await b.promise, { result: "B" });
-  assert.equal(workers[1].terminated, 1);
+  assert.equal(workers[1].terminated, 0, "a worker that answered stays for the next job");
   assert.equal(client.hasActive, false);
+  const c = client.start("normal", { circuit: {}, settings: {} });
+  assert.equal(workers.length, 2, "the idle worker is reused (no module loading again)");
+  workers[1].onmessage({ data: { requestId: c.requestId, kind: "normal", ok: true, value: "C" } });
+  assert.equal(await c.promise, "C");
 });
 
 test("explicit cancel settles the promise and a fresh run succeeds", async () => {

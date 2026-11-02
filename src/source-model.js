@@ -6,13 +6,14 @@
 //   source is a sine, the first source is the 1 V (1 A) AC input. The phase field is the course's cos reference
 //   (v = offset + Vpp/2 · cos(2πft + φ), phasor Vpk∠φ); the engine's SIN phase is sin-based, so it stores φ + 90°. Pure, no DOM.
 import { componentDefaults, parseValue } from "./circuit-engine.js";
+import { engineering } from "./scope-model.js";
 
 const PREFIXES = [[1e6, "M"], [1e3, "k"], [1, ""], [1e-3, "m"], [1e-6, "u"], [1e-9, "n"], [1e-12, "p"]];
-/** A value as the editor writes it (6 significant digits and an SI letter: 1k, 333.333u). */
-export function siValueText(value) {
+/** A value as the editor writes it (`digits` significant digits and an SI letter: 1k, 333.333u). */
+export function siValueText(value, digits = 6) {
   if (value === 0) return "0";
   const [scale, prefix] = PREFIXES.find(([size]) => Math.abs(value) >= size * (1 - 1e-9)) ?? PREFIXES[PREFIXES.length - 1];
-  return String(Number((value / scale).toPrecision(6))) + prefix;
+  return String(Number((value / scale).toPrecision(digits))) + prefix;
 }
 
 export const WAVES = [["DC", "DC"], ["SIN", "사인"], ["SQUARE", "구형"]];
@@ -24,11 +25,12 @@ const num = (value, fallback = NaN) => { try { const x = parseValue(value); retu
 /** Shown values: 6 significant digits ("1k", "333.333u"). */
 const text = (value) => siValueText(Number(value.toPrecision(12)));
 /** Stored values: 12 significant digits, so 60 Hz → period 16.6666666667m reads back as 60 Hz and 50 %, not 59.9999. */
-function store(value) {
-  if (value === 0) return "0";
-  const [scale, prefix] = PREFIXES.find(([size]) => Math.abs(value) >= size * (1 - 1e-9)) ?? PREFIXES[PREFIXES.length - 1];
-  return String(Number((value / scale).toPrecision(12))) + prefix;
-}
+const store = (value) => siValueText(value, 12);
+/** The engine's SIN phase (sin-based) for a cos-reference phase φ, and back. */
+export const toEnginePhase = (cosDegrees) => String(Number((cosDegrees + 90).toPrecision(12)));
+const fromEnginePhase = (sinPhase) => num(sinPhase ?? 0) - 90;
+/** A square's rise + high time + fall must fit in one period. */
+const edgesFit = (rise, fall, width, period) => rise + fall + width <= period * (1 + 1e-9);
 
 export const isGeneratorSource = (component) => SOURCE_TYPES.has(component?.type);
 export function waveOf(props) { return props?.mode === "SIN" ? "SIN" : props?.mode === "PULSE" ? "SQUARE" : "DC"; }
@@ -38,7 +40,7 @@ export function waveOf(props) { return props?.mode === "SIN" ? "SIN" : props?.mo
 export function generatorView(props = {}) {
   const wave = waveOf(props);
   if (wave === "DC") return { wave, level: num(props.dc ?? 0) };
-  if (wave === "SIN") return { wave, vpp: 2 * num(props.amplitude ?? 0), frequency: num(props.frequency ?? 60), offset: num(props.offset ?? 0), phase: num(props.phase ?? 0) - 90 };
+  if (wave === "SIN") return { wave, vpp: 2 * num(props.amplitude ?? 0), frequency: num(props.frequency ?? 60), offset: num(props.offset ?? 0), phase: fromEnginePhase(props.phase) };
   const low = num(props.pulseV1 ?? 0), high = num(props.pulseV2 ?? 0), period = num(props.pulsePeriod ?? 2), width = num(props.pulseWidth ?? 1);
   return { wave, vpp: high - low, offset: (high + low) / 2, frequency: 1 / period, duty: 100 * width / period,
     delay: num(props.pulseDelay ?? 0), rise: num(props.pulseRise ?? 0), fall: num(props.pulseFall ?? 0), low, high };
@@ -90,7 +92,7 @@ export function generatorEdit(component, key, value) {
     if (value === "SQUARE") {
       const out = { ...squareProps(props, { ...knobs, duty: 50 }), phase: String(knobs.phase) };
       // Edges kept from an earlier square must still fit the new period: if not, the square starts with sharp edges.
-      if (num(out.pulseRise, 0) + num(out.pulseFall, 0) + num(out.pulseWidth) > num(out.pulsePeriod) * (1 + 1e-9)) Object.assign(out, { pulseRise: "0", pulseFall: "0" });
+      if (!edgesFit(num(out.pulseRise, 0), num(out.pulseFall, 0), num(out.pulseWidth), num(out.pulsePeriod))) Object.assign(out, { pulseRise: "0", pulseFall: "0" });
       return out;
     }
     return null;
@@ -102,7 +104,7 @@ export function generatorEdit(component, key, value) {
     if (key === "vpp") return x >= 0 ? { amplitude: store(x / 2) } : null;
     if (key === "frequency") return x > 0 ? { frequency: String(value) } : null;
     if (key === "offset") return { offset: String(value) };
-    if (key === "phase") return { phase: String(Number((x + 90).toPrecision(12))) };
+    if (key === "phase") return { phase: toEnginePhase(x) };
     return null;
   }
   if (![view.vpp, view.frequency, view.offset, view.duty].every(Number.isFinite)) return null;
@@ -114,28 +116,44 @@ export function generatorEdit(component, key, value) {
   else if (["delay", "rise", "fall"].includes(key)) {
     if (!(x >= 0)) return null;
     const next = { ...view, [key]: x };
-    if (next.rise + next.fall + next.duty / 100 / next.frequency > (1 / next.frequency) * (1 + 1e-9)) return null;
+    if (!edgesFit(next.rise, next.fall, next.duty / 100 / next.frequency, 1 / next.frequency)) return null;
     return { [{ delay: "pulseDelay", rise: "pulseRise", fall: "pulseFall" }[key]]: String(value) };
   } else return null;
-  const out = squareProps(props, knobs);
-  if (view.rise + view.fall + knobs.duty / 100 / knobs.frequency > (1 / knobs.frequency) * (1 + 1e-9)) return null;
-  return out;
+  return edgesFit(view.rise, view.fall, knobs.duty / 100 / knobs.frequency, 1 / knobs.frequency) ? squareProps(props, knobs) : null;
 }
 
-const unitOf = (component) => (component.type === "I" ? "A" : "V");
+/**
+ * Several generator edits of one part applied in turn (frequency, then duty, …: each builds on the one before): the stored props that
+ * end up different, or null when one of the edits is not usable.
+ */
+export function generatorPatch(component, edits) {
+  const props = { ...(component.props ?? {}) };
+  for (const [key, value] of edits) {
+    const patch = generatorEdit({ ...component, props }, key, value);
+    if (!patch) return null;
+    Object.assign(props, patch);
+  }
+  const changed = Object.entries(props).filter(([key, value]) => String(component.props?.[key] ?? "") !== String(value));
+  return Object.fromEntries(changed);
+}
+
+export const unitOf = (component) => (component.type === "I" ? "A" : "V");
 /** 2.5 → "2.5 V", 1000 → "1 kHz", 5e-4 → "500 µs". */
-function si(value, unit) {
-  const [, digits, prefix] = text(value).match(/^(.*?)([a-zA-Z]?)$/);
-  return `${digits} ${prefix === "u" ? "µ" : prefix}${unit}`;
-}
+const si = (value, unit) => engineering(Number(value.toPrecision(12)), unit, 6);
 
+/** The canvas label in two parts: the waveform word ("사인") and its setting ("5 Vpp · 1 kHz"); a part that cannot be read has only the word. */
+export function generatorLabelParts(component) {
+  const view = generatorView(component.props ?? {}), unit = unitOf(component);
+  const word = { DC: "DC", SIN: "사인", SQUARE: "구형" }[view.wave];
+  if (view.wave === "DC") return { word, rest: Number.isFinite(view.level) ? si(view.level, unit) : "" };
+  if (!Number.isFinite(view.vpp) || !Number.isFinite(view.frequency)) return { word, rest: "" };
+  const offset = Number.isFinite(view.offset) && Math.abs(view.offset) > 1e-15 ? ` · ${view.offset > 0 ? "+" : "−"}${si(Math.abs(view.offset), unit)}` : "";
+  return { word, rest: `${si(view.vpp, unit + "pp")} · ${si(view.frequency, "Hz")}${offset}` };
+}
 /** The canvas label: "DC 5 V", "사인 5 Vpp · 1 kHz", "구형 5 Vpp · 1 kHz". */
 export function generatorLabel(component) {
-  const view = generatorView(component.props ?? {}), unit = unitOf(component);
-  if (view.wave === "DC") return Number.isFinite(view.level) ? `DC ${si(view.level, unit)}` : "DC";
-  if (!Number.isFinite(view.vpp) || !Number.isFinite(view.frequency)) return view.wave === "SIN" ? "사인" : "구형";
-  const offset = Number.isFinite(view.offset) && Math.abs(view.offset) > 1e-15 ? ` · ${view.offset > 0 ? "+" : "−"}${si(Math.abs(view.offset), unit)}` : "";
-  return `${view.wave === "SIN" ? "사인" : "구형"} ${si(view.vpp, unit + "pp")} · ${si(view.frequency, "Hz")}${offset}`;
+  const { word, rest } = generatorLabelParts(component);
+  return rest ? `${word} ${rest}` : word;
 }
 
 /** The DC level a DC analysis takes from the waveform: the level, a sine's offset, a square's average over a period. */
@@ -165,7 +183,8 @@ export function analysisCircuit(circuit) {
     if (wave === "SIN") {
       props.dc = String(props.offset ?? "0");
       props.acMagnitude = String(props.amplitude ?? "0");
-      props.acPhase = String(num(props.phase ?? 0, 0) - 90);
+      const phase = fromEnginePhase(props.phase);
+      props.acPhase = String(Number.isFinite(phase) ? phase : -90);
     } else {
       if (wave === "SQUARE") { const average = averageLevel(props); if (Number.isFinite(average)) props.dc = String(average); }
       props.acMagnitude = component === acInput ? "1" : "0";
@@ -191,9 +210,9 @@ export function migrateGeneratorSource(component, { analysis, frequency = "1k" }
   const props = component.props;
   const magnitude = num(props.acMagnitude), phase = num(props.acPhase ?? 0);
   if (!Number.isFinite(magnitude) || !Number.isFinite(phase)) return component;
-  const sinPhase = String(Number((phase + 90).toPrecision(12)));
+  const sinPhase = toEnginePhase(phase);
   if (props.mode === "SIN") {
-    const same = Math.abs(num(props.amplitude ?? 0) - magnitude) <= 1e-12 * Math.max(1, magnitude) && Math.abs(((num(props.phase ?? 0) - 90 - phase) % 360 + 540) % 360 - 180) < 1e-9;
+    const same = Math.abs(num(props.amplitude ?? 0) - magnitude) <= 1e-12 * Math.max(1, magnitude) && Math.abs(((fromEnginePhase(props.phase) - phase) % 360 + 540) % 360 - 180) < 1e-9;
     if (!same) Object.assign(props, { amplitude: String(props.acMagnitude), phase: sinPhase });
   } else if (magnitude !== 0) {
     Object.assign(props, { mode: "SIN", offset: String(props.dc ?? "0"), amplitude: String(props.acMagnitude), phase: sinPhase, frequency: String(frequency) });

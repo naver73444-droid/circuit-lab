@@ -260,10 +260,10 @@ describe("canvas UX for first-time students", { timeout: 300000 }, () => {
     assert.equal((await ev(`${L}.getHoverReadout()`)).visible, true, "the bubble is shown, clear of the bar");
   });
 
-  test("phone value sheet: R gets the number pad without a ± key; a source opens no sheet (it is set as a generator in 속성)", async () => {
+  test("phone value sheet: R gets the number pad (no ± key); a source opens no sheet (it is set as a generator in 속성)", async () => {
     await phone("/?example=divider");
     await tap(await partPoint("R1"));
-    assert.equal(await ev(`document.querySelector('.value-sheet [data-sheet-action="sign"]').hidden`), true, "no ± for a resistance");
+    assert.equal(await ev(`document.querySelector('.value-sheet [data-sheet-action="sign"]')`), null, "no ± key (values here are positive)");
     assert.equal(await ev(`document.getElementById("value-sheet-input").inputMode`), "decimal");
     await tap(await partPoint("V1"));
     assert.equal((await ev(`${L}.getValueSheet()`)).visible, false, "no value sheet for a source");
