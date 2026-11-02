@@ -25,73 +25,73 @@ const colors = [0, 1, 2, 3, 4, 5].map(n => 'var(--cc-s' + n + ')');
 const style = [
 '.circuit-course{--cc-s0:#52b4ff;--cc-s1:#ffb75c;--cc-s2:#c3a1ff;--cc-s3:#55dfaa;--cc-s4:#ff859b;--cc-s5:#c6d572}',
 ':root[data-theme="light"] .circuit-course{--cc-s0:#0b64a8;--cc-s1:#a85a00;--cc-s2:#6b3fb3;--cc-s3:#16784f;--cc-s4:#b3243f;--cc-s5:#6b7300}',
-'.circuit-course{color:var(--text);background:var(--bg);padding:18px;border-radius:var(--radius-md);font:var(--fs-touch)/1.6 var(--font-sans);max-width:1600px;margin:auto;box-sizing:border-box}',
+'.circuit-course{color:var(--text);background:var(--bg);padding:18px;border-radius:14px;font:15px/1.6 system-ui,sans-serif;max-width:1600px;margin:auto;box-sizing:border-box}',
 '.circuit-course *{box-sizing:border-box}.circuit-course button,.circuit-course input,.circuit-course select{font:inherit;color:inherit}',
-'.circuit-course button{cursor:pointer;border:1px solid var(--line);background:var(--raised);border-radius:var(--radius-sm);padding:9px var(--space-3);min-height:44px}',
+'.circuit-course button{cursor:pointer;border:1px solid var(--line);background:var(--raised);border-radius:8px;padding:9px 12px;min-height:44px}',
 '.circuit-course button[aria-pressed=true],.circuit-course button[aria-current=true]{background:var(--selection);border-color:var(--accent)}',
-'.circuit-course button:focus-visible,.circuit-course input:focus-visible,.circuit-course select:focus-visible{outline:var(--focus-ring);outline-offset:3px}',
-'.circuit-course h2,.circuit-course h3,.circuit-course p{margin:0 0 10px}.circuit-course h2{font-size:var(--fs-2xl)}.circuit-course h3{font-size:var(--fs-lg)}',
+'.circuit-course button:focus-visible,.circuit-course input:focus-visible,.circuit-course select:focus-visible{outline:3px solid var(--accent);outline-offset:3px}',
+'.circuit-course h2,.circuit-course h3,.circuit-course p{margin:0 0 10px}.circuit-course h2{font-size:24px}.circuit-course h3{font-size:18px}',
 '.circuit-course .circuit-course-primary-answers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.circuit-course .circuit-course-primary-answers>h3,.circuit-course .circuit-course-primary-answers>p{grid-column:1/-1}.circuit-course .circuit-course-primary-answers .course-symbolic-answer{margin:0}@media(max-width:760px){.circuit-course .circuit-course-primary-answers{grid-template-columns:minmax(0,1fr)}}',
 // A result brought into view on a phone (revealOnPhone) stops a little under the top edge.
-'.circuit-course [data-circuit-course-results],.circuit-course [data-cc-results],.circuit-course [data-circuit-course-answers]{scroll-margin-top:var(--space-2)}',
+'.circuit-course [data-circuit-course-results],.circuit-course [data-cc-results],.circuit-course [data-circuit-course-answers]{scroll-margin-top:8px}',
 // Two-level navigation: a chapter row, then the tab row of the current chapter (the other chapters' rows stay hidden in the DOM). On a phone each row is one line of equal columns.
-  '.circuit-course .circuit-course-nav{display:grid;gap:var(--space-2);margin:var(--space-4) 0}.circuit-course .circuit-course-chapters,.circuit-course .circuit-course-tabs{display:flex;flex-wrap:wrap;gap:var(--space-2)}',
+  '.circuit-course .circuit-course-nav{display:grid;gap:8px;margin:16px 0}.circuit-course .circuit-course-chapters,.circuit-course .circuit-course-tabs{display:flex;flex-wrap:wrap;gap:8px}',
   '.circuit-course .circuit-course-chapters button{font-weight:bold}.circuit-course .circuit-course-tab-short{display:none}',
   // Lecture examples are folded (open by default only for a few); the summary tells the count and the last one applied.
-  '.circuit-course .circuit-course-examples{border:1px solid var(--line);border-radius:var(--radius-sm);padding:0 10px;margin:var(--space-3) 0}',
-  '.circuit-course .circuit-course-examples>summary{min-height:44px;padding:9px 0;overflow-wrap:anywhere;font-size:var(--fs-input);font-weight:bold}',
+  '.circuit-course .circuit-course-examples{border:1px solid var(--line);border-radius:8px;padding:0 10px;margin:12px 0}',
+  '.circuit-course .circuit-course-examples>summary{min-height:44px;padding:9px 0;overflow-wrap:anywhere;font-size:16px;font-weight:bold}',
   '.circuit-course .circuit-course-examples .circuit-course-actions,.circuit-course .circuit-course-examples .cc-tool-presets{margin:0 0 10px}',
 '.circuit-course .circuit-course-layout{display:grid;grid-template-columns:minmax(250px,320px) minmax(0,1fr);gap:18px}',
-'.circuit-course .circuit-course-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px;margin-bottom:14px;min-width:0}',
+'.circuit-course .circuit-course-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px;min-width:0}',
 '.circuit-course .circuit-course-layout>aside,.circuit-course .circuit-course-layout>main{min-width:0}.circuit-course .circuit-course-schematic{max-height:240px}',
 '.circuit-course .circuit-course-form{display:grid;gap:10px}.circuit-course label{display:grid;gap:3px}',
-'.circuit-course input:not([type=range]),.circuit-course select{background:var(--field);border:1px solid var(--line);border-radius:var(--radius-sm);width:100%;padding:var(--space-2);min-height:44px}',
-'.circuit-course [hidden]{display:none!important}.circuit-course .circuit-course-note{color:var(--muted);font-size:var(--fs-body)}.circuit-course .circuit-course-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-3)}',
-'.circuit-course .circuit-course-apply{background:var(--action);border-color:var(--action);color:var(--on-action);font-weight:bold}',
-'.circuit-course .circuit-course-status{padding:10px var(--space-3);border-left:4px solid var(--success);background:var(--success-bg);margin:var(--space-3) 0;overflow-wrap:anywhere}',
+'.circuit-course input:not([type=range]),.circuit-course select{background:var(--field);border:1px solid var(--line);border-radius:7px;width:100%;padding:8px;min-height:44px}',
+'.circuit-course [hidden]{display:none!important}.circuit-course .circuit-course-note{color:var(--muted);font-size:13px}.circuit-course .circuit-course-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}',
+'.circuit-course .circuit-course-apply{background:var(--action);border-color:var(--action);color:#fff;font-weight:bold}',
+'.circuit-course .circuit-course-status{padding:10px 12px;border-left:4px solid var(--success);background:var(--success-bg);margin:12px 0;overflow-wrap:anywhere}',
 '.circuit-course .circuit-course-status[data-kind=error],.circuit-course .circuit-course-warning{background:var(--warning-bg);border-left-color:var(--warning);color:var(--text)}',
 '.circuit-course .circuit-course-status[data-kind=draft]{background:var(--selection);border-left-color:var(--accent)}',
-'.circuit-course .circuit-course-linked-results{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:var(--space-3);align-items:start}@media(max-width:1000px){.circuit-course .circuit-course-linked-results{grid-template-columns:minmax(0,1fr)}}',
-'.circuit-course .circuit-course-graphs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:var(--space-3)}',
-'.circuit-course svg{width:100%;height:auto;display:block;background:var(--canvas);border-radius:var(--radius-sm)}.circuit-course svg text{font-family:var(--font-sans);fill:var(--text)}',
-'.circuit-course .circuit-course-legend{display:flex;flex-wrap:wrap;gap:6px var(--space-4);margin:var(--space-2) 0;font-size:var(--fs-body)}',
-'.circuit-course .circuit-course-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:var(--space-2);margin:var(--space-3) 0}',
-'.circuit-course .circuit-course-metric{background:var(--raised);border-radius:var(--radius-sm);padding:9px;overflow-wrap:anywhere}',
-'.circuit-course .circuit-course-metric strong{display:block;font-size:20px}.circuit-course .circuit-course-metric span{color:var(--muted);font-size:var(--fs-body)}',
-'.circuit-course textarea{font:inherit;color:inherit;resize:vertical;min-height:100px;width:100%;padding:var(--space-2);background:var(--field);border:1px solid var(--line);border-radius:var(--radius-sm)}.circuit-course .circuit-course-worksheet li{margin-bottom:var(--space-3)}.circuit-course .circuit-course-status{white-space:pre-wrap}',
-'.circuit-course .circuit-course-table-wrap{overflow:auto}.circuit-course table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:var(--fs-body)}',
-'.circuit-course th,.circuit-course td{text-align:left;padding:var(--space-2);border-bottom:1px solid var(--line-soft);white-space:nowrap}',
-'.circuit-course .circuit-course-formula{font-family:var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;background:var(--field);padding:var(--space-2);border-radius:var(--radius-sm);margin:6px 0}',
+'.circuit-course .circuit-course-linked-results{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:12px;align-items:start}@media(max-width:1000px){.circuit-course .circuit-course-linked-results{grid-template-columns:minmax(0,1fr)}}',
+'.circuit-course .circuit-course-graphs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:12px}',
+'.circuit-course svg{width:100%;height:auto;display:block;background:var(--canvas);border-radius:7px}.circuit-course svg text{font-family:system-ui,sans-serif;fill:var(--text)}',
+'.circuit-course .circuit-course-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:8px 0;font-size:13px}',
+'.circuit-course .circuit-course-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:8px;margin:12px 0}',
+'.circuit-course .circuit-course-metric{background:var(--raised);border-radius:8px;padding:9px;overflow-wrap:anywhere}',
+'.circuit-course .circuit-course-metric strong{display:block;font-size:20px}.circuit-course .circuit-course-metric span{color:var(--muted);font-size:13px}',
+'.circuit-course textarea{font:inherit;color:inherit;resize:vertical;min-height:100px;width:100%;padding:8px;background:var(--field);border:1px solid var(--line);border-radius:7px}.circuit-course .circuit-course-worksheet li{margin-bottom:12px}.circuit-course .circuit-course-status{white-space:pre-wrap}',
+'.circuit-course .circuit-course-table-wrap{overflow:auto}.circuit-course table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:13px}',
+'.circuit-course th,.circuit-course td{text-align:left;padding:8px;border-bottom:1px solid var(--line-soft);white-space:nowrap}',
+'.circuit-course .circuit-course-formula{font-family:ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--field);padding:8px;border-radius:6px;margin:6px 0}',
 '.circuit-course details summary{cursor:pointer;min-height:44px;padding:9px 0}.circuit-course a{color:var(--accent);overflow-wrap:anywhere}.circuit-course ul{padding-left:20px}',
-'.circuit-course .circuit-course-time{margin:var(--space-3) 0}.circuit-course input[type=range]{width:100%;min-height:30px;accent-color:var(--accent)}',
+'.circuit-course .circuit-course-time{margin:12px 0}.circuit-course input[type=range]{width:100%;min-height:30px;accent-color:var(--accent)}',
 '.circuit-course .circuit-course-sample{font-variant-numeric:tabular-nums}',
-'.circuit-course .circuit-course-display{border:1px solid var(--line);border-radius:var(--radius-sm);padding:0 10px}.circuit-course .circuit-course-display[open]{display:grid;gap:10px;padding-bottom:10px}.circuit-course .circuit-course-display>summary{padding:6px 0;min-height:36px}',
-'.circuit-course .circuit-course-basis{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);margin:var(--space-2) 0}.circuit-course .circuit-course-basis button{min-height:40px}',
-'.circuit-course .cc-tool-presets{display:flex;flex-wrap:wrap;gap:var(--space-2);margin:10px 0}.circuit-course .cc-tool-presets button{text-align:left}',
-'.circuit-course .cc-tool-grid{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:var(--space-4);align-items:start}@media(max-width:900px){.circuit-course .cc-tool-grid{grid-template-columns:minmax(0,1fr)}}',
-'.circuit-course .cc-tool-form{display:grid;gap:var(--space-2)}',
+'.circuit-course .circuit-course-display{border:1px solid var(--line);border-radius:8px;padding:0 10px}.circuit-course .circuit-course-display[open]{display:grid;gap:10px;padding-bottom:10px}.circuit-course .circuit-course-display>summary{padding:6px 0;min-height:36px}',
+'.circuit-course .circuit-course-basis{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}.circuit-course .circuit-course-basis button{min-height:40px}',
+'.circuit-course .cc-tool-presets{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.circuit-course .cc-tool-presets button{text-align:left}',
+'.circuit-course .cc-tool-grid{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);gap:16px;align-items:start}@media(max-width:900px){.circuit-course .cc-tool-grid{grid-template-columns:minmax(0,1fr)}}',
+'.circuit-course .cc-tool-form{display:grid;gap:8px}',
   // A select drawn as a row of short buttons (the coupled-coil "보기"): equal columns, one line even at 390 px.
-  '.circuit-course .cc-segment{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}.circuit-course .cc-segment button{padding:6px var(--space-1);white-space:nowrap;font-weight:bold}',
-'.circuit-course .cc-tool-form h4{margin:10px 0 0;font-size:var(--fs-touch);color:var(--muted)}.circuit-course .cc-field-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-2);align-items:center}',
+  '.circuit-course .cc-segment{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}.circuit-course .cc-segment button{padding:6px 4px;white-space:nowrap;font-weight:bold}',
+'.circuit-course .cc-tool-form h4{margin:10px 0 0;font-size:15px;color:var(--muted)}.circuit-course .cc-field-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center}',
 '.circuit-course .cc-field-row>input[type=range]{grid-column:1/-1}.circuit-course .cc-tool-error{color:var(--warning);min-height:0;grid-column:1/-1}.circuit-course .cc-tool-error:empty{display:none}',
-'.circuit-course .cc-tool-read{padding:10px var(--space-3);border-left:4px solid var(--accent);background:var(--raised);margin:0 0 var(--space-3);overflow-wrap:anywhere}',
+'.circuit-course .cc-tool-read{padding:10px 12px;border-left:4px solid var(--accent);background:var(--raised);margin:0 0 12px;overflow-wrap:anywhere}',
 '.circuit-course .cc-pass{color:var(--success)}.circuit-course .cc-fail{color:var(--warning);font-weight:bold}.circuit-course .cc-curve path.cc-line{fill:none;stroke:var(--accent);stroke-width:2.5}.circuit-course .cc-freq svg{display:block;width:100%;max-width:640px;height:auto}',
 // Phone width (390 px): tool fields stack label over input, sliders get a 44 px touch band, and text fields are 16 px so iOS does not zoom in on focus.
-'@media(max-width:480px){.circuit-course .cc-field-row{grid-template-columns:minmax(0,1fr)}.circuit-course input[type=range]{min-height:44px}.circuit-course input[type=text],.circuit-course input:not([type]),.circuit-course select,.circuit-course textarea{font-size:var(--fs-input);min-height:44px}}',
-'@media(max-width:760px){.circuit-course{padding:10px}.circuit-course .circuit-course-layout{grid-template-columns:1fr}.circuit-course h2{font-size:var(--fs-xl)}.circuit-course .circuit-course-chapters,.circuit-course .circuit-course-tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}.circuit-course .circuit-course-nav button{padding:6px 3px;font-size:var(--fs-md);overflow-wrap:anywhere}.circuit-course .circuit-course-chapters button{white-space:nowrap}.circuit-course .circuit-course-chapters{gap:var(--space-1)}.circuit-course .circuit-course-nav .circuit-course-chapters button{padding:6px 1px;font-size:var(--fs-body);letter-spacing:-0.2px}.circuit-course .circuit-course-chapter-long,.circuit-course .circuit-course-tab-long{display:none}.circuit-course .circuit-course-tab-short{display:inline}.circuit-course .circuit-course-graphs{grid-template-columns:1fr}}',
+'@media(max-width:480px){.circuit-course .cc-field-row{grid-template-columns:minmax(0,1fr)}.circuit-course input[type=range]{min-height:44px}.circuit-course input[type=text],.circuit-course input:not([type]),.circuit-course select,.circuit-course textarea{font-size:16px;min-height:44px}}',
+'@media(max-width:760px){.circuit-course{padding:10px}.circuit-course .circuit-course-layout{grid-template-columns:1fr}.circuit-course h2{font-size:21px}.circuit-course .circuit-course-chapters,.circuit-course .circuit-course-tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}.circuit-course .circuit-course-nav button{padding:6px 3px;font-size:14px;overflow-wrap:anywhere}.circuit-course .circuit-course-chapters button{white-space:nowrap}.circuit-course .circuit-course-chapters{gap:4px}.circuit-course .circuit-course-nav .circuit-course-chapters button{padding:6px 1px;font-size:13px;letter-spacing:-0.2px}.circuit-course .circuit-course-chapter-long,.circuit-course .circuit-course-tab-long{display:none}.circuit-course .circuit-course-tab-short{display:inline}.circuit-course .circuit-course-graphs{grid-template-columns:1fr}}',
 // Phone touch: inputs, then the results (graphs), then the formula card (a numeric experiment used to put a screen of formulas
 // between the inputs and their graphs); the period scrubber stays at the bottom edge while its graphs are on screen; folds and
 // sliders are 44 px touch targets (28 px thumb); the intro sentence gives its line to the content.
 '@media(max-width:760px){.circuit-course>header>p{display:none}.circuit-course .circuit-course-layout>aside{display:contents}'
   + '.circuit-course .circuit-course-layout>main{order:1}.circuit-course [data-circuit-course-theory]{order:2}'
-  + '.circuit-course .circuit-course-time{position:sticky;bottom:0;z-index:2;margin:0;padding:6px var(--space-3);box-shadow:var(--shadow-pop)}'
-  + '.circuit-course .circuit-course-time .circuit-course-sample{margin:0;font-size:var(--fs-body)}'
+  + '.circuit-course .circuit-course-time{position:sticky;bottom:0;z-index:2;margin:0;padding:6px 12px;box-shadow:0 -6px 14px rgb(0 0 0/.28)}'
+  + '.circuit-course .circuit-course-time .circuit-course-sample{margin:0;font-size:13px}'
   + '.circuit-course details>summary,.circuit-course .circuit-course-display>summary{min-height:44px;padding:11px 0;box-sizing:border-box}'
   + '.circuit-course input[type=range]{min-height:44px;-webkit-appearance:none;appearance:none;background:transparent}'
-  + '.circuit-course input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:var(--radius-sm);background:var(--line)}'
+  + '.circuit-course input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--line)}'
   + '.circuit-course input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;margin-top:-11px;border-radius:50%}'
   + '.circuit-course input[type=range]::-webkit-slider-thumb{background:var(--accent);border:3px solid var(--canvas);box-shadow:0 0 0 1px var(--accent)}'
-  + '.circuit-course input[type=range]::-moz-range-track{height:6px;border-radius:var(--radius-sm);background:var(--line)}'
+  + '.circuit-course input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:var(--line)}'
   + '.circuit-course input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:var(--accent);border:3px solid var(--canvas)}}',
 ].join('\n');
 // Phasors arrive as internal RMS; they are drawn and printed in the display basis (peak = √2 · RMS). raw: true marks a quantity without that rule.
