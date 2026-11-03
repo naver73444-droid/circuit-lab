@@ -2,11 +2,8 @@
 //
 // A disc of radius r₀ turns at ω in a uniform axial B. Each radial strip cuts B at speed rω, so the open-circuit voltage between
 // the axle contact a and a brush b at radius r is the radial integral of (v×B)·dl from a to b: V_emf_ba = Bωr²/2.
-import { checkRow, coordinate, defineLecture, linspace, parameter, scalar, series } from './em-course-lecture.js';
+import { checkRow, coordinate, defineLecture, hayt, linspace, openstax, parameter, scalar, series } from './em-course-lecture.js';
 import { plainText, siText } from './em-format.js';
-
-const HAYT_URL = 'https://openlibrary.org/isbn/9780073380667';
-const OPENSTAX = 'https://openstax.org/books/university-physics-volume-2/pages/';
 
 const parameters = [
   parameter('B', '축방향 자속밀도 B (B a_z)', 'T', 'T', 1, 0.5, -2, 2),
@@ -20,22 +17,19 @@ function homopolarState(p, eta) {
   return { radius, radiusRatio: eta, motionalE: k * radius, voltageBA: k * radius * radius / 2, voltageFull: k * p.r0 * p.r0 / 2 };
 }
 
-// |V| ≤ 1e−12·|Bω|r₀²/2 is floating-point residue of a zero: the text then reads 0 and "극성 없음".
-const isZero = (value, scale) => Math.abs(value) <= 1e-12 * Math.abs(scale);
-
+// Products of the inputs only (no trigonometry): a zero is exact (B = 0, ω = 0 or r = 0), so a tiny value is real and keeps its sign.
 function compute(p, eta) {
-  const s = homopolarState(p, eta), n = plainText, scaleV = s.voltageFull, scaleE = p.B * p.omega * p.r0;
-  const zeroV = isZero(s.voltageBA, scaleV);
-  const polarity = zeroV ? '전압 0 · 극성 없음' : s.voltageBA > 0 ? 'b + / a − (브러시가 높은 전위)' : 'a + / b − (축 접점이 높은 전위)';
-  const textV = value => (isZero(value, scaleV) ? '0 V' : siText(value, 'V'));
-  const textE = isZero(s.motionalE, scaleE) ? '0 V/m' : siText(s.motionalE, 'V/m');
+  const s = homopolarState(p, eta), n = plainText;
+  const polarity = s.voltageBA === 0 ? '전압 0 · 극성 없음' : s.voltageBA > 0 ? 'b + / a − (브러시가 높은 전위)' : 'a + / b − (축 접점이 높은 전위)';
+  const textV = value => (value === 0 ? '0 V' : siText(value, 'V'));
+  const textE = s.motionalE === 0 ? '0 V/m' : siText(s.motionalE, 'V/m');
   return {
     region: 'disc', vectors: {},
     scalars: [
-      scalar('voltageBA', '브러시 전압 V_emf_ba = V_b − V_a = Bωr²/2', s.voltageBA, 'V', Math.abs(scaleV)),
-      scalar('voltageFull', '가장자리 전압 Bωr₀²/2', s.voltageFull, 'V', Math.abs(scaleV)),
-      scalar('motionalE', '전하당 자기력 E_m = Bωr (반경 방향)', s.motionalE, 'V/m', Math.abs(scaleE)),
-      scalar('voltageAB', '반대 첨자 V_emf_ab = −V_emf_ba', -s.voltageBA, 'V', Math.abs(scaleV)),
+      scalar('voltageBA', '브러시 전압 V_emf_ba = V_b − V_a = Bωr²/2', s.voltageBA, 'V'),
+      scalar('voltageFull', '가장자리 전압 Bωr₀²/2', s.voltageFull, 'V'),
+      scalar('motionalE', '전하당 자기력 E_m = Bωr (반경 방향)', s.motionalE, 'V/m'),
+      scalar('voltageAB', '반대 첨자 V_emf_ab = −V_emf_ba', -s.voltageBA, 'V'),
       scalar('radius', '브러시 반경 r = η r₀', s.radius, 'm'),
       scalar('speed', '그 반경의 속력 |v| = |ω| r', Math.abs(p.omega) * s.radius, 'm/s'),
       scalar('radiusRatio', '반경 비 η = r/r₀', eta, '1'),
@@ -73,7 +67,7 @@ export const EXPERIMENTS = [defineLecture({
     + '그래프를 끌어 브러시 반경 비를 바꾸면 반경 1/2에서 전압 1/4을 읽습니다.',
   answers: ['voltageBA', 'voltageFull', 'motionalE'], coordinateScalars: ['radiusRatio'],
   parameters, probeDefault: [0, 0, 1],
-  view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('r/r₀', '1', '브러시 반경 비') },
+  view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: coordinate('r/r₀', '1', '브러시 반경 비'), strictProbe: true },
   validate: (p, eta) => (eta === undefined || (eta >= 0 && eta <= 1) ? '' : '반경 비 r/r₀는 0 … 1(축 … 가장자리)에서만 봅니다. 자동 보정하지 않습니다.'),
   compute,
   profile: (p, count) => {
@@ -95,10 +89,7 @@ export const EXPERIMENTS = [defineLecture({
     { label: '브러시 전압', text: 'V_emf_ba = ∫a→b (v×B)·dl = ∫₀ʳ Bωr′ dr′ = Bωr²/2', unit: 'V' },
     { label: '첨자 반전', text: 'V_emf_ab = −V_emf_ba', unit: 'V' },
   ],
-  references: [
-    { title: 'Hayt & Buck, Engineering Electromagnetics 8판 — Ch.9 §9.1 Faraday\'s law', url: HAYT_URL },
-    { title: 'OpenStax University Physics 2 §13.3 — Motional emf', url: OPENSTAX + '13-3-motional-emf' },
-  ],
+  references: [hayt('9.1', "Faraday's law"), openstax('13-3-motional-emf', '§13.3 — Motional emf')],
   symbolic: {
     title: '원판 발전기의 단자 전압 — 기호 풀이',
     givens: [['B = B a_z', '축방향 균일 자속밀도', 'T'], ['ω', '각속도 (Ω = ω a_z)', 'rad/s'], ['r₀', '원판 반지름', 'm'], ['a, b', '축 접점, 반경 r의 브러시']],

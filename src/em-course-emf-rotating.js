@@ -2,11 +2,9 @@
 //
 // B = B₀ sinωt a_y and the loop turns about the x axis at the same ω, so both causes act at once: the transformer emf (B changes
 // at a fixed attitude) and the motional emf (two sides cut B). Their sum is −dΦ/dt of the moving surface.
-import { TWO_PI, angleCoordinate, checkRow, defineLecture, linspace, parameter, scalar, series } from './em-course-lecture.js';
+import { TWO_PI, angleCoordinate, checkRow, defineLecture, hayt, isZeroed, linspace, openstax, parameter, scalar, series } from './em-course-lecture.js';
 import { plainText, siText } from './em-format.js';
 
-const HAYT_URL = 'https://openlibrary.org/isbn/9780073380667';
-const OPENSTAX = 'https://openstax.org/books/university-physics-volume-2/pages/';
 const DEG = Math.PI / 180;
 
 const parameters = [
@@ -28,23 +26,22 @@ function rotatingState(p, theta) {
   };
 }
 
-// |value| ≤ 1e−12·K is floating-point residue of a zero (θ = 45° with α₀ = 0): the text then reads 0 and "방향 없음".
-const isZero = (value, K) => Math.abs(value) <= 1e-12 * Math.abs(K);
-const shown = (value, K) => (isZero(value, K) ? '0 V' : siText(value, 'V'));
-const sense = (value, K) => (isZero(value, K) ? '방향 없음' : value > 0 ? '+ : 양의 순환(b→a) 방향' : '− : 양의 순환과 반대(a→b) 방향');
+// A residue of a zero (θ = 45° with α₀ = 0) against the amplitude K reads 0 and "방향 없음".
+const shown = (value, K) => (isZeroed(value, K) ? '0 V' : siText(value, 'V'));
+const sense = (value, K) => (isZeroed(value, K) ? '방향 없음' : value > 0 ? '+ : 양의 순환(b→a) 방향' : '− : 양의 순환과 반대(a→b) 방향');
 const deg = angle => `${plainText(angle / DEG, 4)}°`;
 
 function compute(p, theta) {
   const s = rotatingState(p, theta), K = s.K, n = plainText;
   const head = `${n(p.omega)}×${n(p.B0)}×${n(s.area)}`;
   const notes = [
-    '축·법선·적분 방향: 회전축은 x축, 법선 n = cosα a_y − sinα a_z, 루프 면의 다른 축 w = −sinα a_y − cosα a_z (a_x × w = n). 양의 순환은 n에 대한 오른손 방향이며 도체를 따라 b→a로 적분합니다. 이 n과 맞는 각속도는 Ω = −ω a_x입니다.',
+    '축·법선·적분 방향: 회전축은 x축, 법선 n = cosα a_y − sinα a_z, 루프 면의 다른 축 w = −sinα a_y − cosα a_z (a_x × w = n). 양의 순환은 n에 대한 오른손 방향이며 도체를 따라 b→a로 적분합니다(합계 V_emf_ab의 첨자 ab가 이 기준). 이 n과 맞는 각속도는 Ω = −ω a_x입니다.',
     `대입: S = h d = ${n(p.h)}×${n(p.d)} = ${n(s.area)} m², K = ωB₀S = ${head} = ${siText(K, 'V')}, θ = ωt = ${deg(theta)}, α = α₀ + θ = ${deg(s.alpha)}, t = θ/ω = ${siText(s.time, 's')}`,
     `대입: Φ = B₀ S sinθ cosα = ${n(p.B0)}×${n(s.area)}×sin${deg(theta)}×cos${deg(s.alpha)} = ${siText(s.flux, 'Wb')}`,
     `대입: ℰ_T = −ωB₀S cosθ cosα = −${head}×cos${deg(theta)}×cos${deg(s.alpha)} = ${shown(s.transformerEmf, K)}`,
     `대입: ℰ_M = +ωB₀S sinθ sinα = ${head}×sin${deg(theta)}×sin${deg(s.alpha)} = ${shown(s.motionalEmf, K)}`,
-    `대입: ℰ_ab = ℰ_T + ℰ_M = ${shown(s.transformerEmf, K)} + ${shown(s.motionalEmf, K)} = ${shown(s.emf, K)} (= −K cos(2θ + α₀))`,
-    `부호: ℰ_T ${sense(s.transformerEmf, K)} · ℰ_M ${sense(s.motionalEmf, K)} · 합계 ℰ_ab ${sense(s.emf, K)}`,
+    `대입: V_emf_ab = ℰ_T + ℰ_M = ${shown(s.transformerEmf, K)} + ${shown(s.motionalEmf, K)} = ${shown(s.emf, K)} (= −K cos(2θ + α₀))`,
+    `부호: ℰ_T ${sense(s.transformerEmf, K)} · ℰ_M ${sense(s.motionalEmf, K)} · 합계 V_emf_ab ${sense(s.emf, K)}`,
     '변압기 항은 자세를 고정하고 ∂B/∂t만 씁니다. 운동 항은 x축에 평행한 두 변(각 ℰ_M/2)만 기여하고, 축에 수직인 두 변은 u×B가 변과 수직이라 0입니다. 합계만 움직이는 면 전체의 −dΦ/dt와 같습니다.',
     '세 그래프의 세로축은 패널마다 따로 맞춘 눈금입니다. 곡선 높이만으로 항의 크기를 비교하지 말고 세로축 눈금을 함께 보세요.',
     '단자 a·b를 바꾸면 부호가 반대입니다. 부하·전압계 리드 경로를 정하지 않았으므로 전류·발열·임의 단자 전압은 계산하지 않습니다.',
@@ -52,7 +49,7 @@ function compute(p, theta) {
   return {
     region: 'rotating-loop', vectors: {},
     scalars: [
-      scalar('emf', '합계 기전력 ℰ_ab = ℰ_T + ℰ_M', s.emf, 'V', Math.abs(K)),
+      scalar('emf', '합계 기전력 V_emf_ab = ℰ_T + ℰ_M', s.emf, 'V', Math.abs(K)),
       scalar('transformerEmf', '변압기 기전력 ℰ_T = −ωB₀S cosθ cosα', s.transformerEmf, 'V', Math.abs(K)),
       scalar('motionalEmf', '운동 기전력 ℰ_M = ωB₀S sinθ sinα', s.motionalEmf, 'V', Math.abs(K)),
       scalar('flux', '쇄교 자속 Φ = B₀S sinθ cosα', s.flux, 'Wb', Math.abs(p.B0 * s.area)),
@@ -104,9 +101,13 @@ function verify(p) {
   const sides = motionalSides(p, theta), motional = sides.reduce((a, b) => a + b, 0);
   const flux = th => surfaceSum(p, p.alpha0 + th, () => fieldAt(p, th)), delta = 1e-3;
   const dPhi = (flux(theta - 2 * delta) - 8 * flux(theta - delta) + 8 * flux(theta + delta) - flux(theta + 2 * delta)) / (12 * delta);
+  const sideMethod = 'the same 32-segment side sum, one side alone';
   return [
     checkRow('θ = 30°: 128셀 면적분 −∫(∂B/∂t)·n dS = ℰ_T', 'midpoint surface sum of −∂B/∂t·n over the fixed-attitude rectangle', transformer, s.transformerEmf, 'V', 1e-10, 1e-12),
     checkRow('θ = 30°: 네 변 32구간 ∮(u×B)·dl = ℰ_M', 'vector cross/dot products with u = Ω×r, Ω = −ω a_x, along all four sides', motional, s.motionalEmf, 'V', 1e-10, 1e-12),
+    checkRow('θ = 30°: 축방향 변 q = −d/2(+x 방향) ∫(u×B)·dl = ℰ_M/2', sideMethod, sides[0], s.motionalEmf / 2, 'V', 1e-10, 1e-12),
+    checkRow('θ = 30°: 축방향 변 q = +d/2(−x 방향) ∫(u×B)·dl = ℰ_M/2', sideMethod, sides[2], s.motionalEmf / 2, 'V', 1e-10, 1e-12),
+    checkRow('θ = 30°: 축에 수직인 두 변 x = ±h/2 |∫(u×B)·dl| 합 = 0', sideMethod, Math.abs(sides[1]) + Math.abs(sides[3]), 0, 'V', 0, 1e-12 * (1 + K)),
     checkRow('θ = 30°: 5점 차분 −ω dΦ/dθ = ℰ_T + ℰ_M', 'five-point difference of the re-integrated flux, δ = 1e−3 rad', -p.omega * dPhi, s.emf, 'V', 2e-6, 1e-12 + 2e-8 * K),
   ];
 }
@@ -119,13 +120,13 @@ export const EXPERIMENTS = [defineLecture({
     + 'h = 20 cm, d = 10 cm, B₀ = 0.5 T, ω = 100 rad/s, θ = 30°에서 변압기 −0.75 V + 운동 +0.25 V = −0.5 V. 그래프를 끌어 ωt를 바꿉니다.',
   answers: ['emf', 'transformerEmf', 'motionalEmf'], coordinateScalars: ['phase'],
   parameters, probeDefault: [0, 0, presetTheta],
-  view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: angleCoordinate('ωt', '자계·회전 위상') },
+  view: { kind: 'profile', plane: 'xz', extent: 1, probeAxes: [0, 2], coordinate: angleCoordinate('ωt', '자계·회전 위상'), strictProbe: true },
   validate: (p, theta) => (theta === undefined || (theta >= 0 && theta <= TWO_PI) ? '' : 'ωt는 0 … 360° 범위에서만 봅니다. 자동 보정하지 않습니다.'),
   compute,
   profile: (p, count) => {
     const states = linspace(0, TWO_PI, count).map(theta => rotatingState(p, theta));
     const line = (key, label) => series(key, label, 'V', 'ωt', 'rad', states.map(s => ({ coordinate: s.phase, value: s[key] })));
-    return [line('transformerEmf', '변압기 ℰ_T'), line('motionalEmf', '운동 ℰ_M'), line('emf', '합계 ℰ_ab')];
+    return [line('transformerEmf', '변압기 ℰ_T'), line('motionalEmf', '운동 ℰ_M'), line('emf', '합계 V_emf_ab')];
   },
   verify,
   assumptions: [
@@ -140,12 +141,9 @@ export const EXPERIMENTS = [defineLecture({
     { label: '쇄교 자속', text: 'Φ = B₀ S sinθ cosα, S = hd, θ = ωt, α = α₀ + θ', unit: 'Wb' },
     { label: '변압기 기전력', text: 'ℰ_T = −∫S (∂B/∂t)·ds = −ωB₀S cosθ cosα', unit: 'V' },
     { label: '운동 기전력', text: 'ℰ_M = ∮C (u×B)·dl = +ωB₀S sinθ sinα', unit: 'V' },
-    { label: '합계', text: 'ℰ_ab = ℰ_T + ℰ_M = −dΦ/dt = −ωB₀S cos(2θ + α₀)', unit: 'V' },
+    { label: '합계', text: 'V_emf_ab = ℰ_T + ℰ_M = −dΦ/dt = −ωB₀S cos(2θ + α₀)', unit: 'V' },
   ],
-  references: [
-    { title: 'Hayt & Buck, Engineering Electromagnetics 8판 — Ch.9 §9.1 Faraday\'s law', url: HAYT_URL },
-    { title: 'OpenStax University Physics 2 §13.6 — Electric generators and back emf', url: OPENSTAX + '13-6-electric-generators-and-back-emf' },
-  ],
+  references: [hayt('9.1', "Faraday's law"), openstax('13-6-electric-generators-and-back-emf', '§13.6 — Electric generators and back emf')],
   symbolic: {
     title: '회전 루프의 변압기·운동 기전력 — 기호 풀이',
     givens: [['B = B₀ sinωt a_y', '시변 균일 자속밀도', 'T'], ['h, d', '루프 변의 길이 (S = hd)', 'm'], ['ω', 'B와 회전의 공통 각주파수', 'rad/s'],
@@ -158,7 +156,7 @@ export const EXPERIMENTS = [defineLecture({
       ['합계와 전체 미분', 'ℰ_T + ℰ_M = −ωB₀S cos(2ωt + α₀) = −dΦ/dt', '움직이는 면의 전체 미분이 두 항의 합과 같습니다.'],
       ['α₀ = 0의 배각', 'ℰ_T = −ωB₀S cos²ωt, ℰ_M = ωB₀S sin²ωt, 합 = −ωB₀S cos2ωt', 'cos² − sin² = cos2ωt.'],
     ],
-    answers: [['합계 기전력', 'ℰ_ab = −ωB₀S cos(2ωt + α₀)', 'V', '+이면 양의 순환(b→a)'], ['변압기 기전력', 'ℰ_T = −ωB₀S cosωt cos(α₀ + ωt)', 'V'],
+    answers: [['합계 기전력', 'V_emf_ab = ℰ_T + ℰ_M = −ωB₀S cos(2ωt + α₀)', 'V', '+이면 양의 순환(b→a)'], ['변압기 기전력', 'ℰ_T = −ωB₀S cosωt cos(α₀ + ωt)', 'V'],
       ['운동 기전력', 'ℰ_M = ωB₀S sinωt sin(α₀ + ωt)', 'V']],
     limitations: ['B의 변화와 회전이 같은 ω인 한 경우만 다룹니다. 단독 변압기·단독 직선 운동은 faraday-loop·motional-rod 실험에서 봅니다.'],
   },

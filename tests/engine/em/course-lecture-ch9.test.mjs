@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { EXPERIMENTS, COURSE_ROADMAP, getExperiment } from '../../../src/em-course-registry.js';
 import { paramSpec, topicOf } from '../../../src/em-course-params.js';
 import { answerItems } from '../../../src/em-course-ui.js';
+import { hayt, isZeroed, linspace, zeroed } from '../../../src/em-course-lecture.js';
 
 const CH9 = {
   'emf-rotating-loop': { topic: '자기유도', sections: ['9.1'], series: 3, steps: 5, answers: ['emf', 'transformerEmf', 'motionalEmf'], coordinate: 'phase' },
@@ -56,7 +57,41 @@ test('subjects: 자기유도 lists the two old experiments first, then the rotat
   assert.match(controller, /FIRST_EXPERIMENT = 'force-lorentz'/);
   assert.match(controller, /CH9_TOPICS = \['자기유도', '변위전류·Maxwell'\]/);
   assert.match(controller, /Hayt Ch\.9 \(7주차\)/);
-  for (const id of IDS) assert.ok(controller.includes(`'${id}'`), `${id}: the cursor refuses invalid candidates`);
+  // the strict cursor is a flag of the experiment's view, not a list of ids in the controller
+  assert.match(controller, /def\.view\?\.strictProbe/);
+  for (const id of IDS) {
+    assert.equal(getExperiment(id).view.strictProbe, true, `${id}: the cursor refuses invalid candidates`);
+    assert.ok(!controller.includes(`'${id}'`), `${id}: not listed in the controller`);
+  }
+  assert.equal(EXPERIMENTS.filter(d => d.view?.strictProbe).length, 3, 'only the Ch.9 sweeps are strict');
+});
+
+test('shared pieces: one 0 rule (1e−12 of the peak) and one Hayt citation helper for Ch.8 and Ch.9', () => {
+  assert.equal(zeroed(1e-13, 1), 0);                                           // 1e−13 ≤ 1e−12·1
+  assert.equal(zeroed(1e-12, 1), 0);                                           // the bound itself is residue
+  assert.equal(zeroed(2e-12, 1), 2e-12);                                       // above the bound: kept as is
+  assert.equal(zeroed(-3e-13, -1), 0);                                         // the peak's sign does not matter
+  assert.equal(zeroed(0, 0), 0);                                               // an exact zero of a zero peak
+  assert.equal(isZeroed(1e-30, 0), false, 'a zero peak zeroes only exact zeros');
+  assert.equal(isZeroed(1e-30, undefined), false, 'no peak: never zeroed');
+  assert.deepEqual(hayt('9.1', "Faraday's law"), { title: "Hayt & Buck, Engineering Electromagnetics 8판 — Ch.9 §9.1 Faraday's law", url: 'https://openlibrary.org/isbn/9780073380667' });
+  assert.equal(hayt('9.3–9.4', 'x').title, 'Hayt & Buck, Engineering Electromagnetics 8판 — Ch.9 §9.3–9.4 x');
+  assert.equal(hayt('8.10', 'y').title, 'Hayt & Buck, Engineering Electromagnetics 8판 — Ch.8 §8.10 y');
+  for (const file of ['em-course-emf-rotating.js', 'em-course-emf-homopolar.js', 'em-course-maxwell-displacement.js', 'em-course-ui.js']) {
+    const source = readFileSync(new URL(`../../../src/${file}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /<=\s*(?:1e-12|ZERO_RATIO)/, `${file}: no own copy of the 0 rule`);
+    assert.doesNotMatch(source, /openlibrary\.org|openstax\.org/, `${file}: citations through hayt()/openstax()`);
+  }
+  // the capacitor's peaks come from the closed form once, not from two extra state evaluations per result
+  const capacitor = readFileSync(new URL('../../../src/em-course-maxwell-displacement.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(capacitor, /function peaks|phase: 0 \}|phase: Math\.PI \/ 2 \}/);
+  // sweep samples end on the end itself: 2π, 1 and 3 exactly, so a drag clamped to the last sample is a valid cursor
+  assert.deepEqual(linspace(0, 1, 5), [0, 0.25, 0.5, 0.75, 1]);
+  for (const count of [2, 7, 81, 97, 161, 512]) {
+    assert.equal(linspace(0, 2 * Math.PI, count).at(-1), 2 * Math.PI, `2π, ${count} samples`);
+    assert.equal(linspace(0, 3, count).at(-1), 3);
+    assert.equal(linspace(-1, 1, count)[0], -1);
+  }
 });
 
 test('every Ch.9 experiment: preset valid, answers and coordinate are scalars, profile series finite, verify passes, symbolic supported', () => {
@@ -121,7 +156,7 @@ test('zero residue reads 0 on screen while the stored value is not rounded; a sm
   assert.ok(Math.abs(sum.value) <= 1e-12 * sum.zero, `|${sum.value}| is residue of K = ${sum.zero}`);
   const text = answerItems(at45, loop).find(entry => entry.key === 'scalar:emf').text;
   assert.match(text, /= ?0 V$/, text);
-  assert.ok(at45.notes.some(n => n.includes('합계 ℰ_ab 방향 없음')), 'sign text says no direction');
+  assert.ok(at45.notes.some(n => n.includes('합계 V_emf_ab 방향 없음')), 'sign text says no direction');
   const at449 = run('emf-rotating-loop', {}, 44.9 * DEG), near = answerItems(at449, loop).find(entry => entry.key === 'scalar:emf').text;
   assert.doesNotMatch(near, /= ?0 V$/, near);
 

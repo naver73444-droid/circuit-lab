@@ -108,11 +108,14 @@ export function createCourseView(canvas, onProbe, getPalette) {
       : Number(view.extent) > 0 ? Number(view.extent) : Math.max(0.01, ...point.map(Math.abs)) * 1.6;
     return { axes, extent: base * viewScale, axisOnly: view.kind === 'axis-only', profileMode: view.kind === 'profile', curveMode: view.kind === 'xy-curve' };
   };
-  const profileDomain = () => {
+  /** First and last sampled coordinate of the profile (null without samples). */
+  const sampledRange = () => {
     const points = current.profiles?.[0]?.points || [];
-    let lo = Math.min(...points.map(p => p.coordinate)), hi = Math.max(...points.map(p => p.coordinate));
+    return points.length ? [Math.min(...points.map(p => p.coordinate)), Math.max(...points.map(p => p.coordinate))] : null;
+  };
+  const profileDomain = () => {
     // An unresolved envelope has no points; the extent then comes from where the experiment is defined (the line's length).
-    if (!points.length) [lo, hi] = instantSupport(current.definition, current.params) ?? [NaN, NaN];
+    const [lo, hi] = sampledRange() ?? instantSupport(current.definition, current.params) ?? [NaN, NaN];
     if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return [-1, 1];
     const center = (lo + hi) / 2, half = (hi - lo) / 2 * (current.viewScale || 1);
     return [center - half, center + half];
@@ -466,6 +469,9 @@ export function createCourseView(canvas, onProbe, getPalette) {
     if (profileMode) {
       const [lo, hi] = profileDomain();
       point[0] = 0; point[1] = 0; point[2] = lo + (event.clientX - r.left - 58) / (r.width - 72) * (hi - lo);
+      // A strict sweep takes a drag past an end as that end (a finger reaches 360° or ρ/a = 3 exactly, no flicker of the reason).
+      const ends = current.definition.view?.strictProbe ? sampledRange() : null;
+      if (ends) point[2] = Math.max(ends[0], Math.min(ends[1], point[2]));
       onProbe(point);
       return;
     }

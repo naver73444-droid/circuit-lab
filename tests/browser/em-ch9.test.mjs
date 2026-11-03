@@ -1,5 +1,6 @@
 // 전자기학 Hayt Ch.9 (7주차) in a real (headless) browser: the subject select (Ch.9 group first, 12 subjects, 47 experiments), the
-// rotating loop (three panels, typed phase, α₀, reset, canvas drag, arrow keys, a cursor past an end keeps the last valid point),
+// rotating loop (three panels, typed phase, α₀, reset, canvas drag, arrow keys, a key past an end keeps the last valid point while a
+// drag past an end lands exactly on it),
 // the homopolar disc (radius, r₀, polarity), the capacitor (whole and enclosed current, invalid combinations keep the last valid
 // state), theme and per-experiment memory, phones 390 and 360 px wide. Run with `node --test tests/browser/em-ch9.test.mjs`.
 import { describe, test, before, after, beforeEach, afterEach } from "node:test";
@@ -123,7 +124,8 @@ describe("EM course Hayt Ch.9", { timeout: 600000 }, () => {
     near(val(r, "motionalEmf"), 0.5, 1e-12, 1e-11, "45°: ℰ_M = sin²45°");
     near(val(r, "emf"), 0, 1e-12, 0, "45°: ℰ = −cos90°");
     assert.match(await text("#em-course-answer"), /= ?0 V$/, "the residue reads 0 V");
-    assert.ok(r.result.notes.some((n) => n.includes("합계 ℰ_ab 방향 없음")));
+    assert.ok(r.result.notes.some((n) => n.includes("합계 V_emf_ab 방향 없음")));
+    assert.match(await text("#em-course-answer"), /V_emf_ab/, "the total is named with the ab subscript");
     await sweep(id, 90, 90 * DEG);
     near(val(await rec(id), "emf"), 1, 1e-12, 1e-11, "90°: ℰ = −cos180°");
 
@@ -182,17 +184,30 @@ describe("EM course Hayt Ch.9", { timeout: 600000 }, () => {
     assert.equal(val(r, "emf"), val(atEnd, "emf"), "the answer stays");
     assert.equal(await shown("#em-course-error"), true, "the reason is shown");
     assert.match(await text("#em-course-error"), /360/);
-    // a drag beyond the right edge stops at the last valid candidate
-    box = await canvasBox();
-    await dragBetween({ x: xOf(box, 300 * DEG), y }, { x: box.x + box.w + 40, y }, { steps: 8 });
-    r = await rec(id);
-    assert.ok(r.point[2] >= 300 * DEG && r.point[2] <= 2 * Math.PI, `the drag kept a valid phase (${r.point[2] / DEG}°)`);
-    assert.equal(r.result.status, "valid");
-    near(val(r, "emf"), -Math.cos(2 * r.point[2]), 1e-12, 1e-9, "the answer belongs to the kept phase");
     // a valid move clears the reason
-    await ev(`document.getElementById("em-course-canvas").focus()`);
     await press("ArrowLeft", "ArrowLeft", 37);
     assert.equal(await shown("#em-course-error"), false, "a valid point clears the reason");
+    // a drag beyond the right edge lands exactly on 360° (clamped to the graph), with no reason shown at any step
+    box = await canvasBox();
+    await ev(`(() => { const e = document.getElementById("em-course-error"); window.__ch9ErrorSeen = false;
+      new MutationObserver(() => { if (!e.hidden) window.__ch9ErrorSeen = true; }).observe(e, { attributes: true, childList: true, characterData: true, subtree: true }); })()`);
+    await dragBetween({ x: xOf(box, 300 * DEG), y }, { x: box.x + box.w + 40, y }, { steps: 8 });
+    r = await rec(id);
+    assert.equal(r.point[2], 2 * Math.PI, `the drag ends exactly at 360° (${r.point[2] / DEG}°)`);
+    assert.equal(r.result.status, "valid");
+    near(val(r, "emf"), -1, 1e-12, 1e-11, "360°: −K cos720° = −1 V");
+    assert.equal(await ev(`document.getElementById("em-course-sweep-input").value`), "360");
+    assert.equal(await shown("#em-course-error"), false, "no reason after the drag");
+    assert.equal(await ev(`window.__ch9ErrorSeen`), false, "the reason never flickered during the drag");
+    // a drag beyond the left edge lands exactly on 0°; → past 360° is still refused (keys keep the strict rule)
+    await dragBetween({ x: xOf(box, 60 * DEG), y }, { x: box.x + 4, y }, { steps: 8 });
+    r = await rec(id);
+    assert.equal(r.point[2], 0, "the drag ends exactly at 0°");
+    near(val(r, "emf"), -1, 1e-12, 1e-11, "0°: −K cos0 = −1 V");
+    await ev(`document.getElementById("em-course-canvas").focus()`);
+    await press("ArrowLeft", "ArrowLeft", 37);
+    assert.equal((await rec(id)).point[2], 0, "← below 0° is refused");
+    assert.equal(await shown("#em-course-error"), true, "and says why");
   });
 
   test("homopolar disc: +0.25 V, half radius 0.0625 V, r₀ = 20 cm keeps the ratio, ω = −100 flips the polarity, ω = 0 has none; 초기화", async () => {
@@ -261,6 +276,19 @@ describe("EM course Hayt Ch.9", { timeout: 600000 }, () => {
     near(val(r, "voltage"), 100, 1e-12, 1e-11, "V = V_m");
     assert.ok(r.result.notes.some((n) => n.includes("방향 없음")));
     assert.doesNotMatch(await text("#em-course-answer"), /e-1\d/, "no floating-point residue on screen");
+    // the picture says the same: both curves are flat exact zeros, still drawn (cos 90° ≈ 6e−17 is residue, not a curve)
+    await until(`${L}.getEMState().course.records["maxwell-displacement"].profiles.every((s) => s.points.every((p) => p.value === 0))`, "flat profiles at ωt = 90°");
+    r = await rec(id);
+    assert.deepEqual(r.profiles.map((s) => s.key), ["Hphi", "enclosedDisplacementCurrent"]);
+    assert.ok(r.profiles.every((s) => s.points.length > 1 && s.points.every((p) => p.value === 0)), "H_φ(ρ) and I_d,enc(ρ) are 0 everywhere");
+    assert.equal(await ev(`document.getElementById("em-course-canvas").dataset.profileSeries`), "2", "both flat curves are drawn");
+    // 89.9°: a small real current draws a real curve again (hand, d = 2 mm: I = 43.69367 μA·cos89.9°/2, H(ρ ≤ a) = I·(ρ/a)/(2πa))
+    await param(id, "phase", 89.9, 89.9 * DEG);
+    r = await rec(id);
+    const inner = r.profiles[0].points.filter((p) => p.coordinate > 0 && p.coordinate <= 1).at(-1);
+    near(inner.value, (I_CAP / 2) * Math.cos(89.9 * DEG) * inner.coordinate / (2 * Math.PI * 0.05), 1e-18, 1e-6, `89.9°: H_φ at ρ/a = ${inner.coordinate}`);
+    assert.ok(inner.value > 0, "a real, positive curve");
+    await param(id, "phase", 90, 90 * DEG);
     await checksPass(id);
   });
 
@@ -284,6 +312,33 @@ describe("EM course Hayt Ch.9", { timeout: 600000 }, () => {
     await param(id, "d", 1, 0.001);
     assert.equal(await shown("#em-course-error"), false, "the reason goes");
     near(val(await rec(id), "freeCurrent"), I_CAP, 1e-14, 1e-11, "back to the preset at once");
+  });
+
+  test("drag past either end: the disc lands on η = 0 and 1, the capacitor on ρ/a = 0 and 3, exactly and without a reason; a typed 3.5 is still refused", async () => {
+    await openCourse();
+    // hand: disc V_ba = Bωr²/2 → 0 at the axle, 0.5·100·0.1²/2 = 0.25 V at the rim;
+    // capacitor H(3a) = I/(2π·3a) = H(a)/3, I_d,enc(3a) = I; H(0) = 0
+    const cases = [
+      ["emf-homopolar", 0.5, [[0, "voltageBA", 0], [1, "voltageBA", 0.25]]],
+      ["maxwell-displacement", 1.5, [[0, "Hphi", 0], [3, "Hphi", H_EDGE / 3]]],
+    ];
+    for (const [id, middle, ends] of cases) {
+      await choose(id);
+      for (const [end, key, expected] of ends) {
+        const box = await canvasBox(), y = box.y + box.h * 0.55;
+        const beyond = end === 0 ? box.x + 4 : box.x + box.w + 40;
+        await dragBetween({ x: xOf(box, middle), y }, { x: beyond, y }, { steps: 8 });
+        const r = await rec(id);
+        assert.equal(r.point[2], end, `${id}: the drag ends exactly at ${end} (${r.point[2]})`);
+        assert.equal(r.result.status, "valid");
+        near(val(r, key), expected, 1e-12, 1e-11, `${id} at ${end}: ${key}`);
+        assert.equal(await shown("#em-course-error"), false, `${id}: no reason after the drag to ${end}`);
+      }
+    }
+    // typed numbers keep the strict rule: a ratio past the end is refused with a reason and the point stays at 3
+    await typeInto("#em-course-sweep-input", "3.5");
+    await until(`!document.getElementById("em-course-sweep-error").hidden`, "the reason for 3.5");
+    assert.equal((await rec("maxwell-displacement")).point[2], 3, "3.5 is not taken");
   });
 
   test("theme and memory: the three experiments draw in dark and light with their sections open; each keeps its own state; 초기화 resets only the shown one", async () => {

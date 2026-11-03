@@ -169,6 +169,54 @@ test('direction text: +z/반시계, −z/시계, and "방향 없음" for zero re
   assert.ok(run({ phase: deg(90.1) }).notes.some(n => n.includes('−z 변위전류')));
 });
 
+test('direction text on the axis (ρ = 0): H is 0, so no circulation is named (review 2)', () => {
+  for (const [phase, sense] of [[0, '+z'], [Math.PI, '−z']]) {
+    const axis = run({ phase }, 0), line = axis.notes.find(n => n.startsWith('방향:'));
+    assert.ok(val(axis, 'Hphi') === 0, 'H(0) = 0 (±0)');
+    assert.ok(line.startsWith(`방향: ${sense} 변위전류 · H 0(방향 없음)`), line);
+    assert.ok(!line.includes('반시계') && !line.includes('시계 H'), line);
+  }
+  // off the axis the circulation is named again: J_d > 0 → counter-clockwise seen from +z
+  assert.ok(run({}, 0.01).notes.find(n => n.startsWith('방향:')).startsWith('방향: +z 변위전류 · +z에서 보아 반시계 H'));
+});
+
+test('sign reference: V = V_bottom − V_top, Q on the bottom plate, so V > 0 means D along +z (review 3)', () => {
+  const first = run().notes[0];
+  for (const piece of ['V = V_아래 − V_위', 'Q = 아래 극판 전하', 'I_f = 아래 극판으로 들어가는 도선 전류', '+z(아래 극판 → 위 극판)']) assert.ok(first.includes(piece), piece);
+  assert.ok(e.symbolic({}).conditions[0].includes('V = V_아래 − V_위') && e.symbolic({}).conditions[0].includes('Q = 아래 극판 전하'));
+  // hand: ωt = 30° → V = 100·sin30° = 50 V > 0, D = ε₀·50/0.001 = 4.4271e-7 C/m² (+z), Q = C·50 > 0;
+  // dV/dt ∝ cos30° > 0 → J_d = ε₀·2000π·100·cos30°/0.001 > 0 and I_f > 0 (+z, into the bottom plate)
+  const out = run({ phase: deg(30) });
+  near(val(out, 'voltage'), 50, 1e-12);
+  near(val(out, 'D'), EPS0 * 50 / 0.001, 1e-20);
+  near(val(out, 'charge'), EPS0 * Math.PI * 0.0025 / 0.001 * 50, 1e-20);
+  near(val(out, 'Jd'), EPS0 * 2000 * Math.PI * 100 * Math.cos(deg(30)) / 0.001, TOL.J);
+  assert.ok(val(out, 'freeCurrent') > 0 && val(out, 'Jd') > 0);
+  // ωt = −150°: V = −50 V (top plate higher), D along −z, and dV/dt ∝ cos(−150°) < 0 → J_d, I_f along −z
+  const back = run({ phase: deg(-150) });
+  near(val(back, 'voltage'), -50, 1e-12);
+  assert.ok(val(back, 'D') < 0 && val(back, 'charge') < 0 && val(back, 'Jd') < 0 && val(back, 'freeCurrent') < 0);
+});
+
+test('profile at ωt = ±90°: both curves are flat exact zeros, the same 0 rule as the answer (review 1)', () => {
+  for (const phase of [deg(90), -deg(90), Math.PI / 2]) {
+    const series = e.profile(params({ phase }));
+    assert.equal(series.length, 2, 'still two series (drawn flat, not dropped)');
+    for (const s of series) {
+      assert.equal(s.points.length, 81);
+      for (const p of s.points) assert.equal(p.value, 0, `${s.key} at ρ/a = ${p.coordinate}`);
+    }
+  }
+  // φ = 89.9°: a real current, not residue — hand: H(0.75a) = J_d·0.75a/2 with J_d = ε₀·2000π·100·cos89.9°/0.001
+  const small = e.profile(params({ phase: deg(89.9) }));
+  const Jd = EPS0 * 2000 * Math.PI * 100 * Math.cos(deg(89.9)) / 0.001;
+  const inner = small[0].points[20];                                           // ρ/a = 3·20/80 = 0.75
+  assert.equal(inner.coordinate, 0.75);
+  near(inner.value, Jd * 0.05 * 0.75 / 2, 1e-18);
+  assert.ok(inner.value > 0);
+  near(small[1].points.at(-1).value, Jd * Math.PI * 0.0025, 1e-20);
+});
+
 test('notes: geometry first, surface choice by radius, substituted numbers', () => {
   const edge = run();
   assert.ok(edge.notes[0].includes('+z') && edge.notes[0].includes('반시계') && edge.notes[0].includes('법선'));

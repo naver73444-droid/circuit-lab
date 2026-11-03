@@ -18,8 +18,6 @@ const TOPICS = [...new Set(EXPERIMENTS.map(d => topicOf(d.id)))];
 // The subject select: Hayt Ch.9 (7주차) first, then the Ch.8 (6주차) subjects, the Electromagnetics 1 review subjects last.
 const CH9_TOPICS = ['자기유도', '변위전류·Maxwell'].filter(name => TOPICS.includes(name));
 const CH8_TOPICS = ['자기력·토크', '자성체·경계', '자기회로', '에너지·인덕턴스'].filter(name => TOPICS.includes(name));
-// Sweep experiments whose cursor refuses an invalid candidate (past an end of the sweep): the last valid point and answer stay.
-const STRICT_PROBE = new Set(['emf-rotating-loop', 'emf-homopolar', 'maxwell-displacement']);
 const FIRST_EXPERIMENT = 'force-lorentz';
 const LAST_KEY = 'circuit-lab.em-course.last';
 const rememberedId = () => { try { const id = localStorage.getItem(LAST_KEY); return id && getExperiment(id) ? id : ''; } catch { return ''; } };
@@ -98,7 +96,9 @@ export function createEMCourseController(root, { onClose, initial = null, onChan
       return;
     }
     const result = evaluate(def, data.params, point);
-    if (STRICT_PROBE.has(def.id)) {
+    // view.strictProbe: a cursor past an end of the sweep (arrow key, typed number) is refused with the reason; the last valid
+    // point and answer stay. A pointer drag never gets here past an end: the view clamps it to the graph's range.
+    if (def.view?.strictProbe) {
       if (result.status === 'invalid') { data.error = result.reason || '이 위치는 계산 범위 밖입니다.'; renderNumeric(); return; }
       data.error = '';
     }

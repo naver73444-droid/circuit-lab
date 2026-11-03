@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EXPERIMENTS } from '../../../src/em-course-emf-homopolar.js';
+import { answerItems } from '../../../src/em-course-ui.js';
 
 const def = EXPERIMENTS[0];
 const defaults = () => Object.fromEntries(def.parameters.map(p => [p.key, p.initial]));
@@ -81,6 +82,20 @@ test('emf-homopolar: variation table', () => {
     assert.equal(val(out, 'voltageBA'), 0);
     assert.equal(val(out, 'motionalE'), 0);
     assert.ok(polarity(out).includes('전압 0 · 극성 없음'));
+  }
+  for (const [omega, sign, text] of [[100, 1, 'b + / a −'], [-100, -1, 'a + / b −']]) {
+    // η = 1e−6 (r = 1e−7 m): a tiny but exact product, not floating-point residue (review 4)
+    // hand: E_m = 50·1e−7 = 5e−6 V/m, V_ba = 50·(1e−7)²/2 = 2.5e−13 V
+    const tiny = run({ omega }, 1e-6);
+    near(val(tiny, 'voltageBA'), sign * 2.5e-13, 1e-27, 1e-9);
+    near(val(tiny, 'motionalE'), sign * 5e-6, 1e-20, 1e-9);
+    assert.ok(polarity(tiny).includes(text), polarity(tiny));
+    assert.ok(!polarity(tiny).includes('극성 없음'));
+    assert.ok(!tiny.notes[0].endsWith('= 0 V/m'), tiny.notes[0]);
+    assert.ok(!/Bωr²\/2 = [^=]*= 0 V /.test(tiny.notes[1]), tiny.notes[1]);
+    assert.ok(tiny.scalars.every(s => s.zero === undefined), 'no "shown as 0" scale on any homopolar scalar');
+    const shownV = answerItems(tiny, def).find(entry => entry.key === 'scalar:voltageBA').text;
+    assert.doesNotMatch(shownV, /= ?0 V$/, shownV);
   }
   const big = run({ r0: 0.2 });                                                // 50 × 0.2 = 10, 50 × 0.04 / 2 = 1
   nearE(val(big, 'motionalE'), 10);

@@ -17,11 +17,16 @@ export const parameter = (key, label, unit, displayUnit, displayScale, initial, 
 export const choiceParameter = (key, label, initial, choices) => parameter(key, label, '1', '1', 1, initial,
   Math.min(...choices.map(c => c[0])), Math.max(...choices.map(c => c[0])), { choices });
 
-/** zero (optional): the largest size of a quantity that passes through 0; the screen then shows |value| ≤ 1e−12·zero as 0. */
+/** |value| ≤ 1e−12·|peak| (peak: the largest size of that quantity) is floating-point residue of an exact zero: shown as 0, no direction. */
+export const isZeroed = (value, peak) => Math.abs(value) <= 1e-12 * Math.abs(peak);
+export const zeroed = (value, peak) => (isZeroed(value, peak) ? 0 : value);
+
+/** zero (optional): the largest size of a quantity that passes through 0; the screen then shows it through zeroed(). */
 export const scalar = (key, label, value, unit, zero) => (zero === undefined ? { key, label, value, unit } : { key, label, value, unit, zero });
 export const excluded = (status, reason, region = '') => ({ status, reason, region, vectors: {}, scalars: [], notes: [] });
 export const series = (key, label, unit, coordinateKey, coordinateUnit, points) => ({ key, label, unit, coordinateKey, coordinateUnit, points });
-export const linspace = (lo, hi, count) => Array.from({ length: count }, (_, i) => lo + (hi - lo) * i / (count - 1));
+// The last sample is hi itself (not lo + (hi − lo)·n/n, which can miss 2π by an ulp): a drag clamped to the sweep's end stays valid.
+export const linspace = (lo, hi, count) => Array.from({ length: count }, (_, i) => (i === count - 1 ? hi : lo + (hi - lo) * i / (count - 1)));
 export const rad2deg = angle => angle * 180 / Math.PI;
 
 /** One row of verify(): an independent number against the closed form. */
@@ -35,7 +40,7 @@ export const skippedRow = (label, reason, method = 'domain validation', unit = '
 
 // ---- references --------------------------------------------------------------------------------------------------------
 const HAYT_URL = 'https://openlibrary.org/isbn/9780073380667';
-export const hayt = (section, topic) => ({ title: `Hayt & Buck, Engineering Electromagnetics 8판 — Ch.8 §${section} ${topic}`, url: HAYT_URL });
+export const hayt = (section, topic) => ({ title: `Hayt & Buck, Engineering Electromagnetics 8판 — Ch.${section.split('.')[0]} §${section} ${topic}`, url: HAYT_URL });
 const OPENSTAX = 'https://openstax.org/books/university-physics-volume-2/pages/';
 export const openstax = (page, title) => ({ title: `OpenStax University Physics 2 ${title}`, url: OPENSTAX + page });
 export const REF = {

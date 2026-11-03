@@ -3,6 +3,7 @@
 import { appendCourseMath } from './course-math-view.js';
 import { siComplex, siText, siVector } from './em-format.js';
 import { formatParam, isParamVisible, paramSpec, rangeFromValue } from './em-course-params.js';
+import { zeroed } from './em-course-lecture.js';
 
 const statusLabel = { valid: '유효', singular: '특이점', boundary: '경계', invalid: '입력 오류', unsupported: '지원 범위 밖' };
 const UNITS = { E: 'V/m', D: 'C/m²', B: 'T', H: 'A/m' };
@@ -185,9 +186,9 @@ export function syncParameterStrip(host, definition, params) {
 
 // ---- answer -----------------------------------------------------------------------------------------------------
 
-// A scalar may carry `zero` (the largest size that quantity takes): |value| ≤ 1e−12·zero is floating-point residue of an exact
-// zero and reads 0 on screen. The value itself is never rounded.
-const shownValue = s => (s.zero > 0 && Math.abs(s.value) <= 1e-12 * s.zero ? 0 : s.value);
+// A scalar may carry `zero` (the largest size that quantity takes): residue of an exact zero reads 0 on screen (zeroed()).
+// The value itself is never rounded.
+const shownValue = s => (s.zero > 0 ? zeroed(s.value, s.zero) : s.value);
 
 /** The selectable quantities of a result: [{ key, label, text, group }]; group is '답' | '중간값' | '좌표'. */
 export function answerItems(result, definition) {

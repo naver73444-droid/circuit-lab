@@ -63,7 +63,7 @@ test('emf-rotating-loop: preset θ = 30° hand calculation (S = 0.02 m², K = 1 
   assert.ok(out.notes[2].includes('Φ =') && out.notes[2].includes('Wb'));
   assert.ok(out.notes[3].includes('ℰ_T') && out.notes[3].includes('−750 mV'));
   assert.ok(out.notes[4].includes('ℰ_M') && out.notes[4].includes('250 mV'));
-  assert.ok(out.notes[5].includes('ℰ_ab') && out.notes[5].includes('−500 mV'));
+  assert.ok(out.notes[5].startsWith('대입: V_emf_ab = ℰ_T + ℰ_M') && out.notes[5].includes('−500 mV'));
   assert.ok(out.notes.some(n => n.includes('세로축 눈금을 함께 보세요')));
 });
 
@@ -84,8 +84,21 @@ test('emf-rotating-loop: variation table', () => {
     const out = run({ B0: 0 }, theta);
     assert.equal(out.status, 'valid');
     for (const v of emfs(out)) near(v, 0, 1e-15);
-    assert.ok(out.notes.some(n => n.includes('합계 ℰ_ab 방향 없음')));
+    assert.ok(out.notes.some(n => n.includes('합계 V_emf_ab 방향 없음')));
   }
+});
+
+test('emf-rotating-loop: the total is named V_emf_ab (subscript ab: the positive circulation b→a), the two terms keep ℰ_T and ℰ_M', () => {
+  const out = run();
+  assert.equal(out.scalars.find(s => s.key === 'emf').label, '합계 기전력 V_emf_ab = ℰ_T + ℰ_M');
+  assert.ok(out.scalars.find(s => s.key === 'transformerEmf').label.startsWith('변압기 기전력 ℰ_T'));
+  assert.ok(out.scalars.find(s => s.key === 'motionalEmf').label.startsWith('운동 기전력 ℰ_M'));
+  assert.ok(out.notes[0].includes('합계 V_emf_ab의 첨자 ab가 이 기준') && out.notes[0].includes('b→a'));
+  assert.equal(def.profile(params())[2].label, '합계 V_emf_ab');
+  assert.ok(def.formulas.find(f => f.label === '합계').text.startsWith('V_emf_ab = ℰ_T + ℰ_M'));
+  assert.ok(def.symbolic({}).answers[0].formula.startsWith('V_emf_ab = ℰ_T + ℰ_M'));
+  const every = [...out.notes, ...out.scalars.map(s => s.label), ...def.formulas.map(f => f.text), ...def.symbolic({}).answers.map(a => a.formula)];
+  assert.ok(every.every(text => !text.includes('ℰ_ab')), 'no ℰ_ab left');
 });
 
 test('emf-rotating-loop: sum = −K cos(2θ + α₀) for arbitrary α₀, K = ωB₀hd', () => {
@@ -109,11 +122,11 @@ test('emf-rotating-loop: θ = 0 and θ = 2π give the same state (one period)', 
 test('emf-rotating-loop: zero residue reads "방향 없음", a small nonzero value keeps its sign', () => {
   const zero = run({}, 45 * DEG);                                               // −cos90° = 0 (round-off only)
   assert.ok(Math.abs(val(zero, 'emf')) < 1e-12);
-  assert.ok(zero.notes.some(n => n.includes('합계 ℰ_ab 방향 없음')));
+  assert.ok(zero.notes.some(n => n.includes('합계 V_emf_ab 방향 없음')));
   assert.ok(zero.notes[5].endsWith('= 0 V (= −K cos(2θ + α₀))'));
   const small = run({}, 44.9 * DEG);                                            // −cos89.8° ≈ −3.49 mV: real, shown with sign
   near(val(small, 'emf'), -Math.cos(89.8 * DEG));
-  assert.ok(small.notes.some(n => n.includes('합계 ℰ_ab − : 양의 순환과 반대')));
+  assert.ok(small.notes.some(n => n.includes('합계 V_emf_ab − : 양의 순환과 반대')));
 });
 
 test('emf-rotating-loop: invalid inputs are rejected without correction', () => {
@@ -138,7 +151,13 @@ test('emf-rotating-loop: three finite V series over one period, in the order T, 
     assert.equal(s.points.length, 81);
     assert.ok(s.points.every(q => Number.isFinite(q.coordinate) && Number.isFinite(q.value)));
     near(s.points[0].coordinate, 0, 0);
-    near(s.points.at(-1).coordinate, 2 * Math.PI, 1e-15);
+    // exactly 2π (not 2π ± 1 ulp): the view clamps a drag past the right end to this sample, and validate() takes θ ≤ 2π
+    assert.equal(s.points.at(-1).coordinate, 2 * Math.PI);
+  }
+  for (const count of [2, 3, 81, 97, 161, 512]) {
+    const end = def.profile(params(), count)[0].points.at(-1).coordinate;
+    assert.equal(end, 2 * Math.PI, `count ${count}`);
+    assert.equal(def.evaluate(params(), [0, 0, end]).status, 'valid', `count ${count}: the end sample is a valid cursor`);
   }
   near(list[2].points[0].value, -1);                                            // −K cos0
   near(list[2].points[40].value, -1);                                           // θ = π: −cos2π
@@ -148,20 +167,30 @@ test('emf-rotating-loop: three finite V series over one period, in the order T, 
   near(def.profile(params({ alpha0: 30 * DEG }))[2].points[0].value, -Math.cos(30 * DEG));
 });
 
-test('emf-rotating-loop: four sides — axial sides give ℰ_M/2 each, the others 0', () => {
-  // the module's vector side sum is checked through verify(); here an independent rebuild of the side split at θ = 30°
+test('emf-rotating-loop: four sides — the module\'s side split: axial sides give ℰ_M/2 each, the others 0', () => {
+  const row = (rows, piece) => rows.find(r => r.label.includes(piece));
   for (const alpha0 of [0, 0.6]) {
-    const p = params({ alpha0 }), theta = Math.PI / 6, alpha = alpha0 + theta;
-    const w = [0, -Math.sin(alpha), -Math.cos(alpha)], By = p.B0 * Math.sin(theta);
-    // u = Ω×(x a_x + q w) = −ωq n; (u×B)·a_x = −ωqB_y sinα; dl along ±a_x on the axial sides, along ±w on the others
+    const p = params({ alpha0 }), theta = Math.PI / 6, alpha = alpha0 + theta, By = p.B0 * Math.sin(theta);
+    // hand: u = Ω×(x a_x + q w), Ω = −ω a_x → (u×B)·a_x = −ωqB_y sinα. The side at q = −d/2 runs +x (dl = +h a_x), the side at
+    // q = +d/2 runs −x (dl = −h a_x): both give ωB_y sinα·hd/2. u×B ∥ a_x ⟂ dl on the two sides along w: exactly 0.
     const axial = q => -p.omega * q * By * Math.sin(alpha);
-    const sideBottom = axial(-p.d / 2) * p.h, sideTop = axial(p.d / 2) * -p.h;
-    const motional = val(run({ alpha0 }, theta), 'motionalEmf');
-    near(sideBottom, motional / 2); near(sideTop, motional / 2);
-    assert.equal(w[0], 0);                                                      // u×B ∥ a_x ⟂ w: the other two sides give 0
+    const bottom = axial(-p.d / 2) * p.h, top = axial(p.d / 2) * -p.h;
+    near(bottom, 100 * By * Math.sin(alpha) * 0.02 / 2);                       // ω B_y sinα · hd/2
+    const rows = def.verify(p);
+    assert.equal(rows.length, 6);
+    // the module's own numbers, side by side (a swapped or reversed axial side fails here)
+    const low = row(rows, 'q = −d/2'), high = row(rows, 'q = +d/2'), across = row(rows, '수직인 두 변');
+    near(low.actual, bottom); near(high.actual, top);
+    near(low.expected, bottom); near(high.expected, top);
+    assert.ok(Math.abs(across.actual) <= 1e-15, 'the sides along w give 0: ' + across.actual);
+    for (const r of [low, high, across]) assert.equal(r.status, 'pass', r.label);
   }
+  // preset: K = 1 V, ℰ_M = sin²30° = 0.25 V → 0.125 V on each axial side
+  const preset = def.verify(params());
+  near(row(preset, 'q = −d/2').actual, 0.125);
+  near(row(preset, 'q = +d/2').actual, 0.125);
   const rows = def.verify(params());
-  assert.equal(rows.length, 3);
+  assert.equal(rows.length, 6);
   for (const row of rows) {
     assert.equal(row.status, 'pass', row.label + ' ' + row.actual + ' vs ' + row.expected);
     assert.ok(row.label.includes('θ = 30°'));
