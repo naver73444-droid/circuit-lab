@@ -17,7 +17,8 @@ export const parameter = (key, label, unit, displayUnit, displayScale, initial, 
 export const choiceParameter = (key, label, initial, choices) => parameter(key, label, '1', '1', 1, initial,
   Math.min(...choices.map(c => c[0])), Math.max(...choices.map(c => c[0])), { choices });
 
-export const scalar = (key, label, value, unit) => ({ key, label, value, unit });
+/** zero (optional): the largest size of a quantity that passes through 0; the screen then shows |value| ≤ 1e−12·zero as 0. */
+export const scalar = (key, label, value, unit, zero) => (zero === undefined ? { key, label, value, unit } : { key, label, value, unit, zero });
 export const excluded = (status, reason, region = '') => ({ status, reason, region, vectors: {}, scalars: [], notes: [] });
 export const series = (key, label, unit, coordinateKey, coordinateUnit, points) => ({ key, label, unit, coordinateKey, coordinateUnit, points });
 export const linspace = (lo, hi, count) => Array.from({ length: count }, (_, i) => lo + (hi - lo) * i / (count - 1));

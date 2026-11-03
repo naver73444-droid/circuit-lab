@@ -185,6 +185,10 @@ export function syncParameterStrip(host, definition, params) {
 
 // ---- answer -----------------------------------------------------------------------------------------------------
 
+// A scalar may carry `zero` (the largest size that quantity takes): |value| ≤ 1e−12·zero is floating-point residue of an exact
+// zero and reads 0 on screen. The value itself is never rounded.
+const shownValue = s => (s.zero > 0 && Math.abs(s.value) <= 1e-12 * s.zero ? 0 : s.value);
+
 /** The selectable quantities of a result: [{ key, label, text, group }]; group is '답' | '중간값' | '좌표'. */
 export function answerItems(result, definition) {
   const answers = definition?.answerKeys || [], coordinates = definition?.coordinateKeys || [];
@@ -197,7 +201,7 @@ export function answerItems(result, definition) {
     items.push({ key: `magnitude:${key}`, label: `|${key}| 크기`, text: `|${key}|=${siText(Math.hypot(...v), unit)}`, group: '중간값' });
   }
   for (const s of result.scalars || []) {
-    if (Number.isFinite(s.value)) items.push({ key: `scalar:${s.key}`, label: s.label, text: `${s.label}=${siText(s.value, s.unit || '')}`, group: groupOf(s.key) });
+    if (Number.isFinite(s.value)) items.push({ key: `scalar:${s.key}`, label: s.label, text: `${s.label}=${siText(shownValue(s), s.unit || '')}`, group: groupOf(s.key) });
   }
   for (const p of result.phasors || []) {
     if (Number.isFinite(p.re) && Number.isFinite(p.im)) {
@@ -254,7 +258,7 @@ export function renderValues(dl, result) {
     add(`${key} (x, y, z)`, siVector(vector, UNITS[key] || ''));
     add(`|${key}|`, siText(Math.hypot(...vector), UNITS[key] || ''));
   }
-  for (const item of result.scalars || []) if (Number.isFinite(item.value)) add(item.label || item.key, siText(item.value, item.unit || ''));
+  for (const item of result.scalars || []) if (Number.isFinite(item.value)) add(item.label || item.key, siText(shownValue(item), item.unit || ''));
   for (const p of result.phasors || []) {
     if (Number.isFinite(p.re) && Number.isFinite(p.im)) add(`${p.label} · 복소/극형`, siComplex(p.re, p.im, p.unit || ''));
   }

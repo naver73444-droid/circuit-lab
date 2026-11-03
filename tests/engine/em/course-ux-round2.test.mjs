@@ -68,7 +68,7 @@ test('the default answer is the final one and the answer list is grouped 답 / �
 });
 
 test('the Hayt Ch.8 topics are the four lecture groups and the first experiment of the first group is force-lorentz', () => {
-  const lectureTopics = [...new Set(EXPERIMENTS.filter(d => d.lecture).map(d => topicOf(d.id)))];
+  const lectureTopics = [...new Set(EXPERIMENTS.filter(d => d.lecture?.week === 6).map(d => topicOf(d.id)))];
   assert.deepEqual(lectureTopics, ['자기력·토크', '자성체·경계', '자기회로', '에너지·인덕턴스']);
   assert.equal(EXPERIMENTS.find(d => topicOf(d.id) === lectureTopics[0]).id, 'force-lorentz');
   for (const def of EXPERIMENTS.filter(d => d.id.startsWith('force-'))) assert.ok(def.description.includes('평면 ▸ 자기'), def.id);
