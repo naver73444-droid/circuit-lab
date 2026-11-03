@@ -201,9 +201,10 @@ export const SOURCE_MODEL = "generator";
 /**
  * A file saved before sources were generators kept a separate AC magnitude/phase on every source. In a file saved for the AC analysis
  * those values were what it computed, so they move into the waveform and the AC answers stay the same: a sine whose own peak/phase
- * differ takes the AC value (peak = AC magnitude, cos phase = AC phase), and a DC or PULSE source with a non-zero AC part becomes that
- * sine around its old DC value at `frequency` (the file's phasor frequency). Files saved for DC or transient keep their waveforms (their
- * AC values were defaults nobody used). Changes component.props in place; returns it.
+ * differ takes the AC value (peak = AC magnitude, cos phase = AC phase), and a DC or PULSE source with an explicit AC part becomes that
+ * sine at `frequency` (the file's phasor frequency). Either way the sine's offset becomes the old DC value: the AC run biased the circuit
+ * there (the engine's DC operating point reads props.dc, not a sine's offset), so a diode keeps its operating point. Files saved for DC
+ * or transient keep their waveforms (their AC values were defaults nobody used). Changes component.props in place; returns it.
  */
 export function migrateGeneratorSource(component, { analysis, frequency = "1k" } = {}) {
   if (analysis !== "ac" || !isGeneratorSource(component) || component.props?.acMagnitude === undefined) return component;
@@ -211,11 +212,22 @@ export function migrateGeneratorSource(component, { analysis, frequency = "1k" }
   const magnitude = num(props.acMagnitude), phase = num(props.acPhase ?? 0);
   if (!Number.isFinite(magnitude) || !Number.isFinite(phase)) return component;
   const sinPhase = toEnginePhase(phase);
+  // AC bias came from dc even when an old SIN stored a different transient offset.
+  props.offset = String(props.dc ?? "0");
   if (props.mode === "SIN") {
     const same = Math.abs(num(props.amplitude ?? 0) - magnitude) <= 1e-12 * Math.max(1, magnitude) && Math.abs(((fromEnginePhase(props.phase) - phase) % 360 + 540) % 360 - 180) < 1e-9;
     if (!same) Object.assign(props, { amplitude: String(props.acMagnitude), phase: sinPhase });
-  } else if (magnitude !== 0) {
-    Object.assign(props, { mode: "SIN", offset: String(props.dc ?? "0"), amplitude: String(props.acMagnitude), phase: sinPhase, frequency: String(frequency) });
+  } else {
+    Object.assign(props, { mode: "SIN", amplitude: String(props.acMagnitude), phase: sinPhase, frequency: String(frequency) });
   }
   return component;
+}
+
+/**
+ * migrateGeneratorSource for every part of a file. An explicit AC 0 becomes a zero-amplitude sine, so analysisCircuit cannot replace
+ * the old silent input with 1 V. A file with no AC values at all keeps the 1 V input. Changes the parts in place.
+ */
+export function migrateGeneratorSources(components, options = {}) {
+  components.forEach((component) => migrateGeneratorSource(component, options));
+  return components;
 }

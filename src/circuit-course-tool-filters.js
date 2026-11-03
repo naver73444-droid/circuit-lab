@@ -19,6 +19,7 @@ const circuitOf = v => filterCircuit(v.family === 'active' ? v.active : v.passiv
 const uses = key => v => circuitOf(v)?.fields.includes(key) ?? false;
 const cLabel = which => v => {
   const c = circuitOf(v);
+  if (c?.id === 'bpf3') return which === 1 ? 'C1 (저역단, ω2 = 1/(R·C1))' : 'C2 (고역단, ω1 = 1/(R·C2))';
   if (c?.family === 'active') return which === 1 ? 'C1 (ω1 = 1/(R·C1))' : 'C2 (ω2 = 1/(R·C2))';
   return which === 1 ? 'C1 (가운데 접지 가지)' : 'C2 (직렬)';
 };
@@ -69,10 +70,10 @@ export const FILTER_TOOL = {
       expect: [{ key: 'typeCode', label: '종류 = 고역통과 (2)', value: 2 }, { key: 'hInf', label: '고주파 이득 −Rf/Ri', value: -5 }, { key: 'wc', label: 'ωc = 1/(RiCi)', value: 1000, unit: 'rad/s' }] },
     { label: '연습 14.65 꼴 비반전 고역 R=1 kΩ · C=1 µF · Ri=Rf=10 kΩ', values: { family: 'active', active: 'noninv-hp', R: 1000, C: 1e-6, Ri: 10e3, Rf: 10e3 },
       expect: [{ key: 'hInf', label: '고주파 이득 1 + Rf/Ri', value: 2 }, { key: 'wc', label: 'ωc = 1/(RC)', value: 1000, unit: 'rad/s' }] },
-    { label: '대역통과 3단 ω1=1000 · ω2=10⁴ rad/s · Rf/Ri=1 · 식 검산', values: { family: 'active', active: 'bpf3', R: 10e3, C1: 0.1e-6, C2: 10e-9, Ri: 10e3, Rf: 10e3 },
+    { label: '대역통과 3단 단별 절점 ω1=1000 · ω2=10⁴ rad/s · Rf/Ri=1 · 식 검산', values: { family: 'active', active: 'bpf3', R: 10e3, C1: 10e-9, C2: 0.1e-6, Ri: 10e3, Rf: 10e3 },
       expect: [{ key: 'typeCode', label: '종류 = 대역통과 (3)', value: 3 }, { key: 'w0', label: 'ω0 = √(ω1ω2)', value: Math.sqrt(1e7), unit: 'rad/s' },
         { get: r => mag(r.sys, Math.sqrt(1e7)), label: '|H(ω0)| = (Rf/Ri)·ω2/(ω1+ω2)', value: 1e4 / 1.1e4 }] },
-    { label: '대역차단 ω1=1000 · ω2=10⁴ rad/s · Rf/Ri=1 · 식 검산', values: { family: 'active', active: 'bsf', R: 10e3, C1: 0.1e-6, C2: 10e-9, Ri: 10e3, Rf: 10e3 },
+    { label: '대역차단 단별 절점 ω1=1000 · ω2=10⁴ rad/s · Rf/Ri=1 · 식 검산', values: { family: 'active', active: 'bsf', R: 10e3, C1: 0.1e-6, C2: 10e-9, Ri: 10e3, Rf: 10e3 },
       expect: [{ key: 'typeCode', label: '종류 = 대역차단 (4)', value: 4 }, { get: r => mag(r.sys, Math.sqrt(1e7)), label: '|H(ω0)| = (Rf/Ri)·2ω1/(ω1+ω2)', value: 2e3 / 1.1e4 },
         { key: 'h0', label: '통과 이득 Rf/Ri', value: 1 }] }
   ],
@@ -80,7 +81,8 @@ export const FILTER_TOOL = {
     const circuit = circuitOf(v);
     if (!circuit) return { status: 'invalid', reason: '회로를 고르세요.' };
     const built = buildFilter(circuit, v), f = classifyFilter(built.h), a = f.analysis, [lo, hi] = a.range;
-    const marks = f.wc ? [{ w: f.wc, label: 'ωc' }] : f.w1 ? [{ w: f.w1, label: 'ω1' }, { w: f.w0, label: 'ω0' }, { w: f.w2, label: 'ω2' }] : [];
+    const staged = circuit.id === 'bpf3' || circuit.id === 'bsf', lower = staged ? 'ωa' : 'ω1', upper = staged ? 'ωb' : 'ω2';
+    const marks = f.wc ? [{ w: f.wc, label: 'ωc' }] : f.w1 ? [{ w: f.w1, label: lower }, { w: f.w0, label: 'ω0' }, { w: f.w2, label: upper }] : [];
     const grid = [...new Set([...logGrid(lo, hi, 120), ...marks.map(m => m.w)].filter(w => w >= lo && w <= hi))].sort((x, y) => x - y);
     const peakDb = f.peak ? dB(f.peak.mag) : null, ref = f.reference;
     const values = { typeCode: TYPE_CODE[f.type] ?? 0, order: f.order, h0: f.h0 ?? NaN, hInf: f.hInf, wc: f.wc ?? NaN, fc: f.wc ? f.wc / (2 * Math.PI) : NaN, w0: f.w0 ?? NaN, w1: f.w1 ?? NaN, w2: f.w2 ?? NaN, B: f.bandwidth ?? NaN,
@@ -89,19 +91,21 @@ export const FILTER_TOOL = {
     const probes = [lo * 13.7, Math.sqrt(lo * hi) * 1.37, hi / 7.3];
     const worst = Math.max(...probes.map(w => { const p = a.at(w), d = built.at(w); return Math.hypot(p.re - d.re, p.im - d.im) / Math.max(Math.hypot(d.re, d.im), 1e-300); }));
     const shown = normalizeRational(built.h), edge = f.type === 'lowpass' ? 'H(0)' : f.type === 'highpass' ? 'H(∞)' : f.type === 'bandpass' ? '최댓값' : '통과 이득';
-    const cut = f.wc ? 'ωc = ' + short(f.wc) + ' rad/s (fc = ' + short(f.wc / (2 * Math.PI)) + ' Hz)' : f.w1 ? 'ω1·ω0·ω2 = ' + short(f.w1) + ' · ' + short(f.w0) + ' · ' + short(f.w2) + ' rad/s, B = ' + short(f.bandwidth) : '반전력점 없음';
+    const cut = f.wc ? 'ωc = ' + short(f.wc) + ' rad/s (fc = ' + short(f.wc / (2 * Math.PI)) + ' Hz)' : f.w1 ? '실제 반전력점 ' + lower + '·' + upper + ' = ' + short(f.w1) + ' · ' + short(f.w2) + ' rad/s, ω0 = ' + short(f.w0) + ' rad/s, B = ' + short(f.bandwidth) : '반전력점 없음';
     const metrics = [metric('종류', f.label), metric('차수 (분모)', String(f.order)), metric('H(0)', limitText(f.h0)), metric('H(∞)', limitText(f.hInf)), metric('고주파 기울기', (f.slopeHigh > 0 ? '+' : '') + f.slopeHigh, 'dB/dec')];
     if (f.wc) metrics.push(metric('ωc (' + edge + '/√2)', fmt(f.wc), 'rad/s'), metric('fc', fmt(f.wc / (2 * Math.PI)), 'Hz'));
-    if (f.w1) metrics.push(metric('ω1', fmt(f.w1), 'rad/s'), metric('ω2', fmt(f.w2), 'rad/s'), metric('ω0 = √(ω1ω2)', fmt(f.w0), 'rad/s'), metric('B = ω2 − ω1', fmt(f.bandwidth), 'rad/s'));
+    if (f.w1) metrics.push(metric(staged ? '실제 반전력점 ωa' : lower, fmt(f.w1), 'rad/s'), metric(staged ? '실제 반전력점 ωb' : upper, fmt(f.w2), 'rad/s'),
+      metric('ω0 = √(' + lower + upper + ')', fmt(f.w0), 'rad/s'), metric('B = ' + upper + ' − ' + lower, fmt(f.bandwidth), 'rad/s'));
     if (f.type === 'bandstop') metrics.push(metric('|H(ω0)| (골)', short(mag(a, f.w0)) + ' = ' + short(dB(mag(a, f.w0))), 'dB'));
     if (f.type === 'lowpass' && peakDb > dB(Math.abs(f.h0)) + 0.01) metrics.push(metric('봉우리', short(peakDb) + ' dB @ ω=' + short(f.peak.w)));
     const notes = [];
     if (f.type === 'lowpass' && peakDb > dB(Math.abs(f.h0)) + 0.01) notes.push('봉우리가 있는 저역통과입니다. 강의의 차단 주파수는 H(0) 기준(−3 dB)이고, 회로 편집기의 자동 "−3 dB" 측정은 최댓값 기준이라 이 곡선을 대역통과처럼 읽습니다.');
-    if (f.type === 'bandpass' || f.type === 'bandstop') notes.push('ω0 = √(ω1ω2)는 반전력점의 기하평균입니다. 2차 회로라면 1/√(LC)와 같습니다.');
+    if (f.type === 'bandpass' || f.type === 'bandstop') notes.push('ω0 = √(' + lower + upper + ')는 반전력점의 기하평균입니다. 2차 RLC 회로라면 1/√(LC)와 같습니다.');
+    if (staged) notes.push('단별 절점 ω1·ω2와 전체 응답의 실제 반전력점 ωa·ωb는 다릅니다. ω2 ≫ ω1일 때 ωa·ωb가 단별 절점에 가까워집니다.');
     notes.push('고주파 기울기 = 20 × (분자 차수 − 분모 차수) dB/dec. 차수가 높을수록 차단 특성이 가파릅니다.');
     return { status: 'valid', values, sys: a,
       read: circuit.label + ' → ' + f.label + ' ' + f.order + '차 · ' + cut,
-      freqPlots: [{ title: '|H(jω)| · ' + circuit.label, range: [lo, hi], legend: '실선 = 정확 |H| (dB), 노란 점선 = 기준(' + edge + ')의 −3 dB, 초록 점선 = 반전력 주파수' + (f.w1 ? ', 음영 = ω1~ω2' : '') + '.',
+      freqPlots: [{ title: '|H(jω)| · ' + circuit.label, range: [lo, hi], legend: '실선 = 정확 |H| (dB), 노란 점선 = 기준(' + edge + ')의 −3 dB, 초록 점선 = 반전력 주파수' + (f.w1 ? ', 음영 = ' + lower + '~' + upper : '') + '.',
         panels: [{ label: '|H| (dB)', floor: 100, marks, band: f.w1 ? [f.w1, f.w2] : undefined, hlines: ref ? [{ y: dB(ref / Math.SQRT2), label: '−3 dB (' + edge + ' 기준)' }] : [],
           series: [{ style: 'exact', points: grid.map(w => [w, dB(mag(a, w))]) }] }] }],
       metrics,

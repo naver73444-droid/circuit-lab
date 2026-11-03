@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { zoomAxis, fittedAxis, step125, engineering, fittedXAxis, nearestSampleIndex, extremaIndices, pulseWindowHint } from "../../src/scope-model.js";
+import { zoomAxis, fittedAxis, step125, engineering, fittedXAxis, nearestSampleIndex, extremaIndices, pulseWindowHint, extendedRunSettings } from "../../src/scope-model.js";
 
 test("large finite plotting data cannot cause an endless autoscale loop", () => {
   const url = new URL("../../src/scope-model.js", import.meta.url).href;
@@ -65,4 +65,22 @@ test("pulseWindowHint: a pulse still on at the window's end reads as a step and 
   assert.equal(pulseWindowHint(source({ pulseDelay: "10m" }), { end: "5m" }), null, "not on yet: no step to explain");
   assert.equal(pulseWindowHint(source({ mode: "DC" }), { end: "5m" }), null);
   assert.equal(pulseWindowHint(source({ pulseWidth: "abc" }), { end: "5m" }), null, "unreadable values are left to the analysis error");
+});
+
+test("시간 +: start=10m인 정상상태에서 상대 오른쪽 끝 10 ms를 end=20m으로 변환한다", () => {
+  const settings = { analysis: "transient", start: "10m", end: "15m", step: "1u" };
+  // A triggered result spans 0…5 ms; doubling the span to 10 ms requires end=start+span=10+10=20 ms.
+  assert.deepEqual(extendedRunSettings(10e-3, settings, true), { end: "20m" });
+  assert.equal(settings.end, "15m", "proposing an extension does not edit the settings");
+  // Ordinary results use absolute time: an edge equal to start remains invalid, and 20 ms is already absolute.
+  assert.equal(extendedRunSettings(10e-3, settings), null);
+  assert.deepEqual(extendedRunSettings(20e-3, settings), { end: "20m" });
+  assert.deepEqual(extendedRunSettings(10e-3, { ...settings, start: "0" }, true), { end: "10m" });
+});
+
+test("정상상태 시간 확장도 표시 길이로 2만 점 상한을 계산한다", () => {
+  // start=10 ms + displayed span=50 ms → end=60 ms; 50 ms/20k=2.5 µs, rounded up to the 1-2-5 step 5 µs.
+  assert.deepEqual(extendedRunSettings(50e-3, { start: "10m", end: "15m", step: "1u" }, true), { end: "60m", step: "5u" });
+  assert.equal(extendedRunSettings(10e-3, { start: "bad", step: "1u" }, true), null);
+  assert.equal(extendedRunSettings(Infinity, { start: "10m", step: "1u" }, true), null);
 });

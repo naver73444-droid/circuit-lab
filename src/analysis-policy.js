@@ -103,16 +103,17 @@ export function refinedTransientStep(circuit, settings) {
  * Oscilloscope "정상상태" (steady state, triggered): a run long enough for the start-up transient to die out, shown from a rising edge
  * of the first periodic source, as a triggered scope shows a repeating signal. Returns null when the run is not transient or no V/I
  * source is a sine or a square; { refused } (a sentence) when the settling time is so long that the window would get fewer than 20
- * samples per period; else { end, step, trigger, span, source } in seconds: run 0…end, keep trigger…trigger+span.
- *   settle  = 10·R_max·ΣC and 10·ΣL/R_min (5 envelope time constants: a series RLC decays with 2L/R, a parallel one with 2RC), at least
+ * samples per period of any source; else { end, step, trigger, span, source } in seconds: run 0…end, keep trigger…trigger+span.
+ *   settle  = 10·ΣR·ΣC and 10·ΣL·Σ(1/R) (conservative passive RC/RL bounds; 5 envelope time constants for 2RC or 2L/R), at least
  *             one period, counted from the moment a delayed square starts;
- *   trigger = the first rising edge after settle: a square's edge (delay + k·T), a sine's upward zero crossing.
+ *   trigger = the first rising edge after settle: a square's delay + k·T (+ rise + width when V1 > V2), a sine's upward zero crossing.
  * The span keeps the typed length (end − start); the step is the given one, coarsened only to stay within 20 000 points, and set so
  * that the trigger falls on a sample.
  */
 export function steadyStateRun(circuit, settings) {
   if (settings?.analysis !== "transient") return null;
-  const source = circuit.components.find((component) => ["V", "I"].includes(component.type) && ["SIN", "PULSE"].includes(component.props?.mode));
+  const sources = circuit.components.filter((component) => ["V", "I"].includes(component.type) && ["SIN", "PULSE"].includes(component.props?.mode));
+  const source = sources[0];
   if (!source) return null;
   const run = readWindow(settings);
   if (!run) return null;
@@ -120,13 +121,16 @@ export function steadyStateRun(circuit, settings) {
   const span = end - start;
   if (!(span > 0) || !(step > 0)) return null;
   const p = source.props;
-  const period = p.mode === "SIN" ? 1 / number(p.frequency, 60) : number(p.pulsePeriod, 2);
-  if (!(period > 0) || !Number.isFinite(period)) return null;
+  const periods = sources.map(({ props }) => props.mode === "SIN" ? 1 / number(props.frequency, 60) : number(props.pulsePeriod, 2));
+  if (periods.some((value) => !(value > 0) || !Number.isFinite(value))) return null;
+  const period = periods[0], shortestPeriod = Math.min(...periods);
   const r = positiveValues(circuit, "R"), c = positiveValues(circuit, "C"), l = positiveValues(circuit, "L");
-  const settle = Math.max(period, r.length && c.length ? 10 * Math.max(...r) * c.reduce((a, b) => a + b, 0) : 0, r.length && l.length ? 10 * l.reduce((a, b) => a + b, 0) / Math.min(...r) : 0);
+  const sum = (values) => values.reduce((a, b) => a + b, 0);
+  const settle = Math.max(period, 10 * sum(r) * sum(c), 10 * sum(l) * sum(r.map((value) => 1 / value)));
   // First rising edge at or after the settled time: the edge repeats every period from `phase0` (a square's delay is also when it starts).
   const delay = p.mode === "PULSE" ? Math.max(0, number(p.pulseDelay, 0)) : 0;
-  const phase0 = p.mode === "SIN" ? ((-number(p.phase, 0) / 360) % 1 + 1) % 1 * period : delay;
+  const risingOffset = p.mode === "PULSE" && number(p.pulseV1) > number(p.pulseV2) ? number(p.pulseRise) + number(p.pulseWidth, 1) : 0;
+  const phase0 = p.mode === "SIN" ? ((-number(p.phase, 0) / 360) % 1 + 1) % 1 * period : delay + risingOffset;
   const trigger = phase0 + Math.max(0, Math.ceil((delay + settle - phase0) / period - 1e-9)) * period;
   const runEnd = trigger + span;
   // Within 20 000 points, and a whole number of steps to the trigger so that t = 0 is a sample: the step is shortened to fit, or
@@ -136,7 +140,7 @@ export function steadyStateRun(circuit, settings) {
     const finer = trigger / Math.ceil(trigger / runStep - 1e-9);
     runStep = runEnd / finer <= 19990 ? finer : trigger / Math.floor(trigger / runStep + 1e-9);
   }
-  if (runStep > period / 20) {
+  if (runStep > shortestPeriod / 20) {
     return { refused: `정상상태까지 약 ${Number(trigger.toPrecision(3))} s가 걸려 한 주기에 20점도 못 그립니다 · 정상상태를 끄거나 R·C를 줄이세요` };
   }
   return { end: runEnd, step: runStep, trigger, span, source: p.ref ?? source.id };

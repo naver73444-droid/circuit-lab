@@ -118,7 +118,7 @@ scopeView.subscribe((type) => { if (type === "cursor") renderer.refreshCurrentAr
 // 자동 갱신 is on (one undo step), so the waveform fills the screen as on an oscilloscope. The step grows only if the run would pass the 20 000-point limit.
 scopeView.subscribe((type, detail) => {
   if (type !== "extend" || state.settings.analysis !== "transient" || state.result?.analysis !== "transient" || !isCircuitUiActive()) return;
-  const end = extendedRunSettings(detail.end, state.settings);
+  const end = extendedRunSettings(detail.end, state.settings, Number.isFinite(state.result.trigger));
   if (!end) return;
   // With 자동 갱신 off the student runs by hand: only the window widens, and the status says how to fill it.
   if (!state.autoUpdate) { setStatus(`창이 해석 끝을 넘었습니다 · 해석 설정의 끝 시간을 ${end.end}s로 늘리고 실행하면 채워집니다`, "ready"); return; }

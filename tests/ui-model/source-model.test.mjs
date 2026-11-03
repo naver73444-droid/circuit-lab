@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { componentDefaults, parseValue, simulateACAtFrequency, simulateDC } from "../../src/circuit-engine.js";
-import { analysisCircuit, averageLevel, generatorEdit, generatorFieldText, generatorLabel, generatorView, migrateGeneratorSource, siValueText } from "../../src/source-model.js";
+import { analysisCircuit, averageLevel, generatorEdit, generatorFieldText, generatorLabel, generatorView, migrateGeneratorSource, migrateGeneratorSources, siValueText } from "../../src/source-model.js";
 
 const source = (type = "V", props = {}) => ({ id: `${type}1`, type, props: { ...componentDefaults(type), ref: `${type}1`, ...props } });
 const apply = (component, key, value) => { const patch = generatorEdit(component, key, value); assert.ok(patch, `${key} = ${value}`); Object.assign(component.props, patch); return component; };
@@ -98,7 +98,8 @@ test("files from before: in a file saved for AC, the separate AC values move int
   const current = migrateGeneratorSource(source("I", { mode: "DC", dc: "0" }), ac);
   assert.equal(current.props.amplitude, "1m", "an I source keeps its 1 mA AC (not 1 A)");
   const off = migrateGeneratorSource(source("V", { mode: "DC", acMagnitude: "0" }), ac);
-  assert.equal(off.props.mode, "DC", "AC 0 stays a DC source");
+  assert.equal(off.props.mode, "SIN", "explicit AC 0 is a silent sine, preventing the automatic 1 V input");
+  assert.equal(off.props.amplitude, "0");
   const matching = migrateGeneratorSource(source("V", { mode: "SIN", amplitude: "2", phase: "0", acMagnitude: "2", acPhase: "-90" }), ac);
   assert.deepEqual([matching.props.amplitude, matching.props.phase], ["2", "0"], "a sine that already gives its AC value is kept");
   const transient = migrateGeneratorSource(source("V", { mode: "SIN", acMagnitude: "2" }), { analysis: "transient" });
@@ -116,4 +117,65 @@ test("files from before: in a file saved for AC, the separate AC values move int
   migrated.components.forEach((c) => migrateGeneratorSource(c, ac));
   const after = simulateACAtFrequency(analysisCircuit(migrated).circuit, "1k").points[0].componentCurrents.R3;
   near(after.re, before.re, 1e-12, "Re I(R3)"); near(after.im, before.im, 1e-12, "Im I(R3)");
+});
+
+function migrationCircuit(props, diode = false) {
+  const part = (id, type, props, nets) => ({ id, type, x: 100, y: 100, rotation: 0, props: { ...componentDefaults(type), ref: id, ...props }, nets });
+  const all = [part("V1", "V", props, ["in", "0"]), part("R1", "R", { value: "1k" }, ["in", diode ? "out" : "0"]), part("G1", "GND", {}, ["0"])];
+  if (diode) all.push(part("D1", "D", { is: "1e-12", n: "1" }, ["out", "0"]));
+  const groups = new Map(), wires = [];
+  all.forEach((c) => c.nets.forEach((net, pin) => { if (!groups.has(net)) groups.set(net, []); groups.get(net).push({ componentId: c.id, pin }); }));
+  for (const ends of groups.values()) for (let k = 1; k < ends.length; k += 1) wires.push({ id: `W${wires.length + 1}`, a: ends[0], b: ends[k] });
+  return { version: 3, geometryVersion: 2, components: all.map(({ nets, ...c }) => c), wires, junctions: [] };
+}
+const voltageAt = (result, pin) => result.points[0].nodeVoltages[result.topology.nodeIdByPin[pin]];
+
+test("옛 AC 이전: dc=5, offset=0인 SIN의 다이오드 동작점과 AC 5.807 mV를 보존한다", () => {
+  for (const [amplitude, phase] of [["1", "90"], ["8", "45"]]) {
+    const before = migrationCircuit({ mode: "SIN", dc: "5", offset: "0", amplitude, phase, acMagnitude: "1", acPhase: "0" }, true);
+    const dcBefore = simulateDC(before), acBefore = simulateACAtFrequency(before, "1k");
+    const migrated = structuredClone(before);
+    migrateGeneratorSources(migrated.components, { analysis: "ac", frequency: "1k" });
+    assert.equal(migrated.components[0].props.offset, "5", "the old engine reads dc for the AC operating point, even when offset is present");
+    const prepared = analysisCircuit(migrated);
+    assert.equal(prepared.circuit.components[0].props.dc, "5");
+    const dcAfter = simulateDC(prepared.circuit), acAfter = simulateACAtFrequency(prepared.circuit, "1k");
+    // DC: V(in)=5 V, I≈(5−0.574)/1k; rd≈25.85m/I=5.841 Ω, so |Vo|≈rd/(1k+rd)=5.807 mV.
+    near(voltageAt(dcAfter, "V1:0"), 5, 1e-9, "source operating point");
+    near(voltageAt(dcAfter, "D1:0"), voltageAt(dcBefore, "D1:0"), 1e-9, "diode operating point");
+    const oldOut = voltageAt(acBefore, "D1:0"), newOut = voltageAt(acAfter, "D1:0");
+    near(Math.hypot(newOut.re, newOut.im), 5.807e-3, 1e-6, "biased diode small-signal output");
+    near(newOut.re, oldOut.re, 1e-10, "AC real part");
+    near(newOut.im, oldOut.im, 1e-10, "AC imaginary part");
+  }
+});
+
+test("옛 AC 이전: DC/PULSE의 명시적 AC=0은 무입력을 유지하고 DC 평균도 보존한다", () => {
+  for (const mode of ["DC", "PULSE"]) {
+    const circuit = migrationCircuit({ mode, dc: "5", acMagnitude: "0", acPhase: "30" });
+    migrateGeneratorSources(circuit.components, { analysis: "ac", frequency: "2k" });
+    const prepared = analysisCircuit(circuit);
+    assert.equal(circuit.components[0].props.mode, "SIN");
+    assert.equal(circuit.components[0].props.frequency, "2k");
+    assert.equal(prepared.acInput, null);
+    assert.equal(prepared.circuit.components[0].props.acMagnitude, "0");
+    // A silent AC source drives a 1 kΩ load with 0 V; its DC operating point remains 5 V.
+    near(voltageAt(simulateDC(prepared.circuit), "R1:0"), 5, 1e-9, "DC level");
+    const v = voltageAt(simulateACAtFrequency(prepared.circuit, "2k"), "R1:0");
+    near(Math.hypot(v.re, v.im), 0, 1e-12, "AC load voltage");
+  }
+  const current = migrateGeneratorSource(source("I", { dc: "2m", acMagnitude: "0" }), { analysis: "ac" });
+  assert.deepEqual([current.props.mode, current.props.offset, current.props.amplitude], ["SIN", "2m", "0"]);
+});
+
+test("옛 AC 이전: acMagnitude가 없는 파일은 기존 1 입력 대체를 유지한다", () => {
+  const circuit = migrationCircuit({ mode: "DC", dc: "5" });
+  delete circuit.components[0].props.acMagnitude;
+  migrateGeneratorSources(circuit.components, { analysis: "ac" });
+  const prepared = analysisCircuit(circuit);
+  assert.equal(circuit.components[0].props.mode, "DC");
+  assert.equal(prepared.acInput, "V1");
+  // With no legacy AC field the existing fallback is 1 V, hence 1 mA through 1 kΩ.
+  const v = voltageAt(simulateACAtFrequency(prepared.circuit, "1k"), "R1:0");
+  near(Math.hypot(v.re, v.im), 1, 1e-12, "fallback input");
 });

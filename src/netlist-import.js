@@ -28,7 +28,7 @@ const UNSUPPORTED = { Q: "트랜지스터(BJT)", M: "MOSFET", J: "JFET", X: "부
 export function editorValue(raw, unit) {
   // A unit letter goes only in its own case: "11nF" → "11n", but "10f" stays femto (SPICE), never 10 farad.
   const text = String(raw ?? "").trim().replace(/[Ωω]$/u, "").replace(/ohms?$/i, "").replace(unit ? new RegExp(unit + "$") : /$^/, "");
-  if (/^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?M$/.test(text)) return null; // "1M": milli in SPICE, mega elsewhere — ask for "1meg" or "1m"
+  if (/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?M$/.test(text)) return null; // "1M": milli in SPICE, mega elsewhere — ask for "1meg" or "1m"
   try { parseValue(text); return text; } catch { return null; }
 }
 const valueOf = (text) => parseValue(text);
@@ -125,9 +125,10 @@ export function parseNetlist(text) {
       if (cmd === ".tran") {
         const [step, stop, start = "0"] = args.map((a) => editorValue(a, "s"));
         if (!step || !stop) { error(".tran 간격과 끝 시간을 읽을 수 없습니다. 예: .tran 10u 5m"); continue; }
-        if (!(valueOf(step) > 0 && valueOf(stop) > valueOf(start ?? "0"))) { error(".tran 간격은 0보다 크고 끝 시간은 시작보다 커야 합니다."); continue; }
+        if (start === null || valueOf(start) < 0) { error(".tran 시작 시간 \"" + args[2] + "\"을(를) 읽을 수 없습니다. 0 이상인 시간을 쓰세요. 예: .tran 10u 5m 1m"); continue; }
+        if (!(valueOf(step) > 0 && valueOf(stop) > valueOf(start))) { error(".tran 간격은 0보다 크고 끝 시간은 시작보다 커야 합니다."); continue; }
         if (valueOf(stop) / valueOf(step) > 20000) { error(".tran 점이 2만 개를 넘습니다(끝 ÷ 간격). 간격을 늘리세요."); continue; }
-        out.settings = { analysis: "transient", step, end: stop, start: start ?? "0" };
+        out.settings = { analysis: "transient", step, end: stop, start };
       } else if (cmd === ".ac") {
         const [sweep, points, fstart, fstop] = args;
         if (String(sweep).toLowerCase() !== "dec") { error(".ac는 dec 스윕만 지원합니다. 예: .ac dec 50 10 100k"); continue; }
@@ -136,8 +137,9 @@ export function parseNetlist(text) {
         if (!(valueOf(f1) > 0 && valueOf(f2) > valueOf(f1))) { error(".ac 시작 주파수는 0보다 크고 끝 주파수보다 작아야 합니다."); continue; }
         out.settings = { analysis: "ac", pointsPerDecade: String(Math.min(n, 200)), startFrequency: f1, endFrequency: f2 };
       } else if (cmd === ".probe" || cmd === ".print" || cmd === ".plot") {
-        for (const m of line.matchAll(/\b([VI])\(\s*([^)]+?)\s*\)/gi)) {
+        for (const m of line.matchAll(/\b([VI])\(\s*([^)]*?)\s*\)/gi)) {
           const args = m[2].split(/[\s,]+/).filter(Boolean);
+          if (!args.length) { error(m[0] + " 안에 노드나 부품 이름이 없습니다. 예: .probe V(out) I(R1)"); continue; }
           if (m[1].toUpperCase() === "I") { out.probes.push({ kind: "current", ref: args[0].toUpperCase() }); continue; }
           if (args.length > 1) out.warnings.push(number + "행: V(" + args.join(",") + ")는 두 노드의 전압을 각각 잽니다(차이는 커서로 읽으세요).");
           for (const node of args) out.probes.push({ kind: "voltage", node: node.toLowerCase() });
