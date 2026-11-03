@@ -95,9 +95,9 @@ export function deserializeProject(text, fallbackSettings = {}) {
   // Optional display field (no version bump): flipCurrent / flipCurrent2 = true flips a part's shown current reference. Anything else is dropped.
   sanitizeCurrentReferences(circuit.components);
   // Files from before sources were function generators: their separate AC values move into the waveform (source-model.js).
-  if (!wrapped || payload.sources !== SOURCE_MODEL) {
-    migrateGeneratorSources(circuit.components, { analysis: settings.analysis, frequency: settings.phasorFrequency ?? "1k" });
-  }
+  const notes = !wrapped || payload.sources !== SOURCE_MODEL
+    ? migrateGeneratorSources(circuit.components, { analysis: settings.analysis, frequency: settings.phasorFrequency ?? "1k" })
+    : [];
   const probes = wrapped ? structuredClone(payload.probes ?? []) : [];
   if (wrapped) {
     const componentIds = new Set(circuit.components.map((component) => component.id));
@@ -134,5 +134,6 @@ export function deserializeProject(text, fallbackSettings = {}) {
     probes,
     title: wrapped ? payload.title : undefined,
     subtitle: wrapped ? payload.subtitle : undefined,
+    notes,
   };
 }

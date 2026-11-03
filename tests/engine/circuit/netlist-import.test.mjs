@@ -197,6 +197,13 @@ test("review 11-03: an empty probe, an unreadable .tran start and an upper-case 
   assert.equal(parseNetlist("V1 a 0 1\nR1 a 0 1\n.tran 1u 1m -1m").errors.length, 1);
   assert.deepEqual(parseNetlist("V1 a 0 1\nR1 a 0 1\n.tran 1u 2m 1m").settings, { analysis: "transient", step: "1u", end: "2m", start: "1m" });
   assert.equal(parseNetlist("V1 a 0 1\nR1 a 0 1\n.tran 1u 1m").settings.start, "0");
+  // UIC may stand where the start time goes (SPICE): it is dropped, as the editor always starts from the C/L initial values.
+  for (const line of [".tran 1u 1m UIC", ".TRAN 1u 1m uic", ".tran 1u 1m 0 UIC"]) {
+    const parsed = parseNetlist("V1 a 0 1\nR1 a 0 1\n" + line);
+    assert.deepEqual(parsed.errors, [], line);
+    assert.deepEqual(parsed.settings, { analysis: "transient", step: "1u", end: "1m", start: "0" }, line);
+  }
+  assert.equal(parseNetlist("V1 a 0 1\nR1 a 0 1\n.tran 1u 2m 1m uic").settings.start, "1m");
   // "1E0M" is as ambiguous as "1M" and "1e0M" (milli or mega); "1E0MF" with its unit too. "1E3" stays 1000.
   for (const raw of ["1M", "1e0M", "1E0M", "2.5E-1M"]) assert.equal(editorValue(raw, ""), null, raw);
   assert.equal(editorValue("1E0MF", "F"), null);

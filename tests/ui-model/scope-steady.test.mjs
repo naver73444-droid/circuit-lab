@@ -44,6 +44,11 @@ test("정상상태: a lab RC needs only one period; a sine triggers at its upwar
   assert.equal(steadyStateRun(rc("1.5k", "47n", { mode: "DC", dc: "5" }), settings), null);
   assert.equal(steadyStateRun(rc("1.5k", "47n"), { ...settings, analysis: "ac" }), null);
   assert.match(steadyStateRun(rc("10k", "100u"), settings).refused, /한 주기에 20점도 못 그립니다/, "a 10 s settle cannot be drawn at 1 kHz");
+  assert.match(steadyStateRun(rc("10k", "100u"), settings).refused, /보수적 상한.*R·C를 줄이세요/, "the R·C bound is named as the cause");
+  assert.match(steadyStateRun(rc("1.5k", "47n"), { ...settings, end: "1", step: "1u" }).refused, /보이는 구간 1 s가 길어.*구간을 줄이세요/, "a 1 s window at 1 kHz: the span is the cause");
+  // A 0 Vpp sine or a square with equal levels is a DC level: nothing to trigger on.
+  assert.equal(steadyStateRun(rc("1.5k", "47n", { mode: "SIN", amplitude: "0", frequency: "1k", offset: "5" }), settings), null);
+  assert.equal(steadyStateRun(rc("1.5k", "47n", { ...square, pulseV1: "5" }), settings), null);
   // Long windows near the 20 000-point limit never pass it (the step is lengthened, not shortened, to put the trigger on a sample).
   for (const [end, step] of [["200m", "10u"], ["1", "50u"], ["500m", "100u"], ["20m", "1u"]]) {
     const plan = steadyStateRun(rc("1.5k", "47n"), { ...settings, end, step });
@@ -95,6 +100,8 @@ test("정상상태: 첫 SIN 1 Hz 뒤의 10 kHz 전원도 주기당 20점 미만�
     // The 1 s trigger forces Δt≈50 µs within 20k points, but a 10 kHz source needs Δt≤100 µs/20=5 µs.
     const plan = steadyStateRun(circuit, { ...settings, end: "500u", step: "100n" });
     assert.match(plan.refused, /한 주기에 20점도 못 그립니다/, `${type} ${mode}`);
+    assert.match(plan.refused, /트리거 전원 주기 1 s가 가장 빠른 전원 주기 0.0001 s보다 훨씬 길어.*정상상태를 끄세요/, "no R·C here: the slow trigger source is the cause");
+    assert.doesNotMatch(plan.refused, /R·C/);
   }
   const circuit = make([part("V1", "V", { mode: "SIN", frequency: "1k", phase: "0" }), part("I1", "I", { mode: "SIN", frequency: "10k", phase: "0" })]);
   const plan = steadyStateRun(circuit, { ...settings, end: "500u", step: "100n" });

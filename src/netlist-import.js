@@ -123,9 +123,11 @@ export function parseNetlist(text) {
       const [word, ...args] = line.split(/\s+/), cmd = word.toLowerCase();
       if (cmd === ".end" || cmd === ".op") continue;
       if (cmd === ".tran") {
-        const [step, stop, start = "0"] = args.map((a) => editorValue(a, "s"));
+        // UIC (start from the C/L initial values) may stand where the start time goes: the editor always starts from IC=, so it is dropped.
+        const times = args.filter((a) => !/^uic$/i.test(a));
+        const [step, stop, start = "0"] = times.map((a) => editorValue(a, "s"));
         if (!step || !stop) { error(".tran 간격과 끝 시간을 읽을 수 없습니다. 예: .tran 10u 5m"); continue; }
-        if (start === null || valueOf(start) < 0) { error(".tran 시작 시간 \"" + args[2] + "\"을(를) 읽을 수 없습니다. 0 이상인 시간을 쓰세요. 예: .tran 10u 5m 1m"); continue; }
+        if (start === null || valueOf(start) < 0) { error(".tran 시작 시간 \"" + times[2] + "\"을(를) 읽을 수 없습니다. 0 이상인 시간을 쓰세요. 예: .tran 10u 5m 1m"); continue; }
         if (!(valueOf(step) > 0 && valueOf(stop) > valueOf(start))) { error(".tran 간격은 0보다 크고 끝 시간은 시작보다 커야 합니다."); continue; }
         if (valueOf(stop) / valueOf(step) > 20000) { error(".tran 점이 2만 개를 넘습니다(끝 ÷ 간격). 간격을 늘리세요."); continue; }
         out.settings = { analysis: "transient", step, end: stop, start };

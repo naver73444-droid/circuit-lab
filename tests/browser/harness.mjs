@@ -151,7 +151,7 @@ export async function startBrowser({ args = [] } = {}) {
   ctx.profile = mkdtempSync(join(tmpdir(), "circuit-lab-smoke-"));
   ctx.edge = spawn(executable, [
     "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-extensions",
-    "--disable-background-networking", "--remote-debugging-port=0", `--user-data-dir=${ctx.profile}`, ...args, "about:blank",
+    "--disable-background-networking", "--mute-audio", "--remote-debugging-port=0", `--user-data-dir=${ctx.profile}`, ...args, "about:blank",
   ], { stdio: "ignore", windowsHide: true });
   let debugPort = 0;
   for (let n = 0; n < 200 && !debugPort; n += 1) {

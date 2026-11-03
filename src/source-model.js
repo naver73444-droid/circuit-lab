@@ -198,36 +198,70 @@ export function analysisCircuit(circuit) {
 /** Written by serializeProject: a file whose sources already follow this model is read as it is. */
 export const SOURCE_MODEL = "generator";
 
+/** "V1: DC 값 5 V를 사인 오프셋으로 옮김" — a sine's offset takes the old DC value (the old engine's DC operating point read props.dc). */
+function moveDcToOffset(component, notes) {
+  const props = component.props, dc = props.dc ?? "0";
+  if (num(dc) === num(props.offset ?? 0)) return;
+  props.offset = String(dc);
+  if (Number.isFinite(num(dc))) notes.push(`${props.ref ?? component.id}: DC 값 ${si(num(dc), unitOf(component))}를 사인 오프셋으로 옮김`);
+}
+
 /**
- * A file saved before sources were generators kept a separate AC magnitude/phase on every source. In a file saved for the AC analysis
- * those values were what it computed, so they move into the waveform and the AC answers stay the same: a sine whose own peak/phase
- * differ takes the AC value (peak = AC magnitude, cos phase = AC phase), and a DC or PULSE source with an explicit AC part becomes that
- * sine at `frequency` (the file's phasor frequency). Either way the sine's offset becomes the old DC value: the AC run biased the circuit
- * there (the engine's DC operating point reads props.dc, not a sine's offset), so a diode keeps its operating point. Files saved for DC
- * or transient keep their waveforms (their AC values were defaults nobody used). Changes component.props in place; returns it.
+ * One source of a file saved for the AC analysis before sources were generators: its separate AC magnitude/phase was what the file
+ * computed, so it moves into the waveform and the AC answers stay the same. A sine whose own peak/phase differ takes the AC value
+ * (peak = AC magnitude, cos phase = AC phase); a DC or PULSE source with a non-zero AC part becomes that sine around its old DC value at
+ * `frequency` (the file's phasor frequency). `biased` (the circuit has a diode): a sine's offset also takes the old DC value, which set
+ * the diode's operating point for the AC run. Changes component.props in place; returns it.
  */
-export function migrateGeneratorSource(component, { analysis, frequency = "1k" } = {}) {
+export function migrateGeneratorSource(component, { analysis, frequency = "1k", biased = false, notes = [] } = {}) {
   if (analysis !== "ac" || !isGeneratorSource(component) || component.props?.acMagnitude === undefined) return component;
   const props = component.props;
   const magnitude = num(props.acMagnitude), phase = num(props.acPhase ?? 0);
   if (!Number.isFinite(magnitude) || !Number.isFinite(phase)) return component;
   const sinPhase = toEnginePhase(phase);
-  // AC bias came from dc even when an old SIN stored a different transient offset.
-  props.offset = String(props.dc ?? "0");
   if (props.mode === "SIN") {
+    if (biased) moveDcToOffset(component, notes);
     const same = Math.abs(num(props.amplitude ?? 0) - magnitude) <= 1e-12 * Math.max(1, magnitude) && Math.abs(((fromEnginePhase(props.phase) - phase) % 360 + 540) % 360 - 180) < 1e-9;
     if (!same) Object.assign(props, { amplitude: String(props.acMagnitude), phase: sinPhase });
-  } else {
-    Object.assign(props, { mode: "SIN", amplitude: String(props.acMagnitude), phase: sinPhase, frequency: String(frequency) });
+  } else if (magnitude !== 0) {
+    Object.assign(props, { mode: "SIN", offset: String(props.dc ?? "0"), amplitude: String(props.acMagnitude), phase: sinPhase, frequency: String(frequency) });
   }
   return component;
 }
 
 /**
- * migrateGeneratorSource for every part of a file. An explicit AC 0 becomes a zero-amplitude sine, so analysisCircuit cannot replace
- * the old silent input with 1 V. A file with no AC values at all keeps the 1 V input. Changes the parts in place.
+ * The parts of a file saved before sources were generators (`analysis` = the file's analysis, `frequency` its phasor frequency), changed
+ * in place so that the analysis the file was saved for gives the same answers. Returns the notes for the status line (empty when
+ * nothing a student set was moved or lost).
+ *   AC: each source as migrateGeneratorSource (offsets move only with a diode, where the DC bias changes the AC answer). When no sine is
+ *       left but a source had an explicit AC 0, the first such source (a DC one first, so a square keeps its waveform) becomes a 0 Vpp
+ *       sine: analysisCircuit then gives every source AC 0, as the file did, instead of making one the 1 V input. A file with no AC
+ *       values at all keeps the 1 V input.
+ *   DC: the old engine took a source's DC operating point from props.dc, a field the old inspector showed in the DC analysis; the new
+ *       model takes a sine's offset and a square's average. A sine's offset takes dc; a square whose average differs cannot keep it and
+ *       stays as it is, with a note.
+ *   Transient: nothing moves (the waveform was what it computed).
  */
-export function migrateGeneratorSources(components, options = {}) {
-  components.forEach((component) => migrateGeneratorSource(component, options));
-  return components;
+export function migrateGeneratorSources(components, { analysis, frequency = "1k" } = {}) {
+  const notes = [], sources = components.filter(isGeneratorSource);
+  if (analysis === "dc") {
+    for (const component of sources) {
+      const props = component.props ?? {}, wave = waveOf(props);
+      if (props.dc === undefined) continue;
+      if (wave === "SIN") moveDcToOffset(component, notes);
+      const average = wave === "SQUARE" ? averageLevel(props) : NaN, old = num(props.dc);
+      if (Number.isFinite(average) && Number.isFinite(old) && Math.abs(average - old) > 1e-12 * Math.max(1, Math.abs(old))) {
+        notes.push(`${props.ref ?? component.id}: 구형의 DC 해석 값이 예전 DC 값 ${si(old, unitOf(component))}가 아닌 파형 평균 ${si(average, unitOf(component))}입니다`);
+      }
+    }
+  } else if (analysis === "ac") {
+    const biased = components.some((component) => component.type === "D");
+    sources.forEach((component) => migrateGeneratorSource(component, { analysis, frequency, biased, notes }));
+    if (!sources.some((component) => waveOf(component.props) === "SIN")) {
+      const silent = sources.filter((component) => component.props?.acMagnitude !== undefined && num(component.props.acMagnitude) === 0);
+      const quiet = silent.find((component) => waveOf(component.props) === "DC") ?? silent[0];
+      if (quiet) Object.assign(quiet.props, { mode: "SIN", offset: String(quiet.props.dc ?? "0"), amplitude: "0", phase: "90", frequency: String(frequency) });
+    }
+  }
+  return notes;
 }

@@ -10,6 +10,11 @@ const field = (key) => `#inspector-content [data-prop="${key}"]`;
 async function enter(key, value) { await typeInto(field(key), value); await press("Enter", "Enter", 13); await settle(); }
 async function setPart(id, key, value) { await clickPart(id); await enter(key, value); }
 const success = () => until(`${L}.getState().runState.status === "success" && !${L}.getState().stale`, "a fresh result", 20000);
+async function setSetting(key, value) {
+  if (!(await ev(`document.getElementById("advanced-analysis").open`))) await click("#advanced-analysis summary");
+  await ev(`(() => { const e = document.querySelector('#analysis-settings [data-setting="${key}"]'); e.value = ${JSON.stringify(value)}; e.dispatchEvent(new Event("input", { bubbles: true })); e.dispatchEvent(new Event("change", { bubbles: true })); e.blur(); return true; })()`);
+  await settle();
+}
 function dropLinuxManifestIcon() {
   if (process.platform !== "linux") return;
   for (let i = problems.length - 1; i >= 0; i -= 1) if (/Error while trying to use the following icon from the Manifest/.test(problems[i])) problems.splice(i, 1);
@@ -50,6 +55,34 @@ describe("function generator and oscilloscope", { timeout: 300000 }, () => {
     const vpp = Number(lines[0].match(/Vpp ([\d.]+) V/)[1]);
     assert.ok(Math.abs(vpp - 5 * Math.tanh(1e-3 / 4 / 70.5e-6)) < 0.02, `V(C) Vpp ${vpp} ≈ 5·tanh(T/4τ) = 4.996 V`);
     assert.match(lines[0], /주파수 1(\.000)? kHz|주파수 1000 Hz/);
+  });
+
+  test("정상상태 + 시작 10 ms: 시간 + 가 창 끝을 넘으면 끝 시간을 시작 + 새 창 길이(20 ms)로 늘리고 빈 구간 없이 채운다", async () => {
+    await navigate("/?example=rc-charge");
+    await click('[data-tool="select"]');
+    await setPart("R1", "value", "1.5k");
+    await setPart("C1", "value", "47n");
+    await clickPart("V1");
+    await click('[data-wave="DC"]');
+    await click('[data-wave="SQUARE"]');
+    await success();
+    await setSetting("start", "10m");
+    await setSetting("end", "15m");
+    assert.equal(await ev(`${L}.getState().autoUpdate`), true, "자동 갱신 켬");
+    await click("#steady-button");
+    await success();
+    const before = await ev(`${L}.getState().scope.x`);
+    assert.ok(Number.isFinite(await ev(`${L}.getState().result.trigger`)), "a triggered result");
+    assert.ok(Math.abs(before.maximum - 5e-3) < 1e-9, `the window is the 5 ms span from the trigger (${before.maximum})`);
+    // app.js passes the triggered result as relative: the new right edge (10 ms) is a span, so the end becomes start + 10 ms.
+    await click('[data-scale-axis="x"][data-scale-step="1"]');
+    await until(`${L}.getState().settings.end === "20m"`, "the end raised to start + the wider window");
+    await success();
+    await settle();
+    const x = await ev(`${L}.getState().scope.x`), last = await ev(`${L}.getState().result.xValues.at(-1)`);
+    assert.ok(x.maximum > before.maximum, "a wider time/div");
+    assert.ok(Math.abs(last - x.maximum) <= x.division * 1e-3, `no blank part at the right (${last} vs ${x.maximum})`);
+    assert.equal(await ev(`${L}.getState().settings.start`), "10m", "the start stays");
   });
 
   test("AC: the sine's amplitude is the AC input; with no sine the first source is 1 V and the status says so", async () => {
