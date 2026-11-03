@@ -7,7 +7,7 @@ import { describe, test, before, after, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict";
 import {
   L, ctx, ev, until, settle, navigate, sleep, click, select, typeInto, press, dragBetween, touchDrag, problems,
-  startServer, startBrowser, stopAll, assertNoProblems, resetProblems,
+  startServer, startBrowser, stopAll, assertNoProblems, resetProblems, waitFor,
 } from "./harness.mjs";
 
 const DEG = Math.PI / 180;
@@ -152,7 +152,7 @@ describe("EM course Hayt Ch.9", { timeout: 600000 }, () => {
     const y = box.y + box.h * 0.55;
     assert.equal(await ev(`document.elementFromPoint(${xOf(box, Math.PI / 2)}, ${y})?.id`), "em-course-canvas");
     await dragBetween({ x: xOf(box, Math.PI / 6), y }, { x: xOf(box, (2 * Math.PI) / 3), y });
-    let r = await rec(id);
+    let r = await waitFor(async () => { const x = await rec(id); return Math.abs(x.point[2] - (2 * Math.PI) / 3) < 2 * DEG ? x : null; }, "the drag reaches ≈ 120°");
     assert.ok(Math.abs(r.point[2] - (2 * Math.PI) / 3) < 2 * DEG, `the drag moved ωt to ≈ 120° (${r.point[2] / DEG}°)`);
     near(val(r, "emf"), -Math.cos(2 * r.point[2]), 1e-12, 1e-9, "the answer belongs to the dragged phase");
 
@@ -192,7 +192,7 @@ describe("EM course Hayt Ch.9", { timeout: 600000 }, () => {
     await ev(`(() => { const e = document.getElementById("em-course-error"); window.__ch9ErrorSeen = false;
       new MutationObserver(() => { if (!e.hidden) window.__ch9ErrorSeen = true; }).observe(e, { attributes: true, childList: true, characterData: true, subtree: true }); })()`);
     await dragBetween({ x: xOf(box, 300 * DEG), y }, { x: box.x + box.w + 40, y }, { steps: 8 });
-    r = await rec(id);
+    r = await waitFor(async () => { const x = await rec(id); return x.point[2] === 2 * Math.PI ? x : null; }, "the drag reaches 360°");
     assert.equal(r.point[2], 2 * Math.PI, `the drag ends exactly at 360° (${r.point[2] / DEG}°)`);
     assert.equal(r.result.status, "valid");
     near(val(r, "emf"), -1, 1e-12, 1e-11, "360°: −K cos720° = −1 V");
@@ -201,7 +201,7 @@ describe("EM course Hayt Ch.9", { timeout: 600000 }, () => {
     assert.equal(await ev(`window.__ch9ErrorSeen`), false, "the reason never flickered during the drag");
     // a drag beyond the left edge lands exactly on 0°; → past 360° is still refused (keys keep the strict rule)
     await dragBetween({ x: xOf(box, 60 * DEG), y }, { x: box.x + 4, y }, { steps: 8 });
-    r = await rec(id);
+    r = await waitFor(async () => { const x = await rec(id); return x.point[2] === 0 ? x : null; }, "the drag reaches 0°");
     assert.equal(r.point[2], 0, "the drag ends exactly at 0°");
     near(val(r, "emf"), -1, 1e-12, 1e-11, "0°: −K cos0 = −1 V");
     await ev(`document.getElementById("em-course-canvas").focus()`);
@@ -328,7 +328,7 @@ describe("EM course Hayt Ch.9", { timeout: 600000 }, () => {
         const box = await canvasBox(), y = box.y + box.h * 0.55;
         const beyond = end === 0 ? box.x + 4 : box.x + box.w + 40;
         await dragBetween({ x: xOf(box, middle), y }, { x: beyond, y }, { steps: 8 });
-        const r = await rec(id);
+        const r = await waitFor(async () => { const x = await rec(id); return x.point[2] === end ? x : null; }, `${id}: the drag reaches ${end}`);
         assert.equal(r.point[2], end, `${id}: the drag ends exactly at ${end} (${r.point[2]})`);
         assert.equal(r.result.status, "valid");
         near(val(r, key), expected, 1e-12, 1e-11, `${id} at ${end}: ${key}`);
@@ -419,7 +419,7 @@ describe("EM course Hayt Ch.9", { timeout: 600000 }, () => {
           await settle();
           const before = (await rec(id)).point[2];
           await touchDrag({ x: at.x + at.w * 0.35, y: at.y + at.h * 0.5 }, { x: at.x + at.w * 0.7, y: at.y + at.h * 0.5 });
-          const r = await rec(id);
+          const r = await waitFor(async () => { const x = await rec(id); return x.point[2] !== before ? x : null; }, `${id}: the finger moves the cursor`);
           assert.notEqual(r.point[2], before, `${id}: the finger moved the cursor`);
           assert.equal(r.result.status, "valid");
         }
