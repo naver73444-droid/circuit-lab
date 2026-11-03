@@ -5,7 +5,7 @@
 import { describe, test, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  L, ctx, ev, until, settle, navigate, sleep, problems,
+  L, ctx, ev, until, settle, navigate, sleep, press, problems,
   startServer, startBrowser, stopAll, leftoverProcessIds, isAlive, assertNoProblems, resetProblems,
 } from "./harness.mjs";
 
@@ -83,7 +83,7 @@ describe("signals: Ch04 4·5절 (FT 성질 증명 · 계수 표 · 2차 계단�
     assert.deepEqual(leftoverProcessIds(), [], "no process may still carry the throw-away browser profile");
   });
 
-  test("FT 세 증명: 증명 줄 1→4→1은 식·설명만 바꾸고 그래프는 그대로, a=0은 0.25로 정리", async () => {
+  test("FT 세 증명: 증명 줄 1→4→1은 식·설명만 바꾸고 그래프는 그대로, a=0은 건너뛰고 화살표 키로 양쪽 통과", async () => {
     await openSignals();
     await openLesson("fourier");
     const families = await ev(`[...document.querySelectorAll("[data-signals-family] option")].map((o) => o.value)`);
@@ -120,21 +120,44 @@ describe("signals: Ch04 4·5절 (FT 성질 증명 · 계수 표 · 2차 계단�
       assert.deepEqual(counts.slice(4), counts.slice(0, 3).reverse(), `${family}: going back removes the later lines`);
     }
 
-    // a = 0 is moved to +0.25 with a note; −2 brings the design example back.
+    // a = 0 is left out with a note: coming from below (−2) it becomes +0.25; −2 brings the design example back.
     await setFamily("proof-scale");
     await setParam("a", 0);
     let s = await sg();
-    assert.equal(s.params.a, 0.25, "a = 0 becomes 0.25");
+    assert.equal(s.params.a, 0.25, "a = 0 from −2 becomes 0.25");
     assert.match(s.note, /a=0은 제외합니다\. 0\.25로 표시합니다\./);
-    assert.equal(await ev(`document.querySelector('[data-signals-param="a"]').value`), "0.25", "the slider shows 0.25");
+    const sliderA = () => ev(`document.querySelector('[data-signals-param="a"]').value`);
+    assert.equal(await sliderA(), "0.25", "the slider shows 0.25");
     await noBadText("a = 0");
+    // Real arrow keys on the focused slider (step 0.25) cross 0 both ways instead of sticking at 0.25.
+    const arrow = async (key) => { await ev(`document.querySelector('[data-signals-param="a"]').focus()`); await press(key, key, key === "ArrowLeft" ? 37 : 39); };
+    await arrow("ArrowLeft");
+    s = await sg();
+    assert.equal(s.params.a, -0.25, "← from 0.25 skips 0 to −0.25");
+    assert.match(s.note, /a=0은 제외합니다\. −0\.25로 표시합니다\./);
+    assert.equal(await sliderA(), "-0.25", "the slider shows −0.25");
+    await arrow("ArrowLeft");
+    assert.equal((await sg()).params.a, -0.5, "← again: −0.5");
+    assert.equal((await sg()).note, "", "no note away from 0");
+    await arrow("ArrowRight");
+    await arrow("ArrowRight");
+    assert.equal((await sg()).params.a, 0.25, "→ from −0.25 skips 0 to 0.25");
+    assert.equal(await sliderA(), "0.25");
+    await noBadText("a across 0");
     await setParam("a", -2);
     s = await sg();
     assert.equal(s.params.a, -2);
     assert.equal(s.note, "", "the note goes away");
     assert.match(await live(), /Y=0\.25\+j0\.25/, "a = −2: Y(2 rad/s) = 1/4 + j/4");
+    // The substituted value names its frequency on the chosen axis: ω = 2 rad/s is f = 2/(2π) = 1/π Hz (not f = 2 Hz).
+    assert.ok((await formulaLines()).includes("Y(ω=2)=0.25+j0.25"), "ω axis: Y(ω=2)");
+    await setParam("axis", 0);
+    assert.ok((await formulaLines()).includes("Y(f=1/π)=0.25+j0.25"), "f axis: Y(f=1/π)");
+    assert.ok(!(await formulaLines()).some((l) => l.startsWith("Y(2)")), "no bare Y(2)");
+    await setParam("axis", 1);
     await setFamily("proof-sin");
     assert.match(await live(), /Y\(\+\)=−j1, Y\(−\)=j1/, "sin: Y(+f₀) = −j, Y(−f₀) = +j");
+    assert.match(await live(), /±ω₀ 판독값의 크기가 1/, "ω axis: the note names ±ω₀");
     await setParam("f0", 0.6);
     assert.match(await live(), /크기가 1이 아님/, "f₀ = 0.6: the other lobe adds, so the magnitude is not 1");
   });
@@ -172,6 +195,9 @@ describe("signals: Ch04 4·5절 (FT 성질 증명 · 계수 표 · 2차 계단�
     await setParam("spec", 3);
     assert.equal(await shown("[data-signals-coefficients]"), true, "the folded table appears in the TFS mode");
     assert.equal(await ev(`document.querySelector("[data-signals-coefficients]").open`), false, "folded at first");
+    assert.equal(await ev(`getComputedStyle(document.querySelector("[data-signals-coefficients] > summary")).display`), "list-item", "the summary stays a list item, so its ▸ marker shows");
+    const head = await ev(`[...document.querySelectorAll("[data-signals-coefficients] th")].map((t) => t.textContent)`);
+    assert.ok(head.includes("∠cₖ [rad]") && head.includes("φₖ [rad]"), `the phase columns name their unit (${head})`);
     await ev(`document.querySelector("[data-signals-coefficients]").open = true`);
     await settle();
     assert.equal(await shown("[data-signals-coefficient-preset]"), true, "the review button on the centred pulse train");
@@ -277,7 +303,9 @@ describe("signals: Ch04 4·5절 (FT 성질 증명 · 계수 표 · 2차 계단�
     await setFamily("ode2-rlc");
     await openFormula();
     const f = await formulaLines();
-    assert.ok(f.some((l) => l.includes("d₁=−1,d₂=−0.2")), "Ex 2.19: d₁ = −1, d₂ = −0.2");
+    assert.ok(f.some((l) => l.includes("d₁=y(0)−yₚ=−1, d₂=(y′(0)−σd₁)/β=−0.2")), "Ex 2.19: d₁ = −1, d₂ = −0.2");
+    assert.equal(f.filter((l) => l.startsWith("d₁=")).length, 1, "the d₁·d₂ values are written once");
+    assert.equal(await formulaFallbacks(), 0, "every Ex 2.19 formula line parses");
     assert.ok(f.some((l) => l.includes("h(t)=ds/dt=5.2e^(−t)sin(5t)")), "h(t) = 5.2e^(−t) sin 5t");
     near((await sg()).cursor, 0.3, 1e-9, "the marker starts at 0.3 s");
     const together = async (what) => {
@@ -389,7 +417,8 @@ describe("signals: Ch04 4·5절 (FT 성질 증명 · 계수 표 · 2차 계단�
     test(`폰 ${width}px: 새 예시·TFS 표를 열어도 가로 넘침 없음, 44px 대상·16px 입력, 라벨이 옆으로 잘리지 않음, 막대 간격`, async () => {
       await openSignals({ width, height, mobile: true });
       const overflow = (what) => ev(`(() => { const d = document.documentElement, w = document.getElementById("signals-workspace"); return { doc: d.scrollWidth - d.clientWidth, ws: w.scrollWidth - w.clientWidth, what: ${JSON.stringify(what)} }; })()`);
-      const checkLayout = async (what) => {
+      // `only`: check just the pane titles starting with it (the series lesson keeps older titles that may be cut on a phone).
+      const checkLayout = async (what, only = "") => {
         const o = await overflow(what);
         assert.ok(o.doc <= 1 && o.ws <= 1, `${what}: no sideways scroll (${JSON.stringify(o)})`);
         const small = await ev(`[...document.querySelectorAll("#signals-workspace :is([data-signals-param], [data-signals-family], [data-signals-mode], [data-signals-lesson], [data-signals-formula-box] > summary, [data-signals-coefficients] > summary, [data-signals-coefficient-preset])")].filter((e) => e.getClientRects().length > 0 && e.getBoundingClientRect().height < 43.5).map((e) => e.outerHTML.slice(0, 80))`);
@@ -398,6 +427,10 @@ describe("signals: Ch04 4·5절 (FT 성질 증명 · 계수 표 · 2차 계단�
         assert.deepEqual(tiny, [], `${what}: 16 px selects and inputs`);
         const cut = await ev(`(() => { const r = ${SVG}.getBoundingClientRect(); return [...${SVG}.querySelectorAll("text")].filter((t) => t.getAttribute("visibility") !== "hidden" && t.textContent.trim()).filter((t) => { const b = t.getBoundingClientRect(); return b.width > 0 && (b.left < r.left - 1 || b.right > r.right + 1); }).map((t) => t.textContent); })()`);
         assert.deepEqual(cut, [], `${what}: plot labels stay inside the plot`);
+        // setTitle shortens a title that does not fit with "…", so the box check above cannot see a cut title; the text can.
+        const titles = await ev(`[...${SVG}.querySelectorAll("text.sg-title")].filter((t) => t.getAttribute("visibility") !== "hidden" && t.textContent.trim()).map((t) => t.textContent).filter((t) => t.startsWith(${JSON.stringify(only)}))`);
+        assert.ok(titles.length > 0, `${what}: pane titles found`);
+        assert.deepEqual(titles.filter((t) => t.endsWith("…")), [], `${what}: pane titles are not cut short`);
       };
       await openLesson("fourier");
       for (const family of ["proof-scale", "proof-sin", "proof-integral"]) {
@@ -446,7 +479,7 @@ describe("signals: Ch04 4·5절 (FT 성질 증명 · 계수 표 · 2차 계단�
       await settle();
       await clickEl("[data-signals-coefficient-preset]");
       await openFormula();
-      await checkLayout("TFS table");
+      await checkLayout("TFS table", "TFS ");
       const table = await ev(`(() => { const t = document.querySelector("[data-signals-coefficients] table"); const s = document.querySelector(".sg-coefficient-scroll"); return { font: parseFloat(getComputedStyle(t).fontSize), inside: s.getBoundingClientRect().right <= document.documentElement.clientWidth + 1, scrolls: getComputedStyle(s).overflowX }; })()`);
       assert.ok(table.font >= 14, `table text ≥ 14 px (${table.font})`);
       assert.equal(table.inside, true, "the table box stays inside the screen");

@@ -160,11 +160,32 @@ test('only the time lesson and the FT proof examples normalize parameters; the n
   }
   const up = timeLesson.normalize('up', { L: 0, b: 1.4 });
   assert.deepEqual([up.params.L, up.params.b], [1, 1]);
-  // FT proof examples (spec-signals04 §4.1): a=0 of the scaling proof -> +0.25 with a note, the proof line -> integer 1..4; other FT examples: null.
+  // FT proof examples (spec-signals04 §4.1): a=0 of the scaling proof -> the next step past 0 (±0.25, by the previous a) with a
+  // note, the proof line -> integer 1..4; other FT examples: null.
   const fourier = LESSONS.fourier;
   const scale = fourier.normalize('proof-scale', { a: 0, line: 2.5 });
   const aSpec = fourier.controls('proof-scale', {}).find((c) => c.key === 'a');
   assert.ok(scale.params.a >= aSpec.min && scale.params.a <= aSpec.max && scale.params.a !== 0 && scale.params.line === 3 && scale.note.length > 0);
+  // Every grid value (min + k·step) of every proof slider, reached from the step below and from the step above: whatever
+  // normalize writes back is in range and on its slider's grid, and a never stays 0.
+  const onGrid = (c, v) => Math.abs((v - c.min) / c.step - Math.round((v - c.min) / c.step)) < 1e-9;
+  for (const family of ['proof-scale', 'proof-sin', 'proof-integral']) {
+    const controls = fourier.controls(family, {});
+    for (const c of controls) {
+      const count = Math.round((c.max - c.min) / c.step);
+      for (let k = 0; k <= count; k++) {
+        const value = c.min + k * c.step;
+        for (const prev of [value - c.step, value + c.step]) {
+          const { params } = fourier.normalize(family, { [c.key]: value }, { [c.key]: prev });
+          for (const [key, v] of Object.entries(params)) {
+            const spec = controls.find((x) => x.key === key);
+            assert.ok(v >= spec.min && v <= spec.max && onGrid(spec, v), `${family}/${key}=${v} (${c.key}=${value} from ${prev})`);
+          }
+          if (c.key === 'a') assert.notEqual('a' in params ? params.a : value, 0, `${family}: a=${value} from ${prev}`);
+        }
+      }
+    }
+  }
   for (const { value } of fourier.families) if (!value.startsWith('proof-')) assert.equal(fourier.normalize(value, {}), null, value);
   for (const [id, lesson] of Object.entries(LESSONS)) if (id !== 'time' && id !== 'fourier') assert.equal(lesson.normalize, undefined, id);
 });
@@ -173,7 +194,7 @@ test('only the time lesson and the FT proof examples normalize parameters; the n
 function fakeNode(tag) {
   const attrs = new Map();
   const node = {
-    tag, children: [], style: {}, hidden: false, textContent: '', parent: null,
+    tag, children: [], style: {}, dataset: {}, hidden: false, textContent: '', parent: null,
     classList: { toggle() {}, add() {}, remove() {} },
     setAttribute(key, value) { attrs.set(key, String(value)); },
     getAttribute: (key) => attrs.get(key) ?? null,
@@ -218,6 +239,38 @@ test('series view: switching to the one-sided / power spectrum hides the phase p
   }
   view.update(state(0));
   assert.ok(drawnTicks().drawn > 5, 'the ticks come back with the phase pane');
+});
+
+// ---- series view: the TFS table reads the same cached rows as the bars and follows a duty change ------------------
+test('series view: the TFS coefficient table shows the centred pulse values and refreshes when the duty changes', async () => {
+  const { createSeriesView } = await import('../../src/signals-series-view.js');
+  const view = createSeriesView({ doc: fakeDoc, parent: fakeNode('div'), emit() {} });
+  view.layout(900);
+  const cellValues = () => {
+    const out = {};
+    walk(view.root, (n) => {
+      const k = n.getAttribute?.('data-signals-coefficient-row');
+      if (k === null || k === undefined || n.hidden) return;
+      out[k] = {};
+      for (const cell of n.children) if (cell.tag === 'td') out[k][cell.getAttribute('data-key')] = cell.dataset.value === '' ? null : Number(cell.dataset.value);
+    });
+    return out;
+  };
+  // Hand values, c_k = sin(pi k d)/(pi k), a_k = 2 c_k, b_k = 0 (even pulse), d_k = 2|c_k|:
+  //   d = 1/2: c0 = 1/2, c1 = 1/pi, c2 = 0, c3 = -1/(3 pi)
+  view.update({ family: 'pulse', params: { N: 3, T0: 1, D: 0.5, spec: 3, axis: 0 }, cursor: 0 });
+  let rows = cellValues();
+  assert.deepEqual(Object.keys(rows), ['0', '1', '2', '3'], 'rows k = 0..N are shown');
+  assert.ok(Math.abs(rows[0].a - 0.5) < 1e-12 && rows[0].b === null);
+  assert.ok(Math.abs(rows[1].a - 2 / Math.PI) < 1e-12 && Math.abs(rows[1].b) < 1e-12 && Math.abs(rows[1].d - 2 / Math.PI) < 1e-12);
+  assert.ok(Math.abs(rows[2].a) < 1e-12);
+  assert.ok(Math.abs(rows[3].a + 2 / (3 * Math.PI)) < 1e-12 && Math.abs(rows[3].d - 2 / (3 * Math.PI)) < 1e-12);
+  //   d = 1/4: c1 = sin(pi/4)/pi = 1/(sqrt2 pi), c2 = 1/(2 pi), so a1 = sqrt2/pi, a2 = 1/pi
+  view.update({ family: 'pulse', params: { N: 3, T0: 1, D: 0.25, spec: 3, axis: 0 }, cursor: 0 });
+  rows = cellValues();
+  assert.ok(Math.abs(rows[0].a - 0.25) < 1e-12);
+  assert.ok(Math.abs(rows[1].a - Math.SQRT2 / Math.PI) < 1e-12, 'the cached rows follow the new duty');
+  assert.ok(Math.abs(rows[2].a - 1 / Math.PI) < 1e-12);
 });
 
 // ---- frequency response view: dragging the |H| plot moves the input frequency (fake DOM that records the listeners) ----

@@ -5,7 +5,7 @@ import { breakWraps, formatNumber, formatQuantity, jumpList, midpointRect, niceT
 import { freqAxisControl, freqSlider, isOmega, toAxis, axisSymbol, axisUnit } from './signals-axis.js';
 import { GUIDE_STEPS, guideChips, guideControls, guideFormula, guideObserve, guideText } from './signals-transform-guide.js';
 import {
-  PROOF_FAMILIES, isProofFamily, normalizeProof, proofControls, proofDescribe, proofFormula, proofFrame, proofRanges, proofRead,
+  PROOF_FAMILIES, isProofFamily, normalizeProof, proofControls, proofDescribe, proofFormula, proofFrame, proofRead,
 } from './signals-transform-proofs.js';
 
 export { isProofFamily };
@@ -37,14 +37,12 @@ export const isDiscreteTransform = (family) => family === 'dt';
 const isLine = (family) => family === 'cos' || family === 'psd';
 
 export function timeRange(family, p = {}) {
-  if (isProofFamily(family)) return proofRanges(family, p).time;
   if (family === 'psd') return { lo: -2 / (p.f0 ?? 100), hi: 2 / (p.f0 ?? 100) };
   if (family === 'esd') return { lo: -8 * (p.T ?? 0.1), hi: 8 * (p.T ?? 0.1) };
   if (family === 'delta') return { lo: -2.5, hi: 2.5 };
   return TIME_RANGE;
 }
 export function freqRange(family, p = {}) {
-  if (isProofFamily(family)) return proofRanges(family, p).freq;
   if (family === 'psd') return { lo: -2 * (p.f0 ?? 100), hi: 2 * (p.f0 ?? 100) };
   if (family === 'dt') return DT_OMEGA_RANGE;
   if (family === 'esd') return { lo: -1.6 / (p.T ?? 0.1), hi: 1.6 / (p.T ?? 0.1) };
@@ -612,8 +610,9 @@ export const transformLesson = {
     if (isProofFamily(family)) return proofFormula(family, params);
     return `X(ω)=∫ x(t) e^(−jωt) dt; x(t)=(1/2π)∫ X(ω) e^(jωt) dω; X(f)=X(ω), ω=2πf; ${(isOmega(params.axis ?? 0) ? FORMULAS_W : FORMULAS_F)[family]}`;
   },
-  // a = 0 of the scaling proof and a fractional proof line are written back (the slider jumps to what is drawn).
-  normalize: (family, params) => (isProofFamily(family) ? normalizeProof(family, params) : null),
+  // a = 0 of the scaling proof and a fractional proof line are written back (the slider jumps to what is drawn); `prev` (the
+  // values before the change) tells which way a = 0 was crossed.
+  normalize: (family, params, prev) => (isProofFamily(family) ? normalizeProof(family, params, prev) : null),
   describe: ({ family, params }) => {
     const step = guideStepOf(family);
     return step ? guideObserve(step, params) : describeTransform(family, params);

@@ -94,6 +94,19 @@ test('모든 파형·여러 듀티에서 k≥1 변환 항등식: a−jb=2c, d=�
   }
 });
 
+test('TFS 읽기: 점프에서는 중점으로 수렴, 강의식 −tan⁻¹(bₖ/aₖ)와 표 φₖ(atan2)의 사분면 차이', () => {
+  const text = seriesLesson.read('pulse', { spec: TFS_SPEC });
+  assert.match(text, /연속점에서 원 신호로, 점프에서 중점으로 수렴/);
+  assert.match(text, /aₖ<0이면 −tan⁻¹\(bₖ\/aₖ\)와 ±π 다릅니다/);
+  assert.ok(text.length > 20 && text.length < 160, `${text.length}`); // 다른 읽기 줄과 같은 길이 한도
+  // k=4 (d=1/3): a₄=2 sin(4π/3)/(4π)=−√3/(4π)<0, b₄=0 → 강의식 −tan⁻¹(0)=0, 표는 π (차이 π)
+  const r = coefficientRow('pulse', 1 / 3, 4);
+  near(r.a, -Math.sqrt(3) / (4 * Math.PI));
+  near(r.b, 0);
+  near(r.phi, Math.PI);
+  near(Math.abs(r.phi - -Math.atan(r.b / r.a)), Math.PI);
+});
+
 test('표 행 수: N=1·10·25 → 2·11·11, 단일 행 함수는 25차까지 정상', () => {
   assert.equal(TABLE_ROWS, 10);
   assert.equal(coefficientRows('pulse', 1 / 3, 1).length, 2);

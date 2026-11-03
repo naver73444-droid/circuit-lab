@@ -151,6 +151,29 @@ test('normalize: a=0 → 0.25와 note, 증명 줄은 정수 1~4', () => {
   // lesson 훅도 같은 결과, 다른 예시는 null
   assert.deepEqual(transformLesson.normalize('proof-scale', { a: 0, line: 1 }), zero);
   assert.equal(transformLesson.normalize('rect', { T: 1 }), null);
+  // 바뀌기 전 값(prev)으로 0을 지나는 방향을 안다: 양수에서 내려오면 −0.25, 음수에서 올라오면 +0.25
+  const down = normalizeProof('proof-scale', { a: 0, line: 1 }, { a: 0.25, line: 1 });
+  assert.equal(down.params.a, -0.25);
+  assert.equal(down.note, 'a=0은 제외합니다. −0.25로 표시합니다.');
+  assert.equal(normalizeProof('proof-scale', { a: 0 }, { a: 3 }).params.a, -0.25); // 큰 양수에서 0을 직접 입력해도 아래쪽
+  assert.equal(normalizeProof('proof-scale', { a: 0 }, { a: -0.25 }).params.a, 0.25);
+  assert.equal(normalizeProof('proof-scale', { a: 0 }, {}).params.a, 0.25); // prev에 a가 없음(복원)
+  assert.deepEqual(transformLesson.normalize('proof-scale', { a: 0, line: 1 }, { a: 0.25 }), down); // lesson 훅도 prev를 넘김
+  // 화살표 키 흉내: 격자 한 칸씩 3 → −3, −3 → 3. 0에 머물지 않고 양쪽으로 지나간다(0.25 ↔ −0.25는 한 번 누름)
+  for (const [from, to, step] of [[3, -3, -0.25], [-3, 3, 0.25]]) {
+    let a = from;
+    let presses = 0;
+    while (a !== to && presses < 100) {
+      const prev = { a };
+      const next = Math.round((a + step) * 4) / 4; // 격자값 그대로(부동소수 누적 없음)
+      const fixed = normalizeProof('proof-scale', { a: next }, prev).params;
+      a = 'a' in fixed ? fixed.a : next;
+      assert.notEqual(a, 0, `${from}→${to}: a=0에 머묾`);
+      presses += 1;
+    }
+    assert.equal(a, to, `${from}→${to}: 끝까지 도달`);
+    assert.equal(presses, 23, `${from}→${to}: 25개 격자값 중 0 하나를 건너뛰어 23번 누름`);
+  }
   // 표시 어댑터는 normalize 없이 중간값(a=0, line=2.5)을 받아도 안전하다
   const raw = Object.freeze({ a: 0, line: 2.5, axis: 1 });
   assert.match(proofDescribe('proof-scale', raw), /^줄 3\/4/);
@@ -199,7 +222,17 @@ test('증명 줄: 길이 4, 식은 파싱 가능, 줄 수를 늘리고 줄이면
   assert.match(neg[2].formula, /^Y\(ω\)=−\(1\/a\)/);
   assert.match(pos[2].formula, /^Y\(ω\)=\(1\/a\)/);
   assert.equal(neg[3].formula, 'Y(ω)=(1/|a|) X(ω/a)');
-  assert.match(proofFormula('proof-scale', { a: -2, line: 4 }), /y\(t\)=e\^\(2t\)u\(−t\); Y\(ω\)=\(1\/2\)·1\/\(1\+jω\/\(−2\)\); Y\(2\)=0\.25\+j0\.25/);
+  assert.match(proofFormula('proof-scale', { a: -2, line: 4 }), /y\(t\)=e\^\(2t\)u\(−t\); Y\(ω\)=\(1\/2\)·1\/\(1\+jω\/\(−2\)\); Y\(ω=2\)=0\.25\+j0\.25$/);
+  // f축: 같은 물리 주파수 ω=2 rad/s는 f=2/(2π)=1/π Hz. 1/(2−j2)=0.25+j0.25 그대로(f=2 Hz 값처럼 읽히지 않게)
+  assert.match(proofFormula('proof-scale', { a: -2, line: 4, axis: 0 }), /; Y\(f=1\/π\)=0\.25\+j0\.25$/);
+  assert.doesNotMatch(proofFormula('proof-scale', { a: -2, axis: 0 }), /Y\(2\)/);
+  // |a|=1: e^(1t)·(1/1) 대신 e^(t)·계수 없음. a=−1: y=e^(t)u(−t), Y=1/(1−jω) → ω=2에서 (1+j2)/5
+  assert.match(proofFormula('proof-scale', { a: -1, line: 1 }), /y\(t\)=e\^\(t\)u\(−t\); Y\(ω\)=1\/\(1−jω\); Y\(ω=2\)=0\.2\+j0\.4$/);
+  // a=1: y=e^(−t)u(t), Y=1/(1+jω) → ω=2에서 (1−j2)/5
+  assert.match(proofFormula('proof-scale', { a: 1, line: 1 }), /y\(t\)=e\^\(−t\)u\(t\); Y\(ω\)=1\/\(1\+jω\); Y\(ω=2\)=0\.2−j0\.4$/);
+  for (const params of [{ a: -1, axis: 0 }, { a: 1, axis: 1 }, { a: -2, axis: 0 }]) {
+    for (const part of proofFormula('proof-scale', { ...params, line: 4 }).split(';').map((s) => s.trim())) assert.ok(parseCourseMath(part), part);
+  }
 });
 
 test('p11: 지수의 j를 빠뜨리지 않고, 마지막 줄은 e^(∓jπ/2) 위상 인자', () => {
@@ -209,7 +242,9 @@ test('p11: 지수의 j를 빠뜨리지 않고, 마지막 줄은 e^(∓jπ/2) 위
   assert.ok(text.includes('Y(ω)=[e^(−jπ/2)X(ω−ω₀)+e^(jπ/2)X(ω+ω₀)]/2'));
   assert.match(text, /Y\(ω₀\)=−j1; Y\(−ω₀\)=j1/);
   // 크기를 따로 더하지 않는다: 일반 f₀에서는 ±f₀ 판독값의 크기가 1이 아님
-  assert.match(proofDescribe('proof-sin', { f0: 2 }), /±f₀ 판독값의 크기가 1/);
+  assert.match(proofDescribe('proof-sin', { f0: 2, axis: 0 }), /±f₀ 판독값의 크기가 1/);
+  assert.match(proofDescribe('proof-sin', { f0: 2, axis: 1 }), /±ω₀ 판독값의 크기가 1/); // ω축에서는 ±ω₀
+  assert.doesNotMatch(proofDescribe('proof-sin', { f0: 2, axis: 1 }), /f₀/);
   assert.doesNotMatch(proofDescribe('proof-sin', { f0: 0.6 }), /크기가 1(?!이 아님)/);
   assert.doesNotMatch(proofRead('proof-sin'), /두 봉우리/);
 });
@@ -348,5 +383,8 @@ test('스케일링·sin 판독은 축을 바꿔도 같은 복소값', () => {
   const read = (family, axis) => proofDescribe(family, { axis }).split(': ').slice(1).join(': ');
   assert.equal(read('proof-scale', 0), read('proof-scale', 1));
   assert.match(read('proof-scale', 1), /^Y=0\.25\+j0\.25, \|Y\|=0\.3536, 위상 0\.7854 rad/);
-  assert.equal(read('proof-sin', 0), read('proof-sin', 1));
+  // sin: 복소 판독값은 같고 뒤 설명만 축 기호(±f₀ / ±ω₀)를 따른다
+  const values = (axis) => read('proof-sin', axis).split(' · ')[0];
+  assert.equal(values(0), values(1));
+  assert.match(values(1), /^Y\(\+\)=−j1, Y\(−\)=j1, \|Y\|=1$/);
 });

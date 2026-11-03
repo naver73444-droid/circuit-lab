@@ -3,11 +3,11 @@
 // Time is shared: the cursor is t in seconds, with a general period T0. In the TFS mode a folded coefficient table (k = 0..min(N,10))
 // sits under the plot; its 11 rows are made once and only rewritten when the wave, duty or N changes.
 import { createLegend, createPane, createSurface, phoneBudget, svgEl } from './signals-plot.js';
-import { clamp, formatNumber, jumpList, niceTicks, sampleCurve } from './signals-util.js';
+import { clamp, formatComplex, formatNumber, jumpList, niceTicks, sampleCurve } from './signals-util.js';
 import { toAxis, isOmega } from './signals-axis.js';
 import {
   MAX_HARMONICS, exactWaveform, gibbsOvershoot, hasJump, isUnipolar, jumpPositions, partialSum, phasorChain,
-  seriesCoefficients, twoSidedSpectrum, TFS_SPEC, formatComplex, formatPhase,
+  seriesCoefficients, twoSidedSpectrum, TFS_SPEC, formatPhase,
 } from './signals-series-model.js';
 import { TABLE_ROWS, coefficientRow } from './signals-series-coefficients.js';
 
@@ -18,7 +18,7 @@ const KEYS = '←/→ 시각 t 이동, Shift는 10배, Home/End 처음·끝, Spa
 const REVIEW_PRESET = { N: 10, T0: 3, D: 1 / 3, spec: TFS_SPEC }; // Review p19~21: T0 = 3 s, 1 s wide pulse, N = 10
 const LEGEND = ['회전 벡터 사슬 (k번째는 k배 빠르게)', '사슬 끝점 · 점선 = 높이', '합 x_N(t)', '원래 파형 (열린 원 = 점프의 양쪽 극한)', '부분합 최댓값'];
 const TFS_LEGEND = ['aₖ 막대 (cos 계수, 왼쪽)', 'bₖ 막대 (sin 계수, 오른쪽)'];
-const TABLE_HEAD = ['k', 'aₖ', 'bₖ', 'cₖ', '|cₖ|', '∠cₖ', 'dₖ', 'φₖ'];
+const TABLE_HEAD = ['k', 'aₖ', 'bₖ', 'cₖ', '|cₖ|', '∠cₖ [rad]', 'dₖ', 'φₖ [rad]'];
 const PI_TICKS = [{ value: -Math.PI, label: '−π' }, { value: 0, label: '0' }, { value: Math.PI, label: 'π' }];
 
 export function createSeriesView({ doc, parent, emit }) {
@@ -65,7 +65,7 @@ export function createSeriesView({ doc, parent, emit }) {
   const phaseOut = phasePane.stems('cm faint');
   const phaseNow = phasePane.vline('c4 dash');
   const phaseNow2 = phasePane.vline('c4 dash');
-  const table = createCoefficientTable(doc, root, () => emit({ params: { ...REVIEW_PRESET } }));
+  const table = createCoefficientTable(doc, root, () => emit({ params: { ...REVIEW_PRESET } }), barRows);
   let stacked = false;
   let dragging = false;
   let width = 0;
@@ -187,7 +187,7 @@ export function createSeriesView({ doc, parent, emit }) {
     table.update(tfs, wave, D, N);
   }
 
-  // All 26 rows (k = 0..25) for the bars, cached per wave and duty (the cursor changes every frame while playing).
+  // All 26 rows (k = 0..25) for the bars and the table, cached per wave and duty (the cursor changes every frame while playing).
   let barKey = '';
   let barCache = [];
   function barRows(wave, D) {
@@ -288,7 +288,8 @@ export function createSeriesView({ doc, parent, emit }) {
 
 // Folded "계수 표": k | a_k | b_k | c_k | |c_k| | angle c_k | d_k | phi_k for k = 0..min(N,10), phases in rad, undefined = —.
 // The review button (centred pulse train only) applies the Review p19~21 values; the axis stays as it is.
-function createCoefficientTable(doc, parent, applyPreset) {
+// rowsFor(wave, D) is the view's cached 26-row list, so the bars and the table share one computation.
+function createCoefficientTable(doc, parent, applyPreset, rowsFor) {
   const make = (tag, attrs = {}, parentNode = null, text) => {
     const node = doc.createElement(tag);
     for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
@@ -332,7 +333,7 @@ function createCoefficientTable(doc, parent, applyPreset) {
       rows.forEach(({ row, cells }, k) => {
         row.hidden = k > shown;
         if (row.hidden) return;
-        const r = coefficientRow(wave, D, k);
+        const r = rowsFor(wave, D)[k];
         put(cells.a, formatNumber(r.a, 4), r.a);
         put(cells.b, r.b === null ? '—' : formatNumber(r.b, 4), r.b);
         put(cells.c, formatComplex(r.c), null);

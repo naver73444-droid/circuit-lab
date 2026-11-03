@@ -2,7 +2,7 @@
 // Every wave is written as x_N(t) = dc + sum_{k=1..N} amp_k cos(2*pi*k*t/T0 + phase_k); the model works in normalized time
 // (t/T0 = periods), the view and the readout convert with T0. EFS: x = sum c_k e^{j k w0 t}, c_k = (1/T0) integral x e^{-j k w0 t} dt.
 import { choiceControl, freqAxisControl } from './signals-axis.js';
-import { formatNumber } from './signals-util.js';
+import { formatComplex, formatNumber } from './signals-util.js';
 
 export const SERIES_WAVES = [
   { value: 'pulse', label: '중심 펄스열 · 우대칭 (Ex 4.3, 4.5, 4.7)' },
@@ -198,16 +198,6 @@ function describePeak(wave, gibbs) {
 
 const t0Of = (params) => params.T0 ?? 1;
 
-// Complex c as "re ± j im" (a zero part is left out).
-export function formatComplex(c, digits = 4) {
-  const re = Math.abs(c.re) < 1e-12 ? 0 : c.re;
-  const im = Math.abs(c.im) < 1e-12 ? 0 : c.im;
-  if (!im) return formatNumber(re, digits);
-  const jPart = `j${formatNumber(Math.abs(im), digits)}`;
-  if (!re) return `${im < 0 ? '−' : ''}${jPart}`;
-  return `${formatNumber(re, digits)}${im < 0 ? '−' : '+'}${jPart}`;
-}
-
 // TFS lines of the formula box: the partial sum, the conversions, and the k=1 values of the current wave and period.
 function tfsFormula(wave, D, T0) {
   const c1 = fourierCoefficient(wave, D, 1);
@@ -244,7 +234,7 @@ export const seriesLesson = {
   },
   scrub: true,
   read(family, params = {}) {
-    if (params.spec === TFS_SPEC) return '막대는 aₖ(cos)와 bₖ(sin), k=0은 평균 a₀ 하나입니다. 유한 합 x_N은 N→∞에서 원 신호로 수렴합니다. 표에서 세 꼴을 대조해 보세요.';
+    if (params.spec === TFS_SPEC) return '막대는 aₖ(cos)·bₖ(sin), k=0은 평균 a₀입니다. x_N은 연속점에서 원 신호로, 점프에서 중점으로 수렴합니다. 표의 φₖ는 atan2라 aₖ<0이면 −tan⁻¹(bₖ/aₖ)와 ±π 다릅니다.';
     if (family === 'pulse') return 'd=τ/T₀가 클수록 DC가 커지고 첫 영점은 k=1/d에 있습니다. 불연속 옆 부분합은 약 9% 넘침(Gibbs)으로 수렴합니다.';
     if (family === 'pulse0') return '펄스를 0<t<dT₀로 옮겨도 |c_k|는 그대로이고 위상만 −πkd씩 선형으로 밀립니다. 시간 이동은 선형 위상입니다.';
     if (family === 'odd') return '홀대칭 구형파는 sin 항만, 홀수 고조파만 남습니다: b_k=4A/(πk). 부분합은 불연속 옆에서 약 9% 넘칩니다(수렴 후에도).';

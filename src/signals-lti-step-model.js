@@ -229,7 +229,6 @@ export function ode2Formula(family, params = {}) {
   } else {
     lines.push('y=yₚ+e^(σt)[d₁cos(βt)+d₂sin(βt)]');
     lines.push(`d₁=y(0)−yₚ=${num(z0)}, d₂=(y′(0)−σd₁)/β=${num(sol.coeffs[1])}`);
-    lines.push(`d₁=${num(sol.coeffs[0])},d₂=${num(sol.coeffs[1])}`);
   }
   lines.push(`y(t)=${solutionText(sol.kind, sol.roots, sol.coeffs, q)}`);
   lines.push(`s(t)=${solutionText(sol.kind, sol.roots, sol.relaxedCoeffs, q)}`);

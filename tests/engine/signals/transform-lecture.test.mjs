@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TRANSFORM_FAMILIES, spectrumValue, timeSignal, transformMetrics, transformControls, transformLesson, describeTransform, transformFrame,
-  signalEnergy, bandEnergy, timeRange, freqRange, cosineAutocorrelation,
+  signalEnergy, bandEnergy, timeRange, freqRange, cosineAutocorrelation, isProofFamily,
 } from '../../../src/signals-transform-model.js';
 import { controlDefaults } from '../../../src/signals-util.js';
 
@@ -282,6 +282,8 @@ test('every family draws finite frames; ranges and metrics exist', () => {
       }
       assert.doesNotMatch(describeTransform(value, p), /NaN|undefined|Infinity/);
     }
+    // 성질 증명 예시는 그림 범위를 proofFrame 안에서 정한다(위 프레임 검사로 충분, transform-proofs 시험에서 따로 검사).
+    if (isProofFamily(value)) continue;
     assert.ok(timeRange(value, defaults(value)).hi > timeRange(value, defaults(value)).lo);
     assert.ok(freqRange(value, defaults(value)).hi > freqRange(value, defaults(value)).lo);
   }

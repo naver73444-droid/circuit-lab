@@ -2,11 +2,12 @@
 // p12 scaling with a < 0, p16 integration). Each example draws the original x (dashed) and the result y (solid), then Re Y and
 // Im Y, so negative coefficients and the delta of the integral are not read as a magnitude/phase.
 // Course convention: X(w) = integral x(t) e^{-jwt} dt, inverse with 1/2pi; numeric frequency arguments are f [Hz], w = 2 pi f.
-import { formatNumber, jumpList, midpointRect, niceTicks, sampleCurve } from './signals-util.js';
+import { formatComplex, formatNumber, jumpList, midpointRect, niceTicks, sampleCurve } from './signals-util.js';
 import { axisSymbol, axisUnit, freqAxisControl, freqSlider, isOmega, toAxis } from './signals-axis.js';
 
 const TAU = 2 * Math.PI;
 const MINUS = '−';
+const num = (value, digits = 4) => formatNumber(value, digits);
 
 export const PROOF_FAMILIES = [
   { value: 'proof-scale', label: '성질 증명 · 음수 스케일링' },
@@ -83,10 +84,10 @@ export function proofControls(family, params = {}) {
   return [lineControl, axis];
 }
 
-const ZERO_NOTE = 'a=0은 제외합니다. 0.25로 표시합니다.';
-
-// Only the keys that need fixing: a = 0 -> +0.25 (with a note), line -> integer 1..4.
-export function normalizeProof(family, params = {}) {
+// Only the keys that need fixing: line -> integer 1..4, a = 0 -> the next slider step past 0 (with a note). Coming from a positive
+// a (the arrow key or a drag going down) that is -0.25, otherwise +0.25, so the slider can cross zero both ways. `prev` = the
+// values before the change; a restored or typed 0 without one becomes +0.25.
+export function normalizeProof(family, params = {}, prev = null) {
   family$(family);
   const raw = Number(params.line);
   const out = { line: Number.isFinite(raw) ? Math.min(4, Math.max(1, Math.round(raw))) : 1 };
@@ -94,7 +95,10 @@ export function normalizeProof(family, params = {}) {
   if (family === 'proof-scale') {
     const a = Number(params.a);
     if (!Number.isFinite(a)) out.a = -2;
-    else if (Math.abs(a) < 1e-9) { out.a = 0.25; note = ZERO_NOTE; }
+    else if (Math.abs(a) < 1e-9) {
+      out.a = Number(prev?.a) > 0 ? -0.25 : 0.25;
+      note = `a=0은 제외합니다. ${num(out.a)}로 표시합니다.`;
+    }
   }
   return { params: out, note };
 }
@@ -109,17 +113,8 @@ function prepared(family, params = {}) {
 }
 
 // ---------------------------------------------------------------- formatting
-const num = (value, digits = 4) => formatNumber(value, digits);
-// "0.25+j0.25", "−j1", "0" (parts below 1e-12 are dropped)
-function complexText({ re, im }, digits = 4) {
-  const r = Math.abs(re) < 1e-12 ? 0 : re;
-  const i = Math.abs(im) < 1e-12 ? 0 : im;
-  if (i === 0) return num(r, digits);
-  const imag = `j${num(Math.abs(i), digits)}`;
-  if (r === 0) return `${i < 0 ? MINUS : ''}${imag}`;
-  return `${num(r, digits)}${i < 0 ? MINUS : '+'}${imag}`;
-}
 const signed = (value) => (value < 0 ? `(${num(value)})` : num(value));
+const rate = (k) => (k === 1 ? 't' : `${num(k)}t`); // e^(2t), but e^(t) rather than e^(1t)
 
 // ---------------------------------------------------------------- proof lines
 const DEFINITIONS = 'X(ω)=∫ x(t) e^(−jωt) dt; x(t)=(1/2π)∫ X(ω) e^(jωt) dω';
@@ -160,20 +155,23 @@ function substitution(family, p) {
   if (family === 'proof-scale') {
     const a = p.a;
     const value = scaledExponentialSpectrum(a, READ_HZ[family]);
-    const y = a < 0 ? `y(t)=e^(${num(-a)}t)u(−t)` : `y(t)=e^(${MINUS}${num(a)}t)u(t)`;
-    return `x(t)=e^(−t)u(t), X(ω)=1/(1+jω), a=${num(a)}; ${y}; Y(ω)=(1/${num(Math.abs(a))})·1/(1+jω/${signed(a)}); Y(2)=${complexText(value)}`;
+    const y = a < 0 ? `y(t)=e^(${rate(-a)})u(−t)` : `y(t)=e^(${MINUS}${rate(a)})u(t)`;
+    const factor = Math.abs(a) === 1 ? '' : `(1/${num(Math.abs(a))})·`;
+    const den = a === 1 ? '1+jω' : a === -1 ? '1−jω' : `1+jω/${signed(a)}`;
+    const at = isOmega(axis) ? 'Y(ω=2)' : 'Y(f=1/π)'; // the same physical frequency, w = 2 rad/s = 2 pi (1/pi Hz)
+    return `x(t)=e^(−t)u(t), X(ω)=1/(1+jω), a=${num(a)}; ${y}; Y(ω)=${factor}1/(${den}); ${at}=${formatComplex(value)}`;
   }
   if (family === 'proof-sin') {
     const plus = sinModulationSpectrum({ T: SIN_T, f0: p.f0 }, p.f0);
     const minus = sinModulationSpectrum({ T: SIN_T, f0: p.f0 }, -p.f0);
     const at = isOmega(axis) ? `ω₀=${num(TAU * p.f0)}` : `f₀=${num(p.f0)}`;
     const arg = isOmega(axis) ? 'ω₀' : 'f₀';
-    return `x(t)=Π(t/2), X(ω)=2 sinc(ω/π), ${at}; Y(${arg})=${complexText(plus)}; Y(−${arg})=${complexText(minus)}`;
+    return `x(t)=Π(t/2), X(ω)=2 sinc(ω/π), ${at}; Y(${arg})=${formatComplex(plus)}; Y(−${arg})=${formatComplex(minus)}`;
   }
   const value = integralSpectrum(INT_T, READ_HZ[family]).regular;
   const delta = isOmega(axis) ? 'Y(ω)=πδ(ω)+PV{sinc(ω/(2π))/(jω)}' : 'Y(f)=δ(f)/2+PV{sinc(f)/(j2πf)}';
   const read = isOmega(axis) ? 'Y_r(π)' : 'Y_r(0.5)';
-  return `x(t)=Π(t), X(ω)=sinc(ω/(2π)), X(0)=1; ${delta}; ${read}=${complexText(value)}`;
+  return `x(t)=Π(t), X(ω)=sinc(ω/(2π)), X(0)=1; ${delta}; ${read}=${formatComplex(value)}`;
 }
 
 export function proofFormula(family, params = {}) {
@@ -197,19 +195,19 @@ function readout(family, p) {
   if (family === 'proof-scale') {
     const v = scaledExponentialSpectrum(p.a, READ_HZ[family]);
     const at = omega ? 'ω=2 rad/s' : `f=${num(READ_HZ[family], 3)} Hz`;
-    return `${at}: Y=${complexText(v)}, |Y|=${num(Math.hypot(v.re, v.im))}, 위상 ${num(Math.atan2(v.im, v.re))} rad`;
+    return `${at}: Y=${formatComplex(v)}, |Y|=${num(Math.hypot(v.re, v.im))}, 위상 ${num(Math.atan2(v.im, v.re))} rad`;
   }
   if (family === 'proof-sin') {
     const plus = sinModulationSpectrum({ T: SIN_T, f0: p.f0 }, p.f0);
     const minus = sinModulationSpectrum({ T: SIN_T, f0: p.f0 }, -p.f0);
     const at = omega ? `ω=±${num(TAU * p.f0)} rad/s` : `f=±${num(p.f0)} Hz`;
-    const other = Math.abs(sinc(2 * p.f0 * SIN_T)) < 1e-12 ? ' · 반대 로브 기여 0이라 ±f₀ 판독값의 크기가 1' : ' · 반대 로브가 겹쳐 크기가 1이 아님';
-    return `${at}: Y(+)=${complexText(plus)}, Y(−)=${complexText(minus)}, |Y|=${num(Math.abs(plus.im))}${other}`;
+    const other = Math.abs(sinc(2 * p.f0 * SIN_T)) < 1e-12 ? ` · 반대 로브 기여 0이라 ±${omega ? 'ω₀' : 'f₀'} 판독값의 크기가 1` : ' · 반대 로브가 겹쳐 크기가 1이 아님';
+    return `${at}: Y(+)=${formatComplex(plus)}, Y(−)=${formatComplex(minus)}, |Y|=${num(Math.abs(plus.im))}${other}`;
   }
   const { regular, impulse } = integralSpectrum(INT_T, READ_HZ[family]);
   const at = omega ? 'ω=π rad/s' : 'f=0.5 Hz';
   const area = omega ? `δ 면적 π (=2π·${num(impulse.areaHz)})` : `δ 면적 ${num(impulse.areaHz)}`;
-  return `${at}: 정규 부분 ${complexText(regular)} · 원점 ${area}`;
+  return `${at}: 정규 부분 ${formatComplex(regular)} · 원점 ${area}`;
 }
 
 export function proofDescribe(family, params = {}) {
@@ -219,9 +217,8 @@ export function proofDescribe(family, params = {}) {
 }
 
 // ---------------------------------------------------------------- frame for signals-panes-view
-// Time [lo, hi] s and frequency [lo, hi] Hz drawn by each example.
-export function proofRanges(family, params = {}) {
-  const p = prepared(family, params);
+// Time [lo, hi] s and frequency [lo, hi] Hz drawn by each example (p already prepared).
+function proofRanges(family, p) {
   if (family === 'proof-scale') return { time: { lo: -4, hi: 4 }, freq: { lo: -SCALE_F, hi: SCALE_F } };
   if (family === 'proof-sin') {
     const f = p.f0 + 3 / SIN_T;

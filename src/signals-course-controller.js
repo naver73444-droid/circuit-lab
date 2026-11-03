@@ -494,6 +494,7 @@ export function createSignalsCourseController(host) {
     lastPatch = patch;
     const state = current();
     if (patch.params) {
+      const prev = { ...state.params };
       const controls = lessonOf().controls(state.family, state.params);
       for (const [key, value] of Object.entries(patch.params)) {
         const spec = controls.find((c) => c.key === key);
@@ -501,8 +502,9 @@ export function createSignalsCourseController(host) {
         const next = clamp(spec.integer ? Math.round(value) : value, spec.min, spec.max);
         state.params[key] = next;
       }
-      // Values the lesson cannot use (a = 0) are written back so the slider jumps to what is really drawn.
-      const normalized = lessonOf().normalize?.(state.family, state.params);
+      // Values the lesson cannot use (a = 0) are written back so the slider jumps to what is really drawn; `prev` says which
+      // way the value moved, so an arrow key can step across a forbidden 0.
+      const normalized = lessonOf().normalize?.(state.family, state.params, prev);
       if (normalized) {
         Object.assign(state.params, normalized.params);
         state.note = normalized.note;

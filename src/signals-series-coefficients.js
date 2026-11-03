@@ -8,17 +8,13 @@ import { MAX_HARMONICS, fourierCoefficient } from './signals-series-model.js';
 export const TABLE_ROWS = 10; // the table lists k = 0..min(N, 10); the bars use all 25 harmonics
 const PHASE_HIDE = 1e-6; // phase is undefined where |c_k| <= 1e-6 * the largest |c_k| (same rule as twoSidedSpectrum)
 
-const peakCache = new Map();
+// Largest |c_k| over k = 0..25 (26 closed forms; the view caches the rows per wave and duty for the bars and the table).
 function peakMagnitude(wave, D) {
-  const key = `${wave}|${D}`;
-  if (peakCache.has(key)) return peakCache.get(key);
   let peak = 0;
   for (let k = 0; k <= MAX_HARMONICS; k++) {
     const c = fourierCoefficient(wave, D, k);
     peak = Math.max(peak, Math.hypot(c.re, c.im));
   }
-  if (peakCache.size > 200) peakCache.clear();
-  peakCache.set(key, peak);
   return peak;
 }
 

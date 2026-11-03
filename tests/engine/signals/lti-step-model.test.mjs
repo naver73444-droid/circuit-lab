@@ -5,6 +5,7 @@ import {
 } from '../../../src/signals-lti-step-model.js';
 import { LTI_FAMILIES, ltiLesson, ltiFrame, hasTimeMarker } from '../../../src/signals-lti-model.js';
 import { rlcH } from '../../../src/signals-freq-model.js';
+import { parseCourseMath } from '../../../src/course-math-view.js';
 
 const near = (a, b, tol = 1e-10) => assert.ok(Math.abs(a - b) <= tol, `${a} versus ${b}`);
 const E = Math.exp;
@@ -184,7 +185,10 @@ test('읽기·수식: p9 계수 결정식과 Ex 2.19 d₁·d₂, s·h 해석식'
   const p9 = ode2Formula('ode2-review', {});
   for (const part of ['c₁+c₂=3−0.5=2.5', '−c₁−2c₂=0', 'c₁=5,c₂=−2.5', 's(t)=0.5−e^(−t)+0.5e^(−2t)', 'h(t)=ds/dt=e^(−t)−e^(−2t)']) assert.ok(p9.includes(part), part);
   const ex = ode2Formula('ode2-rlc', {});
-  for (const part of ['d₁=−1,d₂=−0.2', 's(t)=1−e^(−t)[cos(5t)+0.2sin(5t)]', 'h(t)=ds/dt=5.2e^(−t)sin(5t)']) assert.ok(ex.includes(part), part);
+  // Ex 2.19: y(0)=0, y′(0)=0, yₚ=1, σ=−1, β=5 → d₁=0−1=−1, d₂=(0−(−1)(−1))/5=−0.2. 값은 한 번만 적는다(같은 줄 반복 없음).
+  for (const part of ['d₁=y(0)−yₚ=−1, d₂=(y′(0)−σd₁)/β=−0.2', 's(t)=1−e^(−t)[cos(5t)+0.2sin(5t)]', 'h(t)=ds/dt=5.2e^(−t)sin(5t)']) assert.ok(ex.includes(part), part);
+  assert.equal(ex.split('; ').filter((l) => l.startsWith('d₁=')).length, 1);
+  for (const formula of [p9, ex]) for (const part of formula.split(';').map((s) => s.trim())) assert.ok(parseCourseMath(part), part); // 수식 칸에 글로 떨어지는 줄 없음
   assert.match(ode2Describe('ode2-review', {}, 1), /y=2\.0011/);
   for (const { value } of ODE2_FAMILIES) {
     const text = ode2Read(value);

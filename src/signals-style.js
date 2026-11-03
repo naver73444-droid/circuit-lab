@@ -156,7 +156,7 @@ export const SIGNALS_STYLE = `
 .sg-sound-table tbody th{text-align:center;color:var(--muted)}
 /* Fourier-series TFS mode: folded three-form coefficient table under the plot. Only its own box scrolls sideways. */
 .sg-coefficients{min-width:0;max-width:100%;margin:8px 12px 12px;border-top:1px solid var(--line-soft)}
-.sg-coefficients>summary{display:flex;align-items:center;min-height:44px;padding:0 2px;font-size:13px;color:var(--muted);cursor:pointer}
+.sg-coefficients>summary{min-height:44px;padding:12px 2px;font-size:13px;color:var(--muted);cursor:pointer}
 .sg-coefficients>button{min-height:44px;margin:0 0 6px;padding:4px 16px;border-radius:10px}
 .sg-coefficient-scroll{min-width:0;max-width:100%;overflow-x:auto;border:1px solid var(--line-soft);border-radius:8px}
 .sg-coefficient-scroll:focus-visible,.sg-coefficients>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
