@@ -22,11 +22,29 @@ export const SPEC_OPTIONS = [
   { value: 0, label: '양쪽 |c_k| · ∠c_k' },
   { value: 1, label: '한쪽 진폭 2|c_k| (CFS)' },
   { value: 2, label: '전력 |c_k|² (PSD)' },
+  { value: 3, label: '삼각 aₖ·bₖ (TFS)' },
 ];
+export const TFS_SPEC = 3;
 
 export const hasDuty = (wave) => wave === 'pulse' || wave === 'pulse0';
 export const hasJump = (wave) => wave !== 'tri';
 export const isUnipolar = (wave) => wave === 'pulse' || wave === 'pulse0' || wave === 'ramp';
+
+// Phase [rad] as a simple multiple of pi when it is one (π, −π/3, 2π/3, ...), else a decimal; null (undefined) reads —.
+export function formatPhase(phase, digits = 4) {
+  if (phase === null || phase === undefined) return '—';
+  const ratio = phase / Math.PI;
+  for (const den of [1, 2, 3, 4, 6]) {
+    const num = Math.round(ratio * den);
+    if (Math.abs(ratio * den - num) > 1e-9) continue;
+    if (num === 0) return '0';
+    const g = gcd(Math.abs(num), den);
+    const [n, d] = [num / g, den / g];
+    return `${n < 0 ? '−' : ''}${Math.abs(n) === 1 ? '' : Math.abs(n)}π${d === 1 ? '' : `/${d}`}`;
+  }
+  return formatNumber(phase, digits);
+}
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
 
 const sinc = (u) => (u === 0 ? 1 : Math.sin(Math.PI * u) / (Math.PI * u));
 
@@ -180,6 +198,31 @@ function describePeak(wave, gibbs) {
 
 const t0Of = (params) => params.T0 ?? 1;
 
+// Complex c as "re ± j im" (a zero part is left out).
+export function formatComplex(c, digits = 4) {
+  const re = Math.abs(c.re) < 1e-12 ? 0 : c.re;
+  const im = Math.abs(c.im) < 1e-12 ? 0 : c.im;
+  if (!im) return formatNumber(re, digits);
+  const jPart = `j${formatNumber(Math.abs(im), digits)}`;
+  if (!re) return `${im < 0 ? '−' : ''}${jPart}`;
+  return `${formatNumber(re, digits)}${im < 0 ? '−' : '+'}${jPart}`;
+}
+
+// TFS lines of the formula box: the partial sum, the conversions, and the k=1 values of the current wave and period.
+function tfsFormula(wave, D, T0) {
+  const c1 = fourierCoefficient(wave, D, 1);
+  const a1 = 2 * c1.re;
+  const b1 = -2 * c1.im;
+  const exact = Math.abs(D - 1 / 3) < 1e-12 ? { pulse: 'c₁=√3/(2π)≈', pulse0: 'c₁=√3/(4π)−j3/(4π)≈' }[wave] : null;
+  return [
+    'x_N(t)=a₀+Σ_(k=1)^N[aₖcos(kω₀t)+bₖsin(kω₀t)]',
+    'a₀=c₀, aₖ=2Re(cₖ), bₖ=−2Im(cₖ), k≥1',
+    'cₖ=(aₖ−jbₖ)/2, dₖ=√(aₖ²+bₖ²)=2|cₖ|, φₖ=atan2(−bₖ,aₖ)=arg cₖ',
+    `${exact ?? 'c₁='}${formatComplex(c1)}, a₁=${formatNumber(a1, 4)}, b₁=${formatNumber(b1, 4)}, d₁=${formatNumber(Math.hypot(a1, b1), 4)}, φ₁=${formatPhase(Math.atan2(c1.im, c1.re))}`,
+    `T₀=${formatNumber(T0)} s, ω₀=2π/T₀=${formatNumber(TAU / T0, 4)} rad/s`,
+  ].join('; ');
+}
+
 export const seriesLesson = {
   id: 'series',
   families: SERIES_WAVES,
@@ -200,7 +243,8 @@ export const seriesLesson = {
     return { min: 0, max: 2 * T0, step: 0.01 * T0, initial: 0, unit: 's', symbol: 't', loop: true, rate: 0.25 * T0 };
   },
   scrub: true,
-  read(family) {
+  read(family, params = {}) {
+    if (params.spec === TFS_SPEC) return '막대는 aₖ(cos)와 bₖ(sin), k=0은 평균 a₀ 하나입니다. 유한 합 x_N은 N→∞에서 원 신호로 수렴합니다. 표에서 세 꼴을 대조해 보세요.';
     if (family === 'pulse') return 'd=τ/T₀가 클수록 DC가 커지고 첫 영점은 k=1/d에 있습니다. 불연속 옆 부분합은 약 9% 넘침(Gibbs)으로 수렴합니다.';
     if (family === 'pulse0') return '펄스를 0<t<dT₀로 옮겨도 |c_k|는 그대로이고 위상만 −πkd씩 선형으로 밀립니다. 시간 이동은 선형 위상입니다.';
     if (family === 'odd') return '홀대칭 구형파는 sin 항만, 홀수 고조파만 남습니다: b_k=4A/(πk). 부분합은 불연속 옆에서 약 9% 넘칩니다(수렴 후에도).';
@@ -221,6 +265,7 @@ export const seriesLesson = {
       saw: 'cₖ=j(−1)^k/(πk)',
       tri: 'cₖ=4/(πk)², k odd',
     }[family];
+    if (params.spec === TFS_SPEC) return `${tfsFormula(family, params.D ?? 0.5, T0)}; ${wave}`;
     return `${common}; ${wave}; ${link}`;
   },
   describe({ family, params }) {
@@ -234,6 +279,10 @@ export const seriesLesson = {
     if (params.spec === 2) {
       const pw = seriesPower(family, D, params.N);
       return `${base} · 전력 ${formatNumber(pw.partial)} / ${formatNumber(pw.total)} (${formatNumber(pw.fraction * 100)}%) · DC ${formatNumber(coefficients.dc ** 2)}`;
+    }
+    if (params.spec === TFS_SPEC) {
+      const c1 = fourierCoefficient(family, D, 1);
+      return `${base} · a₀=${formatNumber(coefficients.dc, 4)}, a₁=${formatNumber(2 * c1.re, 4)}, b₁=${formatNumber(-2 * c1.im, 4)} · ${tail}`;
     }
     return `${base} · 합성 ${coefficients.terms.slice(0, params.N).filter((t) => t.amp > 1e-9).length}개 성분 · ${tail}`;
   },

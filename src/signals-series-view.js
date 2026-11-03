@@ -1,18 +1,24 @@
 // Lesson 3 view: rotating phasor chain (left) whose tip height is the partial-sum waveform scrolling right,
-// and the line spectrum below (two-sided |c_k| with its phase, one-sided 2|c_k|, or the power |c_k|^2).
-// Time is shared: the cursor is t in seconds, with a general period T0.
+// and the line spectrum below (two-sided |c_k| with its phase, one-sided 2|c_k|, the power |c_k|^2, or the signed TFS bars a_k, b_k).
+// Time is shared: the cursor is t in seconds, with a general period T0. In the TFS mode a folded coefficient table (k = 0..min(N,10))
+// sits under the plot; its 11 rows are made once and only rewritten when the wave, duty or N changes.
 import { createLegend, createPane, createSurface, phoneBudget, svgEl } from './signals-plot.js';
 import { clamp, formatNumber, jumpList, niceTicks, sampleCurve } from './signals-util.js';
 import { toAxis, isOmega } from './signals-axis.js';
 import {
   MAX_HARMONICS, exactWaveform, gibbsOvershoot, hasJump, isUnipolar, jumpPositions, partialSum, phasorChain,
-  seriesCoefficients, twoSidedSpectrum,
+  seriesCoefficients, twoSidedSpectrum, TFS_SPEC, formatComplex, formatPhase,
 } from './signals-series-model.js';
+import { TABLE_ROWS, coefficientRow } from './signals-series-coefficients.js';
 
 // Vertical range shared by the phasor and wave panes (a unipolar wave needs less room below zero).
 const yRange = (wave) => (isUnipolar(wave) ? [-0.55, 1.45] : [-1.4, 1.4]);
 const LAG = 1.6; // periods of history shown to the right
 const KEYS = '←/→ 시각 t 이동, Shift는 10배, Home/End 처음·끝, Space 재생·정지. 스펙트럼을 끌면 N이 바뀜';
+const REVIEW_PRESET = { N: 10, T0: 3, D: 1 / 3, spec: TFS_SPEC }; // Review p19~21: T0 = 3 s, 1 s wide pulse, N = 10
+const LEGEND = ['회전 벡터 사슬 (k번째는 k배 빠르게)', '사슬 끝점 · 점선 = 높이', '합 x_N(t)', '원래 파형 (열린 원 = 점프의 양쪽 극한)', '부분합 최댓값'];
+const TFS_LEGEND = ['aₖ 막대 (cos 계수, 왼쪽)', 'bₖ 막대 (sin 계수, 오른쪽)'];
+const TABLE_HEAD = ['k', 'aₖ', 'bₖ', 'cₖ', '|cₖ|', '∠cₖ', 'dₖ', 'φₖ'];
 const PI_TICKS = [{ value: -Math.PI, label: '−π' }, { value: 0, label: '0' }, { value: Math.PI, label: 'π' }];
 
 export function createSeriesView({ doc, parent, emit }) {
@@ -23,13 +29,16 @@ export function createSeriesView({ doc, parent, emit }) {
   const wavePane = createPane(doc, surface.svg);
   const specPane = createPane(doc, surface.svg);
   const phasePane = createPane(doc, surface.svg);
-  createLegend(doc, root, [
-    { cls: 'c1', text: '회전 벡터 사슬 (k번째는 k배 빠르게)' },
-    { cls: 'c4 mk', text: '사슬 끝점 · 점선 = 높이' },
-    { cls: 'c2', text: '합 x_N(t)' },
-    { cls: 'cm dash', text: '원래 파형 (열린 원 = 점프의 양쪽 극한)' },
-    { cls: 'c5 dot', text: '부분합 최댓값' },
+  const legend = createLegend(doc, root, [
+    { cls: 'c1', text: LEGEND[0] },
+    { cls: 'c4 mk', text: LEGEND[1] },
+    { cls: 'c2', text: LEGEND[2] },
+    { cls: 'cm dash', text: LEGEND[3] },
+    { cls: 'c5 dot', text: LEGEND[4] },
+    { cls: 'c1', text: TFS_LEGEND[0] },
+    { cls: 'c2', text: TFS_LEGEND[1] },
   ]);
+  legend.set(LEGEND);
 
   const circles = Array.from({ length: MAX_HARMONICS }, () => phasorPane.circle('cm thin'));
   const chain = phasorPane.line('c1 thick');
@@ -47,10 +56,16 @@ export function createSeriesView({ doc, parent, emit }) {
   const spectrumOut = specPane.stems('cm faint');
   const spectrumNow = specPane.vline('c4 dash');
   const spectrumNow2 = specPane.vline('c4 dash');
+  // TFS bars: thin stems without end dots (a_k at k-0.2, b_k at k+0.2) so the pair stays apart on a phone
+  const barA = specPane.stems('c1', { radius: 0 });
+  const barAOut = specPane.stems('c1 faint', { radius: 0 });
+  const barB = specPane.stems('c2', { radius: 0 });
+  const barBOut = specPane.stems('c2 faint', { radius: 0 });
   const phaseIn = phasePane.stems('c1');
   const phaseOut = phasePane.stems('cm faint');
   const phaseNow = phasePane.vline('c4 dash');
   const phaseNow2 = phasePane.vline('c4 dash');
+  const table = createCoefficientTable(doc, root, () => emit({ params: { ...REVIEW_PRESET } }));
   let stacked = false;
   let dragging = false;
   let width = 0;
@@ -167,6 +182,18 @@ export function createSeriesView({ doc, parent, emit }) {
       peakLine.hide(); peakLabel.hide();
     }
     updateSpectrum(wave, D, N, T0, spec, axis);
+    const tfs = spec === TFS_SPEC;
+    legend.set(tfs ? [...LEGEND, ...TFS_LEGEND] : LEGEND);
+    table.update(tfs, wave, D, N);
+  }
+
+  // All 26 rows (k = 0..25) for the bars, cached per wave and duty (the cursor changes every frame while playing).
+  let barKey = '';
+  let barCache = [];
+  function barRows(wave, D) {
+    const key = `${wave}|${D}`;
+    if (key !== barKey) { barKey = key; barCache = Array.from({ length: MAX_HARMONICS + 1 }, (_, k) => coefficientRow(wave, D, k)); }
+    return barCache;
   }
 
   const freqLabel = (k, T0, axis) => formatNumber(toAxis(k / T0, axis), 3);
@@ -178,6 +205,27 @@ export function createSeriesView({ doc, parent, emit }) {
     const lines = twoSidedSpectrum(wave, D, K);
     const ticksFor = (list) => list.map((k) => ({ value: k, label: freqLabel(k, T0, axis) }));
     const xr = K + 0.8;
+    if (spec !== TFS_SPEC) for (const bar of [barA, barAOut, barB, barBOut]) bar.set([]);
+    if (spec === TFS_SPEC) {
+      const rows = barRows(wave, D);
+      const top = Math.max(...rows.flatMap((r) => [Math.abs(r.a), Math.abs(r.b ?? 0)]));
+      const half = Math.max(1.15 * top, 0.5); // centred on 0, span at least 1
+      const mark = Number(top.toPrecision(2));
+      specPane.setDomain(-0.7, K + 0.7, -half, half);
+      specPane.drawAxes({ xTicks: ticksFor([0, 5, 10, 15, 20, 25]), yTicks: [-mark, 0, mark] });
+      specPane.setTitle(`TFS aₖ·bₖ (k=0은 평균 a₀) · 눈금 = k·${sym} [${unit}]`, 'start', true);
+      const aPts = rows.map((r) => [r.k === 0 ? 0 : r.k - 0.2, r.a, r.k]);
+      const bPts = rows.filter((r) => r.k > 0).map((r) => [r.k + 0.2, r.b, r.k]);
+      const inside = (list) => list.filter((p) => p[2] <= N).map((p) => [p[0], p[1]]);
+      const outside = (list) => list.filter((p) => p[2] > N).map((p) => [p[0], p[1]]);
+      barA.set(inside(aPts)); barAOut.set(outside(aPts));
+      barB.set(inside(bPts)); barBOut.set(outside(bPts));
+      spectrumIn.set([]); spectrumOut.set([]);
+      spectrumNow.set(N + 0.5);
+      spectrumNow2.hide();
+      phaseIn.set([]); phaseOut.set([]); phaseNow.hide(); phaseNow2.hide();
+      return;
+    }
     if (spec === 1) {
       const peak = Math.max(...lines.filter((l) => l.k >= 0).map((l) => (l.k === 0 ? l.mag : 2 * l.mag))) * 1.15 || 1;
       specPane.setDomain(-0.7, K + 0.7, 0, peak);
@@ -236,4 +284,63 @@ export function createSeriesView({ doc, parent, emit }) {
   surface.setGrab((p) => specPane.contains(p.x, p.y));
 
   return { root, surface, layout, update, destroy: () => root.remove() };
+}
+
+// Folded "계수 표": k | a_k | b_k | c_k | |c_k| | angle c_k | d_k | phi_k for k = 0..min(N,10), phases in rad, undefined = —.
+// The review button (centred pulse train only) applies the Review p19~21 values; the axis stays as it is.
+function createCoefficientTable(doc, parent, applyPreset) {
+  const make = (tag, attrs = {}, parentNode = null, text) => {
+    const node = doc.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    if (text !== undefined) node.textContent = text;
+    parentNode?.append(node);
+    return node;
+  };
+  const box = make('details', { class: 'sg-coefficients', 'data-signals-coefficients': '' }, parent);
+  box.hidden = true;
+  make('summary', {}, box, '계수 표');
+  const preset = make('button', { type: 'button', 'data-signals-coefficient-preset': '' }, box, '복습 p19~21');
+  preset.addEventListener('click', applyPreset);
+  const scroll = make('div', { class: 'sg-coefficient-scroll', tabindex: '0', role: 'region', 'aria-label': '세 꼴 푸리에 계수 표 (가로 스크롤)' }, box);
+  const table = make('table', {}, scroll);
+  const head = make('tr', {}, make('thead', {}, table));
+  for (const name of TABLE_HEAD) make('th', { scope: 'col' }, head, name);
+  const body = make('tbody', {}, table);
+  const rows = Array.from({ length: TABLE_ROWS + 1 }, (_, k) => {
+    const row = make('tr', { 'data-signals-coefficient-row': String(k) }, body);
+    make('th', { scope: 'row' }, row, String(k));
+    const cells = Object.fromEntries(['a', 'b', 'c', 'mag', 'phase', 'd', 'phi'].map((name) => [name, make('td', { 'data-key': name }, row)]));
+    return { row, cells };
+  });
+  // Taps on the table never reach the plot's drag / touch readout.
+  box.addEventListener('pointerdown', (event) => event.stopPropagation());
+  let key = '';
+
+  const put = (cell, text, value) => {
+    if (cell.textContent !== text) cell.textContent = text;
+    cell.dataset.value = value === null ? '' : String(value);
+  };
+  return {
+    update(visible, wave, D, N) {
+      if (box.hidden === visible) box.hidden = !visible;
+      if (preset.hidden !== (wave !== 'pulse')) preset.hidden = wave !== 'pulse';
+      if (!visible) return;
+      const next = `${wave}|${D}|${N}`;
+      if (next === key) return;
+      key = next;
+      const shown = Math.min(N, TABLE_ROWS);
+      rows.forEach(({ row, cells }, k) => {
+        row.hidden = k > shown;
+        if (row.hidden) return;
+        const r = coefficientRow(wave, D, k);
+        put(cells.a, formatNumber(r.a, 4), r.a);
+        put(cells.b, r.b === null ? '—' : formatNumber(r.b, 4), r.b);
+        put(cells.c, formatComplex(r.c), null);
+        put(cells.mag, formatNumber(r.mag, 4), r.mag);
+        put(cells.phase, formatPhase(r.phase), r.phase);
+        put(cells.d, formatNumber(r.d, 4), r.d);
+        put(cells.phi, formatPhase(r.phi), r.phi);
+      });
+    },
+  };
 }

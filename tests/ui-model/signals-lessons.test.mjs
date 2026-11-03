@@ -150,7 +150,7 @@ test('every slider grid (min + k·step) contains its default, its maximum and 0 
   }
 });
 
-test('only the time lesson normalizes parameters; the normalized value is a legal slider value', () => {
+test('only the time lesson and the FT proof examples normalize parameters; the normalized value is a legal slider value', () => {
   assert.equal(typeof timeLesson.normalize, 'function');
   for (const family of familiesOf(timeLesson).filter((f) => f !== 'up')) {
     const controls = timeLesson.controls(family, {});
@@ -160,7 +160,13 @@ test('only the time lesson normalizes parameters; the normalized value is a lega
   }
   const up = timeLesson.normalize('up', { L: 0, b: 1.4 });
   assert.deepEqual([up.params.L, up.params.b], [1, 1]);
-  for (const [id, lesson] of Object.entries(LESSONS)) if (id !== 'time') assert.equal(lesson.normalize, undefined, id);
+  // FT proof examples (spec-signals04 §4.1): a=0 of the scaling proof -> +0.25 with a note, the proof line -> integer 1..4; other FT examples: null.
+  const fourier = LESSONS.fourier;
+  const scale = fourier.normalize('proof-scale', { a: 0, line: 2.5 });
+  const aSpec = fourier.controls('proof-scale', {}).find((c) => c.key === 'a');
+  assert.ok(scale.params.a >= aSpec.min && scale.params.a <= aSpec.max && scale.params.a !== 0 && scale.params.line === 3 && scale.note.length > 0);
+  for (const { value } of fourier.families) if (!value.startsWith('proof-')) assert.equal(fourier.normalize(value, {}), null, value);
+  for (const [id, lesson] of Object.entries(LESSONS)) if (id !== 'time' && id !== 'fourier') assert.equal(lesson.normalize, undefined, id);
 });
 
 // ---- series view: the phase pane's ticks do not stay drawn when the pane is hidden (fake DOM, no browser) ----------

@@ -4,6 +4,11 @@
 import { breakWraps, formatNumber, formatQuantity, jumpList, midpointRect, niceTicks, sampleCurve } from './signals-util.js';
 import { freqAxisControl, freqSlider, isOmega, toAxis, axisSymbol, axisUnit } from './signals-axis.js';
 import { GUIDE_STEPS, guideChips, guideControls, guideFormula, guideObserve, guideText } from './signals-transform-guide.js';
+import {
+  PROOF_FAMILIES, isProofFamily, normalizeProof, proofControls, proofDescribe, proofFormula, proofFrame, proofRanges, proofRead,
+} from './signals-transform-proofs.js';
+
+export { isProofFamily };
 
 export const TRANSFORM_FAMILIES = [
   { value: 'rect', label: '직사각 AΠ → sinc (Ex 4.12)' },
@@ -18,6 +23,7 @@ export const TRANSFORM_FAMILIES = [
   { value: 'psd', label: '정현파 PSD·자기상관 (Ex 4.42)' },
   { value: 'esd', label: '에너지 스펙트럼 ESD (Ex 4.41)' },
   { value: 'dt', label: '이산 구간 수열 · DTFT' },
+  ...PROOF_FAMILIES, // three FT properties proved line by line (signals-transform-proofs.js)
 ];
 
 export const TIME_RANGE = { lo: -4, hi: 4 }; // seconds (default)
@@ -31,12 +37,14 @@ export const isDiscreteTransform = (family) => family === 'dt';
 const isLine = (family) => family === 'cos' || family === 'psd';
 
 export function timeRange(family, p = {}) {
+  if (isProofFamily(family)) return proofRanges(family, p).time;
   if (family === 'psd') return { lo: -2 / (p.f0 ?? 100), hi: 2 / (p.f0 ?? 100) };
   if (family === 'esd') return { lo: -8 * (p.T ?? 0.1), hi: 8 * (p.T ?? 0.1) };
   if (family === 'delta') return { lo: -2.5, hi: 2.5 };
   return TIME_RANGE;
 }
 export function freqRange(family, p = {}) {
+  if (isProofFamily(family)) return proofRanges(family, p).freq;
   if (family === 'psd') return { lo: -2 * (p.f0 ?? 100), hi: 2 * (p.f0 ?? 100) };
   if (family === 'dt') return DT_OMEGA_RANGE;
   if (family === 'esd') return { lo: -1.6 / (p.T ?? 0.1), hi: 1.6 / (p.T ?? 0.1) };
@@ -46,6 +54,7 @@ export function freqRange(family, p = {}) {
 }
 
 export function transformControls(family, params = {}) {
+  if (isProofFamily(family)) return proofControls(family, params);
   if (family === 'dt') {
     return [
       { key: 'L', label: 'L 길이', min: 1, max: 16, step: 1, initial: 5, unit: '', integer: true },
@@ -348,6 +357,7 @@ export function bandEnergy(family, p, fB, n = 4000) {
 }
 
 export function describeTransform(family, p) {
+  if (isProofFamily(family)) return proofDescribe(family, p);
   const m = transformMetrics(family, p);
   const axis = p.axis ?? 0;
   const k = isOmega(axis) ? TAU : 1;
@@ -403,6 +413,7 @@ function timePeak(family, p) {
 }
 
 export function transformFrame(family, raw) {
+  if (isProofFamily(family)) return proofFrame(family, raw);
   const p = defaults(raw);
   const discrete = family === 'dt';
   const axis = discrete ? 0 : p.axis ?? 0;
@@ -592,13 +603,17 @@ export const transformLesson = {
   read(family, params) {
     const step = guideStepOf(family);
     if (step) return guideText(step, params).tryText;
+    if (isProofFamily(family)) return proofRead(family);
     return READS[family] ?? readFor(family, params) ?? FREE_READ;
   },
   formula(family, params = {}) {
     const step = guideStepOf(family);
     if (step) return guideFormula(step, params);
+    if (isProofFamily(family)) return proofFormula(family, params);
     return `X(ω)=∫ x(t) e^(−jωt) dt; x(t)=(1/2π)∫ X(ω) e^(jωt) dω; X(f)=X(ω), ω=2πf; ${(isOmega(params.axis ?? 0) ? FORMULAS_W : FORMULAS_F)[family]}`;
   },
+  // a = 0 of the scaling proof and a fractional proof line are written back (the slider jumps to what is drawn).
+  normalize: (family, params) => (isProofFamily(family) ? normalizeProof(family, params) : null),
   describe: ({ family, params }) => {
     const step = guideStepOf(family);
     return step ? guideObserve(step, params) : describeTransform(family, params);

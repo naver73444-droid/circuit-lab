@@ -3,9 +3,11 @@
 // The guided steps ("guide:<step>") draw the guide's frames in the same panes; only the shift step can be dragged.
 import { createPanesView } from './signals-panes-view.js';
 import { clamp } from './signals-util.js';
-import { guideStepOf, transformFrame, transformMetrics } from './signals-transform-model.js';
+import { guideStepOf, isProofFamily, transformFrame, transformMetrics } from './signals-transform-model.js';
 import { SHIFTED, guideDragKey, guideFrame } from './signals-transform-guide.js';
 
+const LABEL = '푸리에 변환 그래프 (시간 신호, 크기, 위상)';
+const PROOF_LABEL = 'FT 성질 증명 · 시간 신호·실수부·허수부'; // proof examples draw Re/Im instead of magnitude/phase
 const GRAB_PAD = 28; // px: a touch this close to the signal grabs it
 const SHIFTABLE = new Set(['rect', 'tri', 'exp', 'twoexp', 'gauss', 'sinc', 'dt']);
 
@@ -20,8 +22,16 @@ function grabSpan(state) {
 }
 
 export function createTransformView({ doc, parent, emit }) {
-  const view = createPanesView({ doc, parent, label: '푸리에 변환 그래프 (시간 신호, 크기, 위상)', className: 'sg-drag' });
+  const view = createPanesView({ doc, parent, label: LABEL, className: 'sg-drag' });
   const { surface, panes } = view;
+  const title = surface.svg.querySelector?.('title') ?? null;
+  let label = LABEL;
+  function setLabel(next) {
+    if (next === label) return;
+    label = next;
+    surface.svg.setAttribute('aria-label', next);
+    if (title) title.textContent = next;
+  }
   const timePane = panes[0];
   let last = null;
   let dragging = false;
@@ -56,6 +66,7 @@ export function createTransformView({ doc, parent, emit }) {
     update(state) {
       last = state;
       const step = guideStepOf(state.family);
+      setLabel(isProofFamily(state.family) ? PROOF_LABEL : LABEL);
       view.update(step ? guideFrame(step, state.params) : transformFrame(state.family, state.params));
     },
   };

@@ -19,7 +19,7 @@ import { transformLesson } from './signals-transform-model.js';
 import { rocLesson } from './signals-roc-model.js';
 import { samplingLesson } from './signals-sampling-model.js';
 import { opsLesson } from './signals-ops-model.js';
-import { ltiLesson } from './signals-lti-model.js';
+import { hasTimeMarker, ltiLesson } from './signals-lti-model.js';
 import { freqLesson } from './signals-freq-model.js';
 import { soundLesson } from './signals-sound-model.js';
 import { createTimeView } from './signals-time-view.js';
@@ -53,7 +53,7 @@ const REGISTRY = SIGNALS_REGISTRY;
 const POINT_HINT = '● 점을 끌거나 ←/→';
 const DRAG_HINTS = {
   time: () => POINT_HINT,
-  lti: (family) => (family === 'step' ? POINT_HINT : null),
+  lti: (family) => (hasTimeMarker(family) ? POINT_HINT : null),
   convolution: () => POINT_HINT,
   series: () => POINT_HINT,
   fourier: (family) => (['rect', 'tri', 'exp', 'twoexp', 'gauss', 'sinc', 'dt', 'guide:shift'].includes(family) ? '● 시간 파형을 끌어 이동' : null),

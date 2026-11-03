@@ -154,6 +154,20 @@ export const SIGNALS_STYLE = `
 .sg-sound-table th,.sg-sound-table td{padding:4px 10px;border-bottom:1px solid var(--line-soft);text-align:right;white-space:nowrap}
 .sg-sound-table thead th{color:var(--muted);font-weight:600;font-family:system-ui,"Malgun Gothic",sans-serif}
 .sg-sound-table tbody th{text-align:center;color:var(--muted)}
+/* Fourier-series TFS mode: folded three-form coefficient table under the plot. Only its own box scrolls sideways. */
+.sg-coefficients{min-width:0;max-width:100%;margin:8px 12px 12px;border-top:1px solid var(--line-soft)}
+.sg-coefficients>summary{display:flex;align-items:center;min-height:44px;padding:0 2px;font-size:13px;color:var(--muted);cursor:pointer}
+.sg-coefficients>button{min-height:44px;margin:0 0 6px;padding:4px 16px;border-radius:10px}
+.sg-coefficient-scroll{min-width:0;max-width:100%;overflow-x:auto;border:1px solid var(--line-soft);border-radius:8px}
+.sg-coefficient-scroll:focus-visible,.sg-coefficients>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sg-coefficient-scroll table{border-collapse:collapse;min-width:100%;font:14px/1.4 var(--mono)}
+.sg-coefficient-scroll th,.sg-coefficient-scroll td{padding:4px 10px;border-bottom:1px solid var(--line-soft);text-align:right;white-space:nowrap}
+.sg-coefficient-scroll thead th{color:var(--muted);font-weight:600}
+.sg-coefficient-scroll tbody th{text-align:center;color:var(--muted)}
+@media(max-width:700px){
+.sg-coefficients{margin:6px 6px 8px}.sg-coefficients>button{width:100%}
+.sg-coefficient-scroll th,.sg-coefficient-scroll td{padding:4px 6px}
+}
 @media(max-width:700px){
 .sg-sound{display:flex;flex-direction:column}.sg-sound>.sg-sound-bar{order:1}.sg-sound>.sg-legend{order:2}.sg-sound>.sg-sound-table{order:3}
 .sg-sound-bar{padding:8px 8px 0}.sg-sound-bar button{min-height:44px;flex:1 1 100%}

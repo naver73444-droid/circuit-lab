@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TRANSFORM_FAMILIES, spectrumValue, dirichletValue, timeSignal, transformMetrics, transformControls,
-  transformLesson, describeTransform, spectrumCurves,
+  transformLesson, describeTransform, spectrumCurves, isProofFamily,
 } from '../../../src/signals-transform-model.js';
 import { controlDefaults } from '../../../src/signals-util.js';
 import { finiteDTFT, rectangleFT } from './reference.mjs';
@@ -100,15 +100,21 @@ test('DTFT of L ones: closed form equals the course DTFT, is 2π periodic and co
 test('metrics, curves and lesson description exist for every family', () => {
   for (const { value } of TRANSFORM_FAMILIES) {
     const p = transformDefaults(value);
+    assert.ok(describeTransform(value, p).length > 10);
+    assert.ok(transformLesson.formula(value).includes('X('));
+    for (const c of transformControls(value)) assert.ok(c.initial >= c.min && c.initial <= c.max);
+    // 성질 증명 예시는 분포(δ)·복소 판독이 대상이라 일반 파형의 반진폭 폭·곡선을 만들지 않는다 (transform-proofs 시험에서 따로 검사).
+    if (isProofFamily(value)) {
+      assert.throws(() => transformMetrics(value, p), RangeError);
+      continue;
+    }
     const m = transformMetrics(value, p);
     assert.ok(m.peak > 0 && m.timeWidth > 0 && (m.freqWidth > 0 || value === 'cos' || value === 'psd'), value);
     const { magnitude, phase } = spectrumCurves(value, p, 50);
     assert.equal(magnitude.length, 50);
     assert.equal(phase.length, 50);
-    assert.ok(describeTransform(value, p).length > 10);
-    assert.ok(transformLesson.formula(value).includes('X('));
-    for (const c of transformControls(value)) assert.ok(c.initial >= c.min && c.initial <= c.max);
   }
+  assert.equal(TRANSFORM_FAMILIES.filter((f) => isProofFamily(f.value)).length, 3);
   assert.throws(() => timeSignal('dt', {}, 0));
 });
 
