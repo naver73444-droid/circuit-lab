@@ -183,10 +183,15 @@ export function proofFormula(family, params = {}) {
 const READS = {
   'proof-scale': 'a<0이면 치환한 적분의 경계가 뒤집혀 부호가 붙고 계수가 1/|a|가 됩니다. 증명 줄을 넘기며 a의 부호를 바꿔 보세요.',
   'proof-sin': 'sin 변조는 두 복사본에 ∓90° 위상이 붙습니다. 두 로브는 복소수로 더한 뒤 크기를 읽습니다. Re Y는 0이고 Im Y만 남습니다.',
-  'proof-integral': '누적 적분의 변환은 원점의 δ(면적 πX(0))와 정규 부분 X(ω)/(jω)로 나뉩니다. PV는 원점을 빼고 읽는 주값입니다.',
 };
-export function proofRead(family) {
+// The integral's delta follows the axis: πX(0)·δ(ω) on the ω axis is X(0)/2·δ(f) on the f axis (δ(ω) = δ(f)/2π), as the figure labels it.
+const INTEGRAL_READS = {
+  omega: '누적 적분의 변환은 원점의 δ(ω)(면적 πX(0))와 정규 부분 X(ω)/(jω)로 나뉩니다. PV는 원점을 빼고 읽는 주값입니다.',
+  f: '누적 적분의 변환은 원점의 δ(f)(면적 X(0)/2)와 정규 부분 X(f)/(j2πf)로 나뉩니다. PV는 원점을 빼고 읽는 주값입니다.',
+};
+export function proofRead(family, params = {}) {
   family$(family);
+  if (family === 'proof-integral') return INTEGRAL_READS[isOmega(prepared(family, params).axis) ? 'omega' : 'f'];
   return READS[family];
 }
 

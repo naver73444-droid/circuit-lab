@@ -367,6 +367,15 @@ test('적분 프레임: 원점 정규 부분은 끊고, 축별 δ 면적 π / 1/
     assert.ok(pts.every(([x, v]) => v === null || Math.abs(v) <= 2), 'Im 축 [−2, 2] 안');
     assert.ok(im.texts.some((t) => t.text === '원점 발산 · 가운데 구간 생략'));
   }
+  // 읽기 줄도 그림과 같은 축의 δ 면적을 말한다: X(0)=1이므로 ω축 πX(0)=π, f축 X(0)/2=1/2 (δ(ω)=δ(f)/2π).
+  for (const [axis, area, other, label] of [[1, /δ\(ω\)\(면적 πX\(0\)\)/, /X\(0\)\/2/, '면적 π'], [0, /δ\(f\)\(면적 X\(0\)\/2\)/, /πX\(0\)/, '면적 1/2']]) {
+    const read = transformLesson.read('proof-integral', { line: 4, axis });
+    assert.match(read, area, `axis ${axis}`);
+    assert.doesNotMatch(read, other, `axis ${axis}`);
+    assert.equal(read, proofRead('proof-integral', { axis }));
+    assert.deepEqual(proofFrame('proof-integral', { line: 4, axis }).panes[1].texts.map((t) => t.text), [label]);
+  }
+  assert.match(proofRead('proof-integral', { axis: 0 }), /X\(f\)\/\(j2πf\)/, 'f축 정규 부분');
   // 정규 부분은 X(f)=X(ω): 같은 표본 순서에서 같은 값
   const a = w.panes[2].lines[0].pts;
   const b = f.panes[2].lines[0].pts;

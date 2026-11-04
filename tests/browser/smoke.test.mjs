@@ -36,6 +36,13 @@ async function autoUpdateOff() {
   }
   assert.equal((await state()).autoUpdate, false);
 }
+/** Status texts shown during the next `ms`: an automatic run says "자동 해석 중…" and "최신 결과 · 자동". */
+async function statusesDuring(ms) {
+  await ev(`(() => { const box = document.getElementById("engine-status"); window.__statuses = []; window.__statusWatch = new MutationObserver(() => window.__statuses.push(box.textContent)); window.__statusWatch.observe(box, { childList: true, characterData: true, subtree: true }); return true; })()`);
+  await sleep(ms);
+  return ev(`(() => { window.__statusWatch.disconnect(); return window.__statuses; })()`);
+}
+const AUTO_RUN_STATUS = /자동 해석 중|최신 결과 · 자동/;
 async function openSettings() {
   if (!(await ev(`document.getElementById("advanced-analysis").open`))) await click("#advanced-analysis summary");
 }
@@ -454,12 +461,39 @@ describe("browser smoke", { timeout: 600000 }, () => {
     // A manual run ends with "해석 완료" (the load-time automatic one said "최신 결과 · 자동").
     await until(`${L}.getState().runState.status === "success" && document.getElementById("engine-status").textContent.startsWith("해석 완료")`, "the run to finish");
     assert.equal(await ev(`document.activeElement.matches(${JSON.stringify(STEP_INPUT)})`), true, "the re-rendered step field has the focus");
+    // The re-render blurs the old field; that blur is no edit, so no automatic run follows (it used to restart after every run, for good).
+    const seen = await statusesDuring(1200);
+    assert.ok(!seen.some((text) => AUTO_RUN_STATUS.test(text)), `no automatic run while the field keeps the focus, saw ${JSON.stringify(seen)}`);
+    assert.ok((await ev(`document.getElementById("engine-status").textContent`)).startsWith("해석 완료"));
+    assert.equal(await ev(`document.activeElement.matches(${JSON.stringify(STEP_INPUT)})`), true, "the field still has the focus");
     // The whole text is still selected, so typing replaces it (a caret at either end would keep the old text next to "2u").
     await ctx.cdp.send("Input.insertText", { text: "2u" });
     await settle();
     assert.deepEqual(await draftsOf(), [{ kind: "setting", id: null, property: "step", value: "2u" }]);
     assert.equal((await state()).settings.step, before.settings.step, "typing does not commit");
     assert.equal((await state()).historyDepth, before.historyDepth, "the re-render committed nothing");
+  });
+
+  test("drafts: a run that finishes while an inspector value field has the focus starts no automatic run", async () => {
+    await navigate("/?example=rlc");
+    await until(`${L}.getState().runState.status !== "running" && !document.getElementById("run-button").disabled`, "the load-time run to finish");
+    await click('[data-tool="select"]');
+    await selectPart("R1");
+    await click("#inspector-tab");
+    const before = await state();
+    await click(VALUE_INPUT);
+    await ev(`document.getElementById("run-button").click()`); // a script click: the focus stays in the field
+    await until(`${L}.getState().runState.status === "success" && document.getElementById("engine-status").textContent.startsWith("해석 완료")`, "the run to finish");
+    assert.equal(await ev(`document.activeElement.matches(${JSON.stringify(VALUE_INPUT)})`), true, "the re-rendered value field has the focus");
+    const seen = await statusesDuring(1200);
+    assert.ok(!seen.some((text) => AUTO_RUN_STATUS.test(text)), `no automatic run while the field keeps the focus, saw ${JSON.stringify(seen)}`);
+    assert.equal(await ev(`document.activeElement.matches(${JSON.stringify(VALUE_INPUT)})`), true, "the field still has the focus");
+    assert.equal((await state()).historyDepth, before.historyDepth, "the re-render committed nothing");
+    // Leaving the part for another one still commits a valid typed value (that blur is a real edit).
+    await typeInto(VALUE_INPUT, "2k");
+    await selectPart("L1");
+    await waitFor(async () => (await valueOf("R1")) === "2k", "the R1 draft to be committed when another part is selected");
+    assert.deepEqual(await draftsOf(), []);
   });
 
   test("drafts: pointercancel keeps a pending draft (canvas drag cancelled, touch on the discard button cancelled)", async () => {

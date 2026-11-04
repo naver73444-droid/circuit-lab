@@ -75,6 +75,46 @@ test("정상상태: a lab RC needs only one period; a sine triggers at its upwar
   }
 });
 
+test("정상상태 거절: 원인 하나만 빼면 맞을 때만 그 원인을 말하고, Δt 권고값은 내림한다", () => {
+  const twoSquares = (delay) => make([part("V1", "V", { ...square, pulsePeriod: "2m", pulseWidth: "1m", pulseDelay: delay }, ["a", "0"]), part("V2", "V", square, ["b", "0"])]);
+  const long = { ...settings, end: "2", step: "1u" };
+  // Fastest period 1 ms → at most 1 ms/20 = 50 µs per point → a run of at most 50 µs × 19990 = 0.9995 s.
+  // (1) 2 ms + 1 ms squares, span 2 s: the span alone (2.001 s) is too long, so a faster trigger would not help.
+  const slowTrigger = steadyStateRun(twoSquares("0"), long).refused;
+  assert.match(slowTrigger, /보이는 구간 2 s가 길어/);
+  assert.doesNotMatch(slowTrigger, /트리거 전원 주기|구형 지연/);
+  // (2) 1 kHz square delayed 10 ms, span 2 s: without the delay the run is 1 ms + 2 s, still too long → the span.
+  const delayedLong = steadyStateRun(rc("1.5k", "47n", { ...square, pulseDelay: "10m" }), long).refused;
+  assert.match(delayedLong, /보이는 구간 2 s가 길어/);
+  assert.doesNotMatch(delayedLong, /트리거 전원 주기|구형 지연/);
+  // (3) Delay 1 s and R·C 10k·100µ (bound 10 s): trigger = 1 + 10 = 11 s. Without the delay 10 s, without the bound 1.001 s + 5 ms
+  // (1.006/19990 ≈ 50.3 µs > 50 µs): neither alone fits, so neither is blamed alone; the 5 ms span is not the cause either.
+  const both = steadyStateRun(rc("10k", "100u", { ...square, pulseDelay: "1" }), settings).refused;
+  assert.match(both, /트리거까지 약 11 s를 기다려야 해.*정상상태를 끄세요/);
+  assert.doesNotMatch(both, /구형 지연 1 s 뒤에야|보이는 구간|R·C를 줄이세요/);
+  // (4) The 2 ms trigger delayed 1 s next to a 1 ms square: without the delay trigger = 2 ms, run 7 ms → fits, so the delay is named
+  // (not the trigger's period); with delay 0 the plan is accepted (trigger 2 ms, end 2 + 5 = 7 ms).
+  const delayedTrigger = steadyStateRun(twoSquares("1"), settings).refused;
+  assert.match(delayedTrigger, /구형 지연 1 s 뒤에야 트리거해/);
+  assert.doesNotMatch(delayedTrigger, /트리거 전원 주기/);
+  const undelayed = steadyStateRun(twoSquares("0"), settings);
+  near(undelayed.trigger, 2e-3, 1e-12, "first rising edge after one 2 ms period");
+  near(undelayed.end, 7e-3, 1e-12, "trigger + 5 ms");
+  // (5) Δt advice: SIN 3 kHz → T/20 = 333.33 µs/20 = 16.6667 µs. Rounded to 3 digits that is 16.7 µs, which is refused again; the advice
+  // is rounded down to 16.6 µs, and 16.6 µs passes. 7 kHz: 142.857 µs/20 = 7.142857 µs → 7.14 µs.
+  const sine = (frequency) => rc("10k", "1u", { mode: "SIN", amplitude: "1", frequency, offset: "0", phase: "0" });
+  const coarse = steadyStateRun(sine("3k"), { ...settings, step: "20u" }).refused;
+  assert.match(coarse, /1\/20\(0\.0000166 s\).*Δt를 0\.0000166 s 이하로/);
+  assert.match(steadyStateRun(sine("3k"), { ...settings, step: "16.7u" }).refused, /간격 Δt 0\.0000167 s가 가장 빠른 전원 주기의 1\/20\(0\.0000166 s\)/);
+  assert.ok(!steadyStateRun(sine("3k"), { ...settings, step: "16.6u" }).refused, "the advised Δt is accepted");
+  assert.match(steadyStateRun(sine("7k"), { ...settings, step: "7.15u" }).refused, /Δt 0\.00000715 s가 .*1\/20\(0\.00000714 s\).*0\.00000714 s 이하로/);
+  assert.ok(!steadyStateRun(sine("7k"), { ...settings, step: "7.14u" }).refused);
+  // A Δt that rounds to the same 3 digits as the limit gets more digits: square period 332.4 µs → limit 16.62 µs; Δt 16.624 µs. R·C
+  // 1k·10µ (bound 100 ms = 301 periods) keeps the step near Δt: trigger 301 × 332.4 µs = 100.0524 ms, /16.624 µs = 6018.6 → 6019 steps of 16.6227 µs > 16.62 µs.
+  const close = steadyStateRun(rc("1k", "10u", { ...square, pulsePeriod: "332.4u", pulseWidth: "166.2u" }), { ...settings, step: "16.624u" }).refused;
+  assert.match(close, /간격 Δt 0\.000016624 s가 가장 빠른 전원 주기의 1\/20\(0\.00001662 s\)/);
+});
+
 test("Autoset: five periods at about 1000 samples per period", () => {
   assert.deepEqual(generatorTimebase(1000), { end: "0.005", step: "0.000001" });
   assert.deepEqual(generatorTimebase(60), { end: "0.0833333", step: "0.00001" });

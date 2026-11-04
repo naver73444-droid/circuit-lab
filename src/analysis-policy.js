@@ -135,7 +135,11 @@ export function steadyStateRun(circuit, settings) {
   const delay = p.mode === "PULSE" ? Math.max(0, number(p.pulseDelay, 0)) : 0;
   const risingOffset = p.mode === "PULSE" && number(p.pulseV1) > number(p.pulseV2) ? number(p.pulseRise) + number(p.pulseWidth, 1) : 0;
   const phase0 = p.mode === "SIN" ? ((-number(p.phase, 0) / 360) % 1 + 1) % 1 * period : delay + risingOffset;
-  const edgeAfter = (settle) => phase0 + Math.max(0, Math.ceil((delay + settle - phase0) / period - 1e-9)) * period;
+  // `start` is when the square starts (its delay); a refusal asks what the trigger would be without it (start = 0).
+  const edgeAfter = (settle, start = delay) => {
+    const first = phase0 - delay + start;
+    return first + Math.max(0, Math.ceil((start + settle - first) / period - 1e-9)) * period;
+  };
   const trigger = edgeAfter(Math.max(period, passive));
   const runEnd = trigger + span;
   // Within 20 000 points, and a whole number of steps to the trigger so that t = 0 is a sample: the step is shortened to fit, or
@@ -147,15 +151,21 @@ export function steadyStateRun(circuit, settings) {
   }
   if (runStep > shortestPeriod / 20) {
     // Say what made the run too long: the student's own Δt when it alone is longer than a twentieth of the fastest period, the R·L·C
-    // settling bound when the run would fit without it, a slow trigger source when the run would fit with the fastest source as the
-    // trigger, a square's delay when the run would fit without it, else the shown span (the trigger waits at least one period).
-    const s = (value) => Number(value.toPrecision(3));
+    // settling bound when the run would fit without it (the delay kept), a square's delay when the run would fit without it (the
+    // settling kept), a slow trigger source when the run would fit with the fastest source as the trigger, the shown span when it does
+    // not fit even after the shortest wait (one fastest period), else the wait itself (delay and settling together).
+    const s = (value, digits = 3) => Number(value.toPrecision(digits));
+    // The advised Δt is rounded down (rounded up it would be refused again), with digits enough to differ from the typed Δt.
+    const down = (value, digits) => { const unit = 10 ** (Math.floor(Math.log10(value)) - digits + 1); return s(Math.floor(value / unit + 1e-9) * unit, digits); };
     const fine = shortestPeriod / 20, fits = (runLength) => runLength / 19990 <= fine;
-    const why = step > fine ? `간격 Δt ${s(step)} s가 가장 빠른 전원 주기의 1/20(${s(fine)} s)보다 길어 한 주기에 20점도 못 그립니다 · Δt를 ${s(fine)} s 이하로 줄이세요`
+    let digits = 3;
+    while (step > fine && digits < 12 && s(step, digits) <= down(fine, digits)) digits += 1;
+    const why = step > fine ? `간격 Δt ${s(step, digits)} s가 가장 빠른 전원 주기의 1/20(${down(fine, digits)} s)보다 길어 한 주기에 20점도 못 그립니다 · Δt를 ${down(fine, digits)} s 이하로 줄이세요`
       : passive > period && fits(edgeAfter(period) + span) ? `정상상태까지 약 ${s(trigger)} s가 걸려 한 주기에 20점도 못 그립니다(R·L·C 값을 모두 더해 잡은 보수적 상한) · 정상상태를 끄거나 R·C를 줄이세요`
+      : delay > 0 && fits(edgeAfter(Math.max(period, passive), 0) + span) ? `구형 지연 ${s(delay)} s 뒤에야 트리거해 한 주기에 20점도 못 그립니다 · 지연을 줄이거나 정상상태를 끄세요`
       : period > shortestPeriod && fits(span + 2 * shortestPeriod) ? `트리거 전원 주기 ${s(period)} s가 가장 빠른 전원 주기 ${s(shortestPeriod)} s보다 훨씬 길어 한 주기에 20점도 못 그립니다 · 정상상태를 끄세요`
-      : delay > 0 && fits(span + 2 * period) ? `구형 지연 ${s(delay)} s 뒤에야 트리거해 한 주기에 20점도 못 그립니다 · 지연을 줄이거나 정상상태를 끄세요`
-      : `보이는 구간 ${s(span)} s가 길어 한 주기에 20점도 못 그립니다 · 구간을 줄이세요`;
+      : !fits(span + shortestPeriod) ? `보이는 구간 ${s(span)} s가 길어 한 주기에 20점도 못 그립니다 · 구간을 줄이세요`
+      : `트리거까지 약 ${s(trigger)} s를 기다려야 해(지연과 정착 시간을 함께 줄여야 맞음) 한 주기에 20점도 못 그립니다 · 정상상태를 끄세요`;
     return { refused: why };
   }
   return { end: runEnd, step: runStep, trigger, span, source: p.ref ?? source.id };

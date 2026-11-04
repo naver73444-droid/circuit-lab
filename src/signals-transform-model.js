@@ -601,7 +601,7 @@ export const transformLesson = {
   read(family, params) {
     const step = guideStepOf(family);
     if (step) return guideText(step, params).tryText;
-    if (isProofFamily(family)) return proofRead(family);
+    if (isProofFamily(family)) return proofRead(family, params);
     return READS[family] ?? readFor(family, params) ?? FREE_READ;
   },
   formula(family, params = {}) {

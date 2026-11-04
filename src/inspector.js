@@ -39,6 +39,15 @@ export function createInspector(deps) {
   let inspectorTabIntent = 0;
   let inspectorLastFocused = null;
   const INSPECTOR_FOCUSABLE = "input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])";
+  // Rebuilding a focused field fires blur on the old one (Chromium). When the same field comes back (focus and draft put back), that blur
+  // is not an edit: committing there would schedule an automatic run, whose end re-renders and blurs again, so it would never stop.
+  // "setting" while the analysis fields are rebuilt, "prop:<id>" while that part's fields are; a part left for another one still commits.
+  let rebuilding = null;
+  function rebuild(key, build) {
+    const previous = rebuilding;
+    rebuilding = key;
+    try { build(); } finally { rebuilding = previous; }
+  }
 
   function updateDraftNotice(updatePhasor = true) {
     const notice = document.getElementById("draft-notice");
@@ -446,12 +455,12 @@ export function createInspector(deps) {
     if (!isMagneticPart(component)) html += currentReferenceMarkup(component);
     html += sweepMarkup(component, state);
     const savedFocus = captureInspectorFocus();
-    elements["inspector-content"].innerHTML = html;
+    rebuild(`prop:${component.id}`, () => { elements["inspector-content"].innerHTML = html; });
     applyInputDrafts(elements["inspector-content"], "prop", component);
     bindSweep(elements["inspector-content"], { component, state, run: runSweep, clear: clearSweep });
     elements["inspector-content"].querySelectorAll("[data-prop]").forEach((control) => {
       const commitControl = () => {
-        if (!isCircuitUiActive()) return;
+        if (!isCircuitUiActive() || rebuilding === `prop:${selected.id}`) return;
         const current = state.circuit.components.find((item) => item.id === selected.id);
         if (!current) return;
         inputDrafts.set("prop", current.id, control.dataset.prop, control.value, committedValue(current, control.dataset.prop));
@@ -537,16 +546,12 @@ export function createInspector(deps) {
     const active = elements["analysis-settings"].contains(document.activeElement) ? document.activeElement : null;
     const focused = active?.dataset.setting ? { key: active.dataset.setting, start: active.selectionStart, end: active.selectionEnd } : null;
     // Only the fields of the chosen analysis are shown; DC has none.
-    if (state.settings.analysis === "dc") {
-      elements["analysis-settings"].innerHTML = "";
-      elements["analysis-note"].textContent = "DC는 따로 설정할 항목이 없습니다.";
-    } else if (state.settings.analysis === "transient") {
-      elements["analysis-settings"].innerHTML = settingField("시작", "start", state.settings.start) + settingField("끝", "end", state.settings.end) + settingField("간격", "step", state.settings.step);
-      elements["analysis-note"].textContent = "";
-    } else {
-      elements["analysis-settings"].innerHTML = settingField("시작 Hz", "startFrequency", state.settings.startFrequency) + settingField("끝 Hz", "endFrequency", state.settings.endFrequency) + settingField("점/dec", "pointsPerDecade", state.settings.pointsPerDecade) + settingField("페이저 Hz", "phasorFrequency", state.settings.phasorFrequency ?? "159.155");
-      elements["analysis-note"].textContent = "";
-    }
+    const analysis = state.settings.analysis;
+    const fields = analysis === "dc" ? ""
+      : analysis === "transient" ? settingField("시작", "start", state.settings.start) + settingField("끝", "end", state.settings.end) + settingField("간격", "step", state.settings.step)
+        : settingField("시작 Hz", "startFrequency", state.settings.startFrequency) + settingField("끝 Hz", "endFrequency", state.settings.endFrequency) + settingField("점/dec", "pointsPerDecade", state.settings.pointsPerDecade) + settingField("페이저 Hz", "phasorFrequency", state.settings.phasorFrequency ?? "159.155");
+    rebuild("setting", () => { elements["analysis-settings"].innerHTML = fields; });
+    elements["analysis-note"].textContent = analysis === "dc" ? "DC는 따로 설정할 항목이 없습니다." : "";
     if (state.learningId === "parallel-sine") {
       const learningNotes = {
         dc: "비교 학습 · DC에서는 V의 DC bias와 L의 0 V 단락이 동시에 성립해야 합니다. 이상 L에 비영 DC 전압을 걸면 정상상태 해가 없습니다.",
@@ -558,7 +563,7 @@ export function createInspector(deps) {
     applyInputDrafts(elements["analysis-settings"], "setting");
     elements["analysis-settings"].querySelectorAll("[data-setting]").forEach((input) => {
       const commitSetting = () => {
-        if (!isCircuitUiActive()) return;
+        if (!isCircuitUiActive() || rebuilding === "setting") return;
         inputDrafts.set("setting", null, input.dataset.setting, input.value, state.settings[input.dataset.setting]);
         if (state.settings[input.dataset.setting] === input.value) { updateDraftNotice(); scheduleAutoRun(); return; }
         const classified = classifyNumericInput(input.value, { positive: input.dataset.setting !== "start" });
