@@ -27,6 +27,7 @@ const choicesOf = family => FILTER_CIRCUITS.filter(c => c.family === family).map
 
 export const FILTER_TOOL = {
   id: 'filters', title: '16 · 수동 · 능동 필터', tab: 'Ch.14',
+  memory: 2, // 11-03: bpf3 C1·C2 swapped meanings (C1 is now the low-pass stage), so tab memory saved before is not restored
   lead: '회로를 고르고 소자값을 바꾸면 H(s), H(0)·H(∞)로 본 필터 종류, 차수, 차단(반전력) 주파수와 |H| 곡선이 바로 바뀝니다. 차단 주파수의 기준은 저역 H(0), 고역 H(∞), 대역통과 최댓값, 대역차단 통과 이득입니다.',
   fields: [
     choice('family', '종류', 'passive', [['passive', '수동 (14.7)'], ['active', '능동 (14.8)']], { segment: true }),

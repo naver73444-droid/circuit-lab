@@ -9,6 +9,7 @@ import { freqPlot, logGrid, niceStep } from '../../../src/circuit-course-freq-pl
 import { parseCourseNumber, siUnit } from '../../../src/circuit-course-format.js';
 import { sliderPosition, sliderValue, evaluateTool, initialValues, presetValues } from '../../../src/circuit-course-tool-common.js';
 import { getTool } from '../../../src/circuit-course-tools.js';
+import { createCourseTool } from '../../../src/circuit-course-tool-controller.js';
 
 const near = (actual, expected, tolerance, what = '') => assert.ok(Number.isFinite(actual) && Math.abs(actual - expected) <= tolerance, what + ' ' + actual + ' ≠ ' + expected + ' ± ' + tolerance);
 const rel = (actual, expected, r = 1e-9, what = '') => near(actual, expected, Math.abs(expected) * r, what);
@@ -179,6 +180,65 @@ test('active BPF/BSF: stage corners ω1·ω2 and actual half-power points ωa·�
       near(r.sys.at(Math.sqrt(1e7)).re, -10 / 11, 1e-12);
     } else { assert.match(c1, /ω1/); assert.match(c2, /ω2/); }
   }
+});
+
+// ---- tab memory through the tool controller (minimal fake DOM as in round2-fixes.test.mjs, no browser) ---------------------------
+function fakeElement(extra = {}) {
+  const el = { dataset: {}, hidden: false, textContent: '', value: '', attrs: {}, children: new Map(), setAttribute(k, v) { el.attrs[k] = v; }, removeAttribute(k) { delete el.attrs[k]; },
+    querySelector(sel) { return el.children.get(sel) ?? null; }, querySelectorAll() { return []; }, innerHTML: '', ...extra };
+  return el;
+}
+function openTool(id) {
+  const def = getTool(id), host = fakeElement({ ownerDocument: { activeElement: null }, addEventListener() {}, removeEventListener() {}, contains: () => true, replaceChildren() {} });
+  for (const f of def.fields) {
+    const row = fakeElement(), input = fakeElement({ dataset: { ccKey: f.key } });
+    row.children.set('[data-cc-label]', fakeElement()); row.children.set('[data-cc-key]', input); row.children.set('[data-cc-error]', fakeElement());
+    if (f.slider) row.children.set('[data-cc-slider]', fakeElement({ dataset: { ccSlider: f.key } }));
+    host.children.set('[data-cc-field="' + f.key + '"]', row); host.children.set('[data-cc-key="' + f.key + '"]', input);
+  }
+  host.children.set('[data-cc-results]', fakeElement()); host.children.set('[data-cc-status]', fakeElement());
+  return createCourseTool(host, def, { getBasis: () => 'rms', setBasis() {} });
+}
+// The session stores the snapshot as JSON (sessionStorage), so the round trip goes through it.
+const stored = snapshot => JSON.parse(JSON.stringify(snapshot));
+
+test('filters tab memory: a snapshot saved before the bpf3 C1·C2 swap (no memory mark) is dropped; a new one round-trips; other tools are unchanged', () => {
+  const def = getTool('filters'), index = def.presets.findIndex(p => p.values.active === 'bpf3');
+  assert.equal(def.memory, 2);
+  // (1) Old memory: the bpf3 example with the old meanings (C1 = 0.1 µF, C2 = 10 nF), example still marked active. Read with today's
+  // meanings these give |H(√10⁷)| = C2/(C1 + C2) = 1/11 = 0.0909 instead of the example's 10/11 = 0.909, so the tool keeps its defaults.
+  const old = { values: { ...presetValues(def, def.presets[index]), C1: 0.1e-6, C2: 10e-9 }, active: index };
+  near(Math.abs(evaluateTool(def, old.values).sys.at(Math.sqrt(1e7)).re), 1 / 11, 1e-12);
+  const fresh = openTool('filters'), defaults = fresh.inspect().values;
+  fresh.restore(stored(old));
+  assert.deepEqual(fresh.inspect().values, defaults, 'defaults kept (family passive, lp2)');
+  assert.equal(fresh.inspect().activePreset, -1);
+  // The same values with today's mark are restored: the mark alone decides.
+  fresh.restore(stored({ ...old, memory: 2 }));
+  assert.equal(fresh.inspect().values.C1, 0.1e-6);
+  assert.equal(fresh.inspect().activePreset, index);
+  // (2) Saved now → restored in a new tab: values and the active example (0 included) survive.
+  for (const active of [0, index]) {
+    const a = openTool('filters');
+    a.applyPreset(active);
+    const saved = stored(a.snapshot());
+    assert.equal(saved.memory, 2);
+    assert.equal(saved.active, active);
+    const b = openTool('filters');
+    b.restore(saved);
+    assert.deepEqual(b.inspect().values, a.inspect().values, 'preset ' + active);
+    assert.equal(b.inspect().activePreset, active);
+  }
+  // (3) A tool without a mark stores { values, active } as before and restores such memory (example 14.77(b) = preset 1).
+  const a = openTool('scaling');
+  a.applyPreset(1);
+  const saved = stored(a.snapshot());
+  assert.deepEqual(Object.keys(saved), ['values', 'active']);
+  const b = openTool('scaling');
+  b.restore(saved);
+  assert.deepEqual(b.inspect().values, a.inspect().values);
+  assert.equal(b.inspect().values.Kf, 1000);
+  assert.equal(b.inspect().activePreset, 1);
 });
 
 test('Bode phase guidance: left-half-plane single zeros use z and poles use p as corner frequencies', () => {

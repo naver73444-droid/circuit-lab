@@ -40,7 +40,8 @@ function displacementState(p, s) {
 const deg = angle => `${Number((angle * 180 / Math.PI).toPrecision(6))}°`;
 
 function validate(p, s) {
-  if (p.d / p.a > 0.1) return `d/a = ${Number((p.d / p.a).toPrecision(4))} > 0.1: 가장자리 효과를 무시하는 균일 D 근사를 쓸 수 없습니다. 간격을 줄이거나 극판을 키우세요. 자동 보정하지 않습니다.`;
+  // relative slack so a typed boundary pair (1.06 cm, 1.06 mm → 0.10000000000000002) is not rejected
+  if (p.d / p.a > 0.1 * (1 + 1e-9)) return `d/a = ${Number((p.d / p.a).toPrecision(4))} > 0.1: 가장자리 효과를 무시하는 균일 D 근사를 쓸 수 없습니다. 간격을 줄이거나 극판을 키우세요. 자동 보정하지 않습니다.`;
   if (s !== undefined && (s < 0 || s > S_MAX)) return `경로 반경 비 ρ/a는 0 … ${S_MAX} 범위여야 합니다.`;
   return '';
 }

@@ -29,7 +29,7 @@ node --test tests/browser/<파일>.test.mjs   # 브라우저 시험 — 파일 �
 - 순수 계산 모듈(DOM 없음)은 `scripts/check-boundaries.mjs`의 pure 목록에 등록한다.
 - 브라우저 시험은 `tests/browser/harness.mjs`가 헤드리스 브라우저를 띄운다. PC는 Windows Edge, **클라우드(Linux)는 Chromium을 `EDGE_PATH`로 지정**(필요하면 `--no-sandbox` 래퍼). 여러 브라우저 시험 파일을 동시에 돌리면 서로 부딪혀 거짓 실패가 나므로 하나씩 돌린다.
 - 클라우드 Linux에서만 나는 알려진 실패(코드 문제 아님, 10-22 확인): manifest SVG 아이콘 로그가 `assertNoProblems`에 걸림, Ctrl+S 다운로드·단축키 시나리오, `after` 훅의 "process N should have been stopped"(좀비 PID), 단위 시험 "압축 폭탄 4 KB…"(Node 22 차이). main에서도 같은 실패가 나는지 대조해서 **새 실패만** 문제로 본다.
-- 간헐 실패로 알려진 시험(PC에서도 가끔): smoke "drafts: a settings draft is discarded…", 준비 단계 `autoUpdateOff` 클릭, editor-polish "390x844 selection bar … 값 reopens the sheet". 실패하면 그 시험만 단독 재실행해 판정.
+- 간헐 실패로 알려진 시험(PC에서도 가끔): smoke "drafts: a settings draft is discarded…", 준비 단계 `autoUpdateOff` 클릭, editor-polish "390x844 selection bar … 값 reopens the sheet". 실패하면 그 시험만 단독 재실행해 판정. 11-04에 drafts(해석이 끝나 설정 칸을 다시 그릴 때 포커스가 사라지던 앱 버그)와 `autoUpdateOff`(시험이 '해석 중지' 단추가 숨을 때까지 기다리고 재시도)는 고쳤다.
 
 ## 4. 강의 규약 (요약, 슬라이드 문장 아님)
 - **전기회로2:** 9~10장 페이저는 최댓값·cos 기준(Vm cos(ωt+φ) ↔ Vm∠φ), 11장 뒤~13장 전력은 RMS. S = V·I*, Q>0 유도성. 3상 상순서 abc는 Vbn = Van∠−120°. 이상 변압기 n = N2/N1, 점 극성 같으면 V2 = +nV1, I1·I2 모두 점으로 들어가면 I2 = −I1/n. 2전력계법은 교재 §12.10(W1 = V_L I_L cos(θ+30°), W2 = cos(θ−30°), Q = √3(W2−W1)).
@@ -57,6 +57,7 @@ node --test tests/browser/<파일>.test.mjs   # 브라우저 시험 — 파일 �
   - 전자기학 9장(2e35f75·7d67295): 문제 풀이 분야 `자기유도`·`변위전류·Maxwell`에 회전 루프 기전력 분해·원판 발전기·커패시터 변위전류, 커서 범위 밖 입력은 오류(`strictProbe`), 끌기는 끝값에서 멈춤. 브라우저 `em-ch9`.
   - 신호 Ch04 4·5절(0fbf005·577fd12): FT 성질 증명 3종(음수 스케일링·sin 변조·적분과 δ), 급수 TFS/EFS/CFS 계수 표, 2차 계단응답(Ex 2.19). 브라우저 `signals-ch04`.
   - 11-04 검토 반영: 설정·속성 칸에 포커스가 있을 때 해석이 끝나면 자동 해석이 끝없이 반복되던 문제(다시 그릴 때의 blur를 편집으로 보지 않음), 정상상태 거절 원인 문구·Δt 권고 내림, 적분 증명 읽기 줄의 축별 δ 면적, README 9장 끌기 문장.
+  - 11-04 배포 전 수정: EM 변위전류 d/a ≤ 0.1 경계에 상대 허용오차 1e-9(1.06 cm·1.06 mm 거절 문제), 필터 도구 탭 저장에 판 표지 `memory: 2`(bpf3 C1·C2 의미 바뀌기 전 저장은 버림). 알려진 한계: 배포 직후 최대 10분(max-age=600) 동안 캐시가 섞이면 편집기가 안 뜰 수 있음 — 10분이 지나면 새로고침으로, 바로는 강력 새로고침(Ctrl+Shift+R)으로 풀림(옛 이름 래퍼는 데이터를 바꿀 위험이 있어 넣지 않음).
   - 남은 일: 전체 단위·브라우저 시험 후 사용자 확인 받아 `main` 병합·배포.
 - 10-27에 새 진도 추가를 시작했다가 사용자 지시로 멈춤. 남은 것:
   - **`feat/f-editor3ph`**(push됨): 편집기 3상 전압원 부품 `THREE_PHASE`(4핀 Y, 상순서, 저장 version 5)와 교재 예제 12.2·12.3 — 커밋 2개, **검증·수정 전**. 이어서 할 것: Y–Δ 변환의 L·C 확장(셋 다 L이거나 셋 다 C일 때만; L은 R과 같은 식, C는 쌍대식 — 변환 전후 AC 결과 동일을 시험으로), 반박 검증(교재 12장 수치 0.1% 이내), 코드 검토, 수정.

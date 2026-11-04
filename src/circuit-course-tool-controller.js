@@ -2,7 +2,7 @@
  * One live course tool: every input updates the result at once (no apply button). A value that cannot be used keeps the last valid values and
  * result on screen and says why next to the field. Pure rules: circuit-course-tool-common.js and the tool definition; DOM: circuit-course-tool-view.js.
  */
-import { FIELD_KEPT, dataFields, draftText, fieldDraft, siDraftText, evaluateTool, isShown, initialValues, presetValues, reviewDrafts, sliderOf, sliderValue, validateField, verifyExpectations } from './circuit-course-tool-common.js';
+import { FIELD_KEPT, dataFields, draftText, fieldDraft, siDraftText, evaluateTool, isShown, initialValues, memoryUsable, presetValues, reviewDrafts, sliderOf, sliderValue, toolMemory, validateField, verifyExpectations } from './circuit-course-tool-common.js';
 import { createCourseToolView } from './circuit-course-tool-view.js';
 
 export function createCourseTool(host, def, env) {
@@ -97,10 +97,10 @@ export function createCourseTool(host, def, env) {
     setBasis(next) { if (destroyed || next === basis) return; basis = next; errors = {}; evalErrors = {}; makeDrafts(); result = evaluateTool(def, values, basis); render(); },
     applyPreset,
     /** Tab memory: the values in use (internal RMS) and the example last applied. */
-    snapshot() { return { values: { ...values }, active }; },
-    /** Stored values go through the same field checks and evaluation as typed ones; anything unusable keeps the defaults. */
+    snapshot() { return toolMemory(def, { ...values }, active); },
+    /** Stored values go through the same field checks and evaluation as typed ones; anything unusable (or of an older memory mark) keeps the defaults. */
     restore(saved) {
-      if (destroyed || !saved || typeof saved !== 'object' || !saved.values || typeof saved.values !== 'object') return;
+      if (destroyed || !saved || typeof saved !== 'object' || !saved.values || typeof saved.values !== 'object' || !memoryUsable(def, saved)) return;
       const candidate = initialValues(def);
       for (const f of fields.values()) {
         const value = saved.values[f.key];

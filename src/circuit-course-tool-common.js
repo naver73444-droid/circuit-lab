@@ -13,6 +13,9 @@ export const heading = (key, label, extra = {}) => ({ kind: 'heading', key, labe
 export const isShown = (field, values) => !field.showIf || field.showIf(values);
 export const dataFields = def => def.fields.filter(f => f.kind !== 'heading');
 export const initialValues = def => Object.fromEntries(dataFields(def).map(f => [f.key, f.initial]));
+// Tab memory: a tool whose field meanings changed carries def.memory (a number); a stored snapshot without the same mark is dropped.
+export const toolMemory = (def, values, active) => (def.memory ? { values, active, memory: def.memory } : { values, active });
+export const memoryUsable = (def, saved) => (saved?.memory ?? 0) === (def.memory ?? 0);
 export const sliderOf = (field, values) => (typeof field.slider === 'function' ? field.slider(values) : field.slider ?? null);
 // A slider marked log: true moves in decades: its position is log10 of the shown value and step is a fraction of a decade.
 // A value read from a log slider keeps four significant digits (10^0.37 → 2.344, not 2.3442288153).

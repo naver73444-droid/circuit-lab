@@ -90,10 +90,34 @@ test("정상상태 거절: 원인 하나만 빼면 맞을 때만 그 원인을 �
   // (3) Delay 1 s and R·C 10k·100µ (bound 10 s): trigger = 1 + 10 = 11 s. Without the delay 10 s, without the bound 1.001 s + 5 ms
   // (1.006/19990 ≈ 50.3 µs > 50 µs): neither alone fits, so neither is blamed alone; the 5 ms span is not the cause either.
   const both = steadyStateRun(rc("10k", "100u", { ...square, pulseDelay: "1" }), settings).refused;
-  assert.match(both, /트리거까지 약 11 s를 기다려야 해.*정상상태를 끄세요/);
+  assert.match(both, /트리거까지 약 11 s\(구형 지연 1 s \+ R·L·C 정착 약 10 s\)를 기다린 뒤 0\.005 s를 그리면.* · 정상상태를 끄세요/);
   assert.doesNotMatch(both, /구형 지연 1 s 뒤에야|보이는 구간|R·C를 줄이세요/);
   // (4) The 2 ms trigger delayed 1 s next to a 1 ms square: without the delay trigger = 2 ms, run 7 ms → fits, so the delay is named
   // (not the trigger's period); with delay 0 the plan is accepted (trigger 2 ms, end 2 + 5 = 7 ms).
+  // (3b) No delay and no C·L (passive bound 0): a 1 kHz sine at engine phase 90 (sin(ωt + 90°) = cos ωt, cos phase 0) into 1 kΩ.
+  // Its upward zero crossing is at 3T/4 = 0.75 ms, the wait is one period → trigger 1.75 ms. Limit 50 µs per point (T/20).
+  // end 998 ms: run 0.99975 s → Δt ≥ 0.99975/19990 ≈ 50.0125 µs; 1.75 ms/35 = 50 µs would be 19995 points, so 1.75 ms/34 ≈ 51.5 µs → refused.
+  // Neither delay nor settling exists, so neither is named; the span alone (0.999 s → 49.975 µs) and the wait alone fit, so the span is advised.
+  const sineR = make([part("V1", "V", { mode: "SIN", amplitude: "1", frequency: "1k", offset: "0", phase: "90" }, ["in", "0"]), part("R1", "R", { value: "1k" }, ["in", "0"])]);
+  const waitAndSpan = steadyStateRun(sineR, { ...settings, end: "998m", step: "50u" }).refused;
+  assert.match(waitAndSpan, /트리거까지 약 0\.00175 s를 기다린 뒤 0\.998 s를 그리면.*보이는 구간을 줄이거나 정상상태를 끄세요/);
+  assert.doesNotMatch(waitAndSpan, /지연|정착|R·C/);
+  // end 997 ms: run 0.99875 s → 0.99875/19990 ≈ 49.96 µs < 50 µs, 1.75 ms/35 = 50 µs → 19975 points: accepted.
+  const fitting = steadyStateRun(sineR, { ...settings, end: "997m", step: "50u" });
+  assert.ok(!fitting.refused, fitting.refused);
+  near(fitting.trigger, 1.75e-3, 1e-12, "3T/4 + one period");
+  near(fitting.end, 0.99875, 1e-12, "trigger + 0.997 s");
+  near(fitting.step, 5e-5, 1e-15, "1.75 ms / 35");
+  // (3c) The span advice needs the trigger on a sample too. 1 kHz sine at engine phase 189: rises through 0 at (1 − 189/360)·1 ms = 0.475 ms;
+  // R·C 1k·99.9µ → bound 10·1000·99.9 µs = 0.999 s → trigger 0.475 ms + 999 ms = 0.999475 s (0.999475/19990 ≈ 49.9987 µs alone would "fit").
+  // end 998.1 ms: run 1.997575 s → refused. One period shown: run 1.000475 s → Δt ≥ 50.0488 µs > 50 µs. Even 1 µs shown: run 0.999476 s →
+  // 0.999475/19990 = 49.99875 µs gives 19990.02 points, so the trigger takes 19989 steps of 50.00125 µs > 50 µs: shortening never helps.
+  const slowSettle = rc("1k", "99.9u", { mode: "SIN", amplitude: "1", frequency: "1k", offset: "0", phase: "189" });
+  const aligned = steadyStateRun(slowSettle, { ...settings, end: "998.1m", step: "1u" }).refused;
+  assert.match(aligned, /트리거까지 약 0\.999 s\(R·L·C 정착 약 0\.999 s\)를 기다린 뒤 0\.998 s를 그리면/);
+  assert.match(aligned, /정상상태를 끄세요/);
+  assert.doesNotMatch(aligned, /구간을 줄이/);
+  assert.ok(steadyStateRun(slowSettle, { ...settings, end: "1u", step: "1u" }).refused, "1 µs shown is still refused");
   const delayedTrigger = steadyStateRun(twoSquares("1"), settings).refused;
   assert.match(delayedTrigger, /구형 지연 1 s 뒤에야 트리거해/);
   assert.doesNotMatch(delayedTrigger, /트리거 전원 주기/);

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EXPERIMENTS } from '../../../src/em-course-maxwell-displacement.js';
+import { paramSpec, parseParam } from '../../../src/em-course-params.js';
 
 const e = EXPERIMENTS[0];
 const defaults = () => Object.fromEntries(e.parameters.map(p => [p.key, p.initial]));
@@ -243,6 +244,15 @@ test('invalid inputs are rejected with a reason and never corrected', () => {
   assert.match(run({ a: 0.01, d: 0.002 }).reason, /d\/a/);
   assert.equal(run({ a: 0.01, d: 0.001 }).status, 'valid'); // d/a = 0.1 boundary is allowed
   assert.equal(run({}, 3).status, 'valid');
+  // typed boundary (screen path: parseParam): 1.06 cm, 1.06 mm → d/a = 0.10000000000000002 is still the allowed 0.1;
+  // 1.06 cm, 1.07 mm → d/a ≈ 0.1009 stays rejected
+  const typed = (key, text) => { const r = parseParam(paramSpec(e.parameters.find(p => p.key === key)), text); assert.ok(r.ok, key); return r.value; };
+  const edge = { a: typed('a', '1.06'), d: typed('d', '1.06') };
+  assert.ok(edge.d / edge.a > 0.1, 'precondition: the parsed ratio rounds above 0.1');
+  assert.equal(run(edge).status, 'valid');
+  const over = run({ a: typed('a', '1.06'), d: typed('d', '1.07') });
+  assert.equal(over.status, 'invalid');
+  assert.match(over.reason, /d\/a = 0\.1009 > 0\.1/);
   assert.deepEqual(e.profile(params({ a: 0.01, d: 0.002 })), []);
   assert.equal(e.verify(params({ d: 0 }))[0].status, 'skipped');
 });
