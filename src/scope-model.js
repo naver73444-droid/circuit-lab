@@ -159,11 +159,13 @@ export function timeText(seconds) {
 }
 /**
  * The transient settings that reach a wider time/div's right edge: { end, step? } (step only when the run would pass the solver's
- * 20 000-step limit), or null when the settings cannot be read or the edge is not after the start.
+ * 20 000-step limit), or null when the settings cannot be read or the edge is not after the start. For a triggered result, the right
+ * edge is a span counted from zero: add the typed start to keep end − start equal to that span.
  */
-export function extendedRunSettings(rightEdge, settings) {
+export function extendedRunSettings(rightEdge, settings, relative = false) {
   let start, step;
   try { start = parseValue(settings.start ?? "0"); step = parseValue(settings.step); } catch { return null; }
+  if (relative) rightEdge += start;
   if (!(rightEdge > start) || !(step > 0) || !Number.isFinite(rightEdge)) return null;
   const out = { end: timeText(rightEdge) };
   if ((rightEdge - start) / step > 20000) out.step = timeText(niceCeiling((rightEdge - start) / 20000));

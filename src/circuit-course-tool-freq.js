@@ -83,7 +83,7 @@ export const BODE_TOOL = {
     }
     termRows.push(...a.terms.filter(t => t.kind !== 'origin').map(termRow));
     const notes = ['상수 K는 모든 인수를 (1 + jω/p) 꼴로 바꾼 뒤의 값입니다. 예: 200jω/((jω+2)(jω+10)) → 200/(2·10) = 10 (20 dB).',
-      '단일 영점의 위상은 ω/10~10ω 구간에서 +45N°/dec로 올라 +90N°에서 끝납니다. 극점은 부호만 반대입니다.',
+      '왼쪽 반평면 단일 영점: z/10~10z에서 +45N°/dec, 그 뒤 +90N°. 왼쪽 반평면 단일 극점: p/10~10p에서 −45N°/dec, 그 뒤 −90N°.',
       '직선 근사와 정확 곡선의 차이: 단일 절점에서 ∓3.01 dB, 이차 항은 ζ가 작을수록 ωn 근처의 봉우리(극점) 또는 골(영점)이 커집니다.'];
     if (a.K < 0) notes.push('K<0이면 위상에 180°를 더합니다(−180°로 보아도 같은 각입니다).');
     if (a.cancelled.length) notes.push('분자·분모에 같은 근이 있어 약분했습니다: s = ' + a.cancelled.map(c => rootText(c.root)).join(', ') + '.');

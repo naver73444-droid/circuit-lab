@@ -1,12 +1,12 @@
 // Canvas UX pass for first-time students (phone and PC): page scroll vs. canvas pan, select-tool wiring by touch, the ⇄ current-reference
 // button next to its value, a minimum on-screen label size, upright new sources, a quicker auto re-run for small circuits, select-all on
-// focus, the tap bubble keeping clear of the selection bar, and the ± key of the phone value sheet.
+// focus, the tap bubble keeping clear of the selection bar, and signed DC edits in the generator inspector.
 // Real server + headless Edge with a throw-away profile (harness.mjs); phones via device emulation and Input.dispatchTouchEvent.
 // Run: node --test tests/browser/ux5-canvas.test.mjs
 import { describe, test, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
-  L, ctx, ev, until, settle, navigate, state, component, partPoint, click, clickAt, clickPart, sleep, pinTip, bgPoint, runAnalysis,
+  L, ctx, ev, until, settle, navigate, state, component, partPoint, click, clickAt, clickPart, press, sleep, pinTip, bgPoint, runAnalysis,
   startServer, startBrowser, stopAll, leftoverProcessIds, isAlive, assertNoProblems, resetProblems,
 } from "./harness.mjs";
 
@@ -268,5 +268,38 @@ describe("canvas UX for first-time students", { timeout: 300000 }, () => {
     await tap(await partPoint("V1"));
     assert.equal((await ev(`${L}.getValueSheet()`)).visible, false, "no value sheet for a source");
     assert.equal((await state()).selected?.id, "V1");
+  });
+
+  test("phone generator: a negative DC level is typed on the text keyboard, Enter commits it once; one Undo restores the old level", async () => {
+    await phone("/?example=divider");
+    if ((await state()).autoUpdate) await ev(`document.getElementById("auto-update").click()`);
+    await tap(await partPoint("V1"));
+    assert.equal((await state()).selected?.id, "V1");
+    // #inspector-tab belongs to the desktop side-tabs, hidden on phones; use the visible bottom tab.
+    await tapSelector('.view-tabs [data-view="inspector"]');
+    assert.equal((await ev(`${L}.getLayout()`)).view, "inspector", "the phone tab opens the generator inspector");
+    const field = '#inspector-content [data-prop="gen:level"]';
+    const previous = (await component("V1")).props.dc, depth = (await state()).historyDepth;
+    const focused = () => ev(`document.activeElement === document.querySelector(${JSON.stringify(field)})`);
+    await ev(`document.querySelector(${JSON.stringify(field)}).scrollIntoView({ block: "center" })`);
+    await tapSelector(field);
+    assert.equal(await focused(), true, "the generator level gets keyboard focus");
+    // A phone's decimal pad has no minus key: the level field asks for the text keyboard so that −3 can be typed.
+    assert.equal(await ev(`document.querySelector(${JSON.stringify(field)}).inputMode`), "text", "text keyboard (a minus sign is typable)");
+    assert.equal(await ev(`(() => { const e = document.querySelector(${JSON.stringify(field)}); return e.selectionStart === 0 && e.selectionEnd === e.value.length; })()`), true, "the old level is selected");
+    await ctx.cdp.send("Input.insertText", { text: "-3" });
+    assert.equal(await focused(), true, "typing a minus sign keeps the keyboard in the field");
+    // The phone keyboard's Enter (a real key event, as the student commits): the edit is stored and the keyboard closes.
+    await press("Enter", "Enter", 13);
+    await settle();
+    // DC generator level equals the stored source voltage: −3 V; a single edit is one history entry.
+    assert.equal((await component("V1")).props.dc, "-3");
+    assert.equal((await component("V1")).props.mode, "DC");
+    assert.equal((await state()).historyDepth, depth + 1);
+    assert.equal(await focused(), false, "Enter leaves the field (the keyboard closes)");
+    await ev(`document.getElementById("undo-button").scrollIntoView({ block: "center" })`);
+    await tapSelector("#undo-button");
+    assert.equal((await component("V1")).props.dc, previous, "one Undo restores the old DC level");
+    assert.equal((await state()).historyDepth, depth);
   });
 });

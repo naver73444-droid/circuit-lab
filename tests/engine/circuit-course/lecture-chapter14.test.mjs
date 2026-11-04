@@ -144,6 +144,49 @@ test('filters: type from H(0) and H(∞), lecture half-power points against clos
   }
 });
 
+test('active BPF: textbook Fig.14.45 uses C1 for low-pass and C2 for high-pass (Eq.14.65)', () => {
+  const circuit = FILTER_CIRCUITS.find(c => c.id === 'bpf3');
+  const built = buildFilter(circuit, { R: 1e4, C1: 1e-7, C2: 1e-8, Ri: 1e4, Rf: 1e4 });
+  const polynomial = analyzeTransfer(built.h), w = Math.sqrt(1e7);
+  // At ω²R²C1C2 = 1, H = −C2/(C1+C2) = −1/11: −20log10(11) = −20.827854 dB, with zero imaginary part.
+  for (const at of [built.at, polynomial.at]) {
+    const h = at(w);
+    near(h.re, -1 / 11, 1e-12); near(h.im, 0, 1e-12);
+    near(dB(Math.hypot(h.re, h.im)), -20.8278537031645, 1e-9);
+  }
+});
+
+test('active BPF/BSF: stage corners ω1·ω2 and actual half-power points ωa·ωb have distinct labels', () => {
+  const tool = getTool('filters');
+  for (const [id, wa, wb] of [['bpf3', 844.288770, 11844.288770], ['bsf', 869.585532, 11499.731345]]) {
+    const preset = tool.presets.find(p => p.values.active === id), v = presetValues(tool, preset), r = evaluateTool(tool, v);
+    assert.equal(r.status, 'valid');
+    // Stages 1000·10000: BPF roots = (√(11000²+4·10⁷) ∓ 11000)/2; BSF uses x²−1.33·10⁸x+10¹⁴=0, x=ω².
+    near(r.values.w1, wa, 1e-5); near(r.values.w2, wb, 1e-5);
+    assert.match(preset.label, /단별 절점 ω1=1000 · ω2=10⁴/);
+    assert.match(r.read, /실제 반전력점 ωa·ωb/);
+    assert.ok(r.metrics.some(m => m.label === '실제 반전력점 ωa'));
+    assert.ok(r.metrics.some(m => m.label === '실제 반전력점 ωb'));
+    assert.equal(r.freqPlots[0].panels[0].marks[0].label, 'ωa');
+    assert.equal(r.freqPlots[0].panels[0].marks[2].label, 'ωb');
+    assert.match(r.freqPlots[0].legend, /ωa~ωb/);
+    assert.ok(r.notes.some(n => n.includes('ω2 ≫ ω1')));
+    const c1 = tool.fields.find(f => f.key === 'C1').label(v), c2 = tool.fields.find(f => f.key === 'C2').label(v);
+    if (id === 'bpf3') {
+      assert.match(c1, /저역단, ω2/); assert.match(c2, /고역단, ω1/);
+      near(v.C1, 1e-8, 1e-20); near(v.C2, 1e-7, 1e-19);
+      // Swapping the preset capacitors keeps its original centre gain: −10/11 instead of the regression case's −1/11.
+      near(r.sys.at(Math.sqrt(1e7)).re, -10 / 11, 1e-12);
+    } else { assert.match(c1, /ω1/); assert.match(c2, /ω2/); }
+  }
+});
+
+test('Bode phase guidance: left-half-plane single zeros use z and poles use p as corner frequencies', () => {
+  const tool = getTool('bode'), r = evaluateTool(tool, initialValues(tool));
+  assert.ok(r.notes.some(n => n.includes('왼쪽 반평면 단일 영점: z/10~10z에서 +45N°/dec, 그 뒤 +90N°')));
+  assert.ok(r.notes.some(n => n.includes('왼쪽 반평면 단일 극점: p/10~10p에서 −45N°/dec, 그 뒤 −90N°')));
+});
+
 test('resonance: series and parallel closed forms, Table 14.4 duality, design inverses (14.30, 14.77)', () => {
   const s = resonance({ circuit: 'series', R: 2, L: 1e-3, C: 0.4e-6, source: 1 });
   rel(s.w0, 5e4); rel(s.B, 2000); rel(s.Q, 25); rel(s.w1 * s.w2, s.w0 ** 2, 1e-12); rel(s.w2 - s.w1, s.B, 1e-9);

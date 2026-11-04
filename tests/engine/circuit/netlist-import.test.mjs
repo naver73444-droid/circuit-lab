@@ -179,3 +179,34 @@ test("review fixes: AC-only sources, no hidden editor defaults, spaced prefixes,
   const inferred = inferredSettings(parseNetlist("V1 a 0 PULSE(0 1 0 1n 1n 1u 2u)\nV2 b 0 SIN(0 1 1)\nR1 a b 1k\nR2 b 0 1k").parts);
   assert.ok(Number(inferred.end) / Number(inferred.step) <= 20000.5, JSON.stringify(inferred));
 });
+
+test("review 11-03: an empty probe, an unreadable .tran start and an upper-case exponent before M are line errors, never a throw or a guess", () => {
+  // ".probe I(,)" used to throw a TypeError (args[0] of an empty list); now the line says what is missing.
+  const probe = parseNetlist("V1 a 0 2\nR1 a 0 1k\n.probe I(,)");
+  assert.deepEqual(probe.errors, ["3행: I(,) 안에 노드나 부품 이름이 없습니다. 예: .probe V(out) I(R1)"]);
+  // No node or component name means no probe; .print and .plot share the same reading rules.
+  for (const cmd of [".probe", ".print", ".plot"]) for (const raw of ["I()", "I( )", "I(,)", "V()", "V(,)"]) {
+    const bad = parseNetlist("V1 a 0 2\nR1 a 0 1k\n" + cmd + " " + raw);
+    assert.equal(bad.errors.length, 1, cmd + " " + raw);
+    assert.match(bad.errors[0], /^3행:/);
+    assert.deepEqual(bad.probes, []);
+  }
+  assert.equal(parseNetlist("V1 a 0 2\nR1 a 0 1k\n.probe V( ) V(a)").errors.length, 1);
+  // ".tran 1u 1m bad" used to open with start 0; a negative start is refused too, and a readable one is kept.
+  assert.deepEqual(parseNetlist("V1 a 0 1\nR1 a 0 1\n.tran 1u 1m bad").errors, ['3행: .tran 시작 시간 "bad"을(를) 읽을 수 없습니다. 0 이상인 시간을 쓰세요. 예: .tran 10u 5m 1m']);
+  assert.equal(parseNetlist("V1 a 0 1\nR1 a 0 1\n.tran 1u 1m -1m").errors.length, 1);
+  assert.deepEqual(parseNetlist("V1 a 0 1\nR1 a 0 1\n.tran 1u 2m 1m").settings, { analysis: "transient", step: "1u", end: "2m", start: "1m" });
+  assert.equal(parseNetlist("V1 a 0 1\nR1 a 0 1\n.tran 1u 1m").settings.start, "0");
+  // UIC may stand where the start time goes (SPICE): it is dropped, as the editor always starts from the C/L initial values.
+  for (const line of [".tran 1u 1m UIC", ".TRAN 1u 1m uic", ".tran 1u 1m 0 UIC"]) {
+    const parsed = parseNetlist("V1 a 0 1\nR1 a 0 1\n" + line);
+    assert.deepEqual(parsed.errors, [], line);
+    assert.deepEqual(parsed.settings, { analysis: "transient", step: "1u", end: "1m", start: "0" }, line);
+  }
+  assert.equal(parseNetlist("V1 a 0 1\nR1 a 0 1\n.tran 1u 2m 1m uic").settings.start, "1m");
+  // "1E0M" is as ambiguous as "1M" and "1e0M" (milli or mega); "1E0MF" with its unit too. "1E3" stays 1000.
+  for (const raw of ["1M", "1e0M", "1E0M", "2.5E-1M"]) assert.equal(editorValue(raw, ""), null, raw);
+  assert.equal(editorValue("1E0MF", "F"), null);
+  assert.equal(parseValue(editorValue("1E3", "")), 1000);
+  assert.match(parseNetlist("V1 a 0 1\nC1 a 0 1E0MF").errors[0], /^2행: C1 값 "1E0MF"/);
+});

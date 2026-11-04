@@ -1,5 +1,5 @@
 import { CircuitError, deserializeCircuit, parseValue, pinCount, serializeCircuit } from "./circuit-engine.js";
-import { SOURCE_MODEL, migrateGeneratorSource } from "./source-model.js";
+import { SOURCE_MODEL, migrateGeneratorSources } from "./source-model.js";
 import { isSafeColor } from "./safe-dom.js";
 import { sanitizeCurrentReferences } from "./current-direction.js";
 
@@ -95,10 +95,9 @@ export function deserializeProject(text, fallbackSettings = {}) {
   // Optional display field (no version bump): flipCurrent / flipCurrent2 = true flips a part's shown current reference. Anything else is dropped.
   sanitizeCurrentReferences(circuit.components);
   // Files from before sources were function generators: their separate AC values move into the waveform (source-model.js).
-  if (!wrapped || payload.sources !== SOURCE_MODEL) {
-    const options = { analysis: settings.analysis, frequency: settings.phasorFrequency ?? "1k" };
-    circuit.components.forEach((component) => migrateGeneratorSource(component, options));
-  }
+  const notes = !wrapped || payload.sources !== SOURCE_MODEL
+    ? migrateGeneratorSources(circuit.components, { analysis: settings.analysis, frequency: settings.phasorFrequency ?? "1k" })
+    : [];
   const probes = wrapped ? structuredClone(payload.probes ?? []) : [];
   if (wrapped) {
     const componentIds = new Set(circuit.components.map((component) => component.id));
@@ -135,5 +134,6 @@ export function deserializeProject(text, fallbackSettings = {}) {
     probes,
     title: wrapped ? payload.title : undefined,
     subtitle: wrapped ? payload.subtitle : undefined,
+    notes,
   };
 }

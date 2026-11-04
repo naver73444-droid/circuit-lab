@@ -1,4 +1,5 @@
-// Ch.14 filter circuits (passive §14.7, active §14.8) and magnitude/frequency scaling (§14.10). Every circuit becomes a rational H(s)
+// Ch.14 filter circuits (passive §14.7, active §14.8) and magnitude/frequency scaling (교재 §14.9 / 강의 슬라이드 14.10).
+// Every circuit becomes a rational H(s)
 // built from element impedances, so the transfer-function reading (type, order, half-power points) is shared with the Bode tool. Pure.
 import { rAdd, rMul, rDiv, rNeg, rParallel, rConst, reduceRational, S } from './circuit-course-transfer.js';
 
@@ -79,11 +80,11 @@ export const FILTER_CIRCUITS = Object.freeze([
   { id: 'noninv-hp', family: 'active', label: '비반전 + RC 고역 (연습 14.65 꼴, Rf=0이면 14.61b)', fields: ['R', 'C', 'Ri', 'Rf'], topology: 'Vs — C — ●V+ — R — 접지, 비반전 증폭 1 + Rf/Ri',
     transfer: v => rMul(rConst(gain(v)), rDiv(rMul(S, rConst(v.R * v.C)), rAdd(ONE, rMul(S, rConst(v.R * v.C))))), direct: (v, w) => cdivc({ re: 0, im: gain(v) * w * v.R * v.C }, { re: 1, im: w * v.R * v.C }),
     formula: 'H(s) = (1 + Rf/Ri)·sRC/(1 + sRC), 고주파 이득 1 + Rf/Ri', derivation: ['V+ = Vs·R/(R + 1/sC) = Vs·sRC/(1 + sRC)', 'Vo = (1 + Rf/Ri)·V+', '→ (1 + Rf/Ri)·jωRC/(1 + jωRC)'] },
-  { id: 'bpf3', family: 'active', label: '대역통과 3단 (저역 · 고역 · 반전 증폭)', fields: ['R', 'C1', 'C2', 'Ri', 'Rf'], topology: '반전 저역(ω2 = 1/RC2) → 반전 고역(ω1 = 1/RC1) → 반전 증폭(−Rf/Ri)',
-    transfer: v => rMul(rConst(-v.Rf / v.Ri), rMul(rDiv(ONE, rAdd(ONE, rMul(S, rConst(v.R * v.C2)))), rDiv(rMul(S, rConst(v.R * v.C1)), rAdd(ONE, rMul(S, rConst(v.R * v.C1)))))),
-    direct: (v, w) => cmulc(cdivc({ re: -v.Rf / v.Ri, im: 0 }, { re: 1, im: w * v.R * v.C2 }), cdivc({ re: 0, im: w * v.R * v.C1 }, { re: 1, im: w * v.R * v.C1 })),
+  { id: 'bpf3', family: 'active', label: '대역통과 3단 (저역 · 고역 · 반전 증폭)', fields: ['R', 'C1', 'C2', 'Ri', 'Rf'], topology: '반전 저역(C1, ω2 = 1/(RC1)) → 반전 고역(C2, ω1 = 1/(RC2)) → 반전 증폭(−Rf/Ri)',
+    transfer: v => rMul(rConst(-v.Rf / v.Ri), rMul(rDiv(ONE, rAdd(ONE, rMul(S, rConst(v.R * v.C1)))), rDiv(rMul(S, rConst(v.R * v.C2)), rAdd(ONE, rMul(S, rConst(v.R * v.C2)))))),
+    direct: (v, w) => cmulc(cdivc({ re: -v.Rf / v.Ri, im: 0 }, { re: 1, im: w * v.R * v.C1 }), cdivc({ re: 0, im: w * v.R * v.C2 }, { re: 1, im: w * v.R * v.C2 })),
     formula: 'H(s) = −(Rf/Ri)·[1/(1 + s/ω2)]·[(s/ω1)/(1 + s/ω1)], ω0 = √(ω1ω2), |H(ω0)| = (Rf/Ri)·ω2/(ω1 + ω2)',
-    derivation: ['세 단의 곱 (−)(−)(−) = −', 'ω1 = 1/(RC1) < ω2 = 1/(RC2) 이어야 통과대역이 생김'] },
+    derivation: ['세 단의 곱 (−)(−)(−) = −', 'C1은 저역단, C2는 고역단: ω1 = 1/(RC2) < ω2 = 1/(RC1) 이어야 통과대역이 생김'] },
   { id: 'bsf', family: 'active', label: '대역차단 (저역 ∥ 고역 + 가산 증폭)', fields: ['R', 'C1', 'C2', 'Ri', 'Rf'], topology: '저역(ω1 = 1/RC1)과 고역(ω2 = 1/RC2)을 나란히 두고 가산 증폭(Rf/Ri)',
     transfer: v => rMul(rConst(v.Rf / v.Ri), rAdd(rDiv(ONE, rAdd(ONE, rMul(S, rConst(v.R * v.C1)))), rDiv(rMul(S, rConst(v.R * v.C2)), rAdd(ONE, rMul(S, rConst(v.R * v.C2)))))),
     direct: (v, w) => {

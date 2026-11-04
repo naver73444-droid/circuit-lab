@@ -56,6 +56,50 @@ describe("netlist import", { timeout: 300000 }, () => {
     assert.equal((await state()).circuit.components.length, 0, "closing opens nothing");
   });
 
+  test("an edit that breaks a good netlist turns 불러오기 off and forgets the old reading: the 1 V circuit read before never opens", async () => {
+    await navigate("/");
+    await click("#netlist-button");
+    await paste("V1 in 0 DC 1\nR1 in out 1k\nR2 out 0 1k");
+    assert.equal(await ev(`document.getElementById("netlist-load").disabled`), false, "the good netlist can open");
+    // 2 V and an empty current probe: once a TypeError that left the 1 V reading and the button on.
+    await paste("V1 in 0 DC 2\nR1 in out 1k\nR2 out 0 1k\n.probe I(,)");
+    assert.equal(await ev(`document.getElementById("netlist-load").disabled`), true);
+    assert.deepEqual(await ev(`[...document.querySelectorAll("#netlist-preview .netlist-error")].map((li) => li.textContent)`), [
+      "4행: I(,) 안에 노드나 부품 이름이 없습니다. 예: .probe V(out) I(R1)"]);
+    // Even with the button forced on, nothing opens: the dialog keeps no reading with errors to open.
+    await ev(`(() => { const b = document.getElementById("netlist-load"); b.disabled = false; b.click(); return true; })()`);
+    await settle();
+    assert.equal(await ev(`document.getElementById("netlist-dialog").open`), true, "the dialog stays open");
+    assert.equal((await state()).circuit.components.length, 0, "no circuit opened");
+    await paste("V1 in 0 DC 2\nR1 in out 1k\nR2 out 0 1k");
+    assert.equal(await ev(`document.getElementById("netlist-load").disabled`), false);
+    await click("#netlist-load");
+    // The repaired input says DC 2 V; the earlier successful reading said 1 V.
+    assert.equal((await state()).circuit.components.find((c) => c.id === "V1").props.dc, "2");
+  });
+
+  test("a refresh exception disables 불러오기, clears its reading and shows an error; a later good input recovers", async () => {
+    await navigate("/");
+    await click("#netlist-button");
+    await paste("V1 in 0 DC 1\nR1 in 0 1k");
+    assert.equal(await ev(`document.getElementById("netlist-load").disabled`), false);
+    // Inject an exception inside refresh's try block without changing the parser module or leaving a throwing getter behind.
+    await ev(`(() => {
+      const t = document.getElementById("netlist-text");
+      Object.defineProperty(t, "value", { configurable: true, get() { throw new Error("시험 읽기 예외"); } });
+      try { t.dispatchEvent(new Event("input", { bubbles: true })); } finally { delete t.value; }
+      return true;
+    })()`);
+    assert.equal(await ev(`document.getElementById("netlist-load").disabled`), true);
+    assert.match(await ev(`document.querySelector("#netlist-preview .netlist-error").textContent`), /읽지 못했습니다: 시험 읽기 예외/);
+    await ev(`(() => { const b = document.getElementById("netlist-load"); b.disabled = false; b.click(); return true; })()`);
+    assert.equal((await state()).circuit.components.length, 0, "the previous 1 V reading cannot open after an exception");
+    assert.equal(await ev(`document.getElementById("netlist-dialog").open`), true);
+    await paste("V1 in 0 DC 2\nR1 in 0 1k");
+    await click("#netlist-load");
+    assert.equal((await state()).circuit.components.find((c) => c.id === "V1").props.dc, "2");
+  });
+
   test("iPad landscape: the button is in the 파일 popover, the dialog fits the screen with a 16 px text box", async () => {
     await ctx.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
     await navigate("/", { width: 1180, height: 740, mobile: true });

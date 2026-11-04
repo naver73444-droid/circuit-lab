@@ -187,6 +187,9 @@ export function createProjectIO(deps) {
     }, { autosave: save });
     setTool("select");
     fitCanvas();
+    // An older file whose sources moved into the generator model says what changed (source-model.js migrateGeneratorSources). A notice,
+    // not the status line: the automatic run that follows rewrites the status line.
+    if (project.notes?.length) notices.show({ text: `예전 파일의 전원을 바꿨습니다 · ${project.notes.join(" · ")}`, autoHideMs: 12000 });
     return true;
   }
 

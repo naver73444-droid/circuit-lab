@@ -3,6 +3,10 @@ import { parseValue } from "./circuit-engine.js";
 function number(value, fallback = 0) {
   try { return parseValue(value); } catch { return fallback; }
 }
+/** A V/I source whose waveform changes: a sine with a non-zero amplitude or a square whose levels differ (a 0 Vpp sine is a DC level). */
+const isPeriodicSource = (component) => ["V", "I"].includes(component.type) && (component.props?.mode === "SIN"
+  ? number(component.props.amplitude, NaN) !== 0
+  : component.props?.mode === "PULSE" && number(component.props.pulseV1, NaN) !== number(component.props.pulseV2, NaN));
 
 /** Heuristic display/analysis defaults, NOT a substitute for circuit poles or solver validation. */
 export function suggestAnalysis(circuit, previous, intent = "auto") {
@@ -11,7 +15,7 @@ export function suggestAnalysis(circuit, previous, intent = "auto") {
   const capacitors = circuit.components.filter((component) => component.type === "C").map((component) => number(component.props?.value)).filter((value) => value > 0);
   const inductors = circuit.components.filter((component) => component.type === "L").map((component) => number(component.props?.value)).filter((value) => value > 0);
   const resistors = circuit.components.filter((component) => component.type === "R").map((component) => number(component.props?.value)).filter((value) => value > 0);
-  const timeSources = sources.filter((component) => ["SIN", "PULSE"].includes(component.props?.mode));
+  const timeSources = sources.filter(isPeriodicSource);
   const analysis = intent === "auto" ? (timeSources.length || capacitors.length || inductors.length ? "transient" : "dc") : intent;
   const settings = { ...previous, analysis };
   if (analysis === "dc") return { settings, reason: `${intent === "auto" ? "자동: " : ""}DC 동작점 (C 개방 · L 단락)` };
@@ -102,17 +106,18 @@ export function refinedTransientStep(circuit, settings) {
 /**
  * Oscilloscope "정상상태" (steady state, triggered): a run long enough for the start-up transient to die out, shown from a rising edge
  * of the first periodic source, as a triggered scope shows a repeating signal. Returns null when the run is not transient or no V/I
- * source is a sine or a square; { refused } (a sentence) when the settling time is so long that the window would get fewer than 20
- * samples per period; else { end, step, trigger, span, source } in seconds: run 0…end, keep trigger…trigger+span.
- *   settle  = 10·R_max·ΣC and 10·ΣL/R_min (5 envelope time constants: a series RLC decays with 2L/R, a parallel one with 2RC), at least
+ * source is a sine or a square that changes (a 0 Vpp sine is a DC level); { refused } (a sentence) when the settling time is so long that the window would get fewer than 20
+ * samples per period of any source; else { end, step, trigger, span, source } in seconds: run 0…end, keep trigger…trigger+span.
+ *   settle  = 10·ΣR·ΣC and 10·ΣL·Σ(1/R) (conservative passive RC/RL bounds; 5 envelope time constants for 2RC or 2L/R), at least
  *             one period, counted from the moment a delayed square starts;
- *   trigger = the first rising edge after settle: a square's edge (delay + k·T), a sine's upward zero crossing.
+ *   trigger = the first rising edge after settle: a square's delay + k·T (+ rise + width when V1 > V2), a sine's upward zero crossing.
  * The span keeps the typed length (end − start); the step is the given one, coarsened only to stay within 20 000 points, and set so
  * that the trigger falls on a sample.
  */
 export function steadyStateRun(circuit, settings) {
   if (settings?.analysis !== "transient") return null;
-  const source = circuit.components.find((component) => ["V", "I"].includes(component.type) && ["SIN", "PULSE"].includes(component.props?.mode));
+  const sources = circuit.components.filter(isPeriodicSource);
+  const source = sources[0];
   if (!source) return null;
   const run = readWindow(settings);
   if (!run) return null;
@@ -120,14 +125,18 @@ export function steadyStateRun(circuit, settings) {
   const span = end - start;
   if (!(span > 0) || !(step > 0)) return null;
   const p = source.props;
-  const period = p.mode === "SIN" ? 1 / number(p.frequency, 60) : number(p.pulsePeriod, 2);
-  if (!(period > 0) || !Number.isFinite(period)) return null;
+  const periods = sources.map(({ props }) => props.mode === "SIN" ? 1 / number(props.frequency, 60) : number(props.pulsePeriod, 2));
+  if (periods.some((value) => !(value > 0) || !Number.isFinite(value))) return null;
+  const period = periods[0], shortestPeriod = Math.min(...periods);
   const r = positiveValues(circuit, "R"), c = positiveValues(circuit, "C"), l = positiveValues(circuit, "L");
-  const settle = Math.max(period, r.length && c.length ? 10 * Math.max(...r) * c.reduce((a, b) => a + b, 0) : 0, r.length && l.length ? 10 * l.reduce((a, b) => a + b, 0) / Math.min(...r) : 0);
+  const sum = (values) => values.reduce((a, b) => a + b, 0);
+  const passive = Math.max(10 * sum(r) * sum(c), 10 * sum(l) * sum(r.map((value) => 1 / value)));
   // First rising edge at or after the settled time: the edge repeats every period from `phase0` (a square's delay is also when it starts).
   const delay = p.mode === "PULSE" ? Math.max(0, number(p.pulseDelay, 0)) : 0;
-  const phase0 = p.mode === "SIN" ? ((-number(p.phase, 0) / 360) % 1 + 1) % 1 * period : delay;
-  const trigger = phase0 + Math.max(0, Math.ceil((delay + settle - phase0) / period - 1e-9)) * period;
+  const risingOffset = p.mode === "PULSE" && number(p.pulseV1) > number(p.pulseV2) ? number(p.pulseRise) + number(p.pulseWidth, 1) : 0;
+  const phase0 = p.mode === "SIN" ? ((-number(p.phase, 0) / 360) % 1 + 1) % 1 * period : delay + risingOffset;
+  const edgeAfter = (settle) => phase0 + Math.max(0, Math.ceil((delay + settle - phase0) / period - 1e-9)) * period;
+  const trigger = edgeAfter(Math.max(period, passive));
   const runEnd = trigger + span;
   // Within 20 000 points, and a whole number of steps to the trigger so that t = 0 is a sample: the step is shortened to fit, or
   // lengthened when shortening would pass the point limit (a trigger shorter than one step stays off the grid).
@@ -136,8 +145,18 @@ export function steadyStateRun(circuit, settings) {
     const finer = trigger / Math.ceil(trigger / runStep - 1e-9);
     runStep = runEnd / finer <= 19990 ? finer : trigger / Math.floor(trigger / runStep + 1e-9);
   }
-  if (runStep > period / 20) {
-    return { refused: `정상상태까지 약 ${Number(trigger.toPrecision(3))} s가 걸려 한 주기에 20점도 못 그립니다 · 정상상태를 끄거나 R·C를 줄이세요` };
+  if (runStep > shortestPeriod / 20) {
+    // Say what made the run too long: the student's own Δt when it alone is longer than a twentieth of the fastest period, the R·L·C
+    // settling bound when the run would fit without it, a slow trigger source when the run would fit with the fastest source as the
+    // trigger, a square's delay when the run would fit without it, else the shown span (the trigger waits at least one period).
+    const s = (value) => Number(value.toPrecision(3));
+    const fine = shortestPeriod / 20, fits = (runLength) => runLength / 19990 <= fine;
+    const why = step > fine ? `간격 Δt ${s(step)} s가 가장 빠른 전원 주기의 1/20(${s(fine)} s)보다 길어 한 주기에 20점도 못 그립니다 · Δt를 ${s(fine)} s 이하로 줄이세요`
+      : passive > period && fits(edgeAfter(period) + span) ? `정상상태까지 약 ${s(trigger)} s가 걸려 한 주기에 20점도 못 그립니다(R·L·C 값을 모두 더해 잡은 보수적 상한) · 정상상태를 끄거나 R·C를 줄이세요`
+      : period > shortestPeriod && fits(span + 2 * shortestPeriod) ? `트리거 전원 주기 ${s(period)} s가 가장 빠른 전원 주기 ${s(shortestPeriod)} s보다 훨씬 길어 한 주기에 20점도 못 그립니다 · 정상상태를 끄세요`
+      : delay > 0 && fits(span + 2 * period) ? `구형 지연 ${s(delay)} s 뒤에야 트리거해 한 주기에 20점도 못 그립니다 · 지연을 줄이거나 정상상태를 끄세요`
+      : `보이는 구간 ${s(span)} s가 길어 한 주기에 20점도 못 그립니다 · 구간을 줄이세요`;
+    return { refused: why };
   }
   return { end: runEnd, step: runStep, trigger, span, source: p.ref ?? source.id };
 }

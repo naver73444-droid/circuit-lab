@@ -28,7 +28,12 @@ async function selectPart(id) {
 }
 /** Keep background re-runs from re-rendering the canvas in the middle of a long scripted gesture loop. */
 async function autoUpdateOff() {
-  if ((await state()).autoUpdate) await click("#auto-update");
+  // While a run is in flight 해석 중지 shows left of the box and moves it, so a load-time automatic run can make a click miss: wait for no
+  // run in flight, and try again if the box did not toggle.
+  for (let attempt = 0; attempt < 3 && (await state()).autoUpdate; attempt += 1) {
+    await until(`document.getElementById("cancel-analysis-button").classList.contains("hidden")`, "no analysis in flight");
+    await click("#auto-update");
+  }
   assert.equal((await state()).autoUpdate, false);
 }
 async function openSettings() {
@@ -435,6 +440,26 @@ describe("browser smoke", { timeout: 600000 }, () => {
     await waitFor(async () => (await state()).settings.step === "2u", "blur to commit a valid settings draft");
     assert.equal((await state()).historyDepth, before.historyDepth + 1, "the committed setting is one undo step");
     assert.deepEqual(await draftsOf(), []);
+  });
+
+  test("drafts: a run that finishes while a settings field has the focus keeps the focus and the selection there", async () => {
+    await navigate("/?example=rlc");
+    await openSettings();
+    await until(`${L}.getState().runState.status !== "running" && !document.getElementById("run-button").disabled`, "the load-time run to finish");
+    const before = await state();
+    // Focus the step field and select its text, as a student does before typing; then a run finishes and re-renders the fields.
+    await click(STEP_INPUT);
+    await press("a", "KeyA", 65, MOD.ctrl);
+    await ev(`document.getElementById("run-button").click()`); // a script click: the focus stays in the field
+    // A manual run ends with "해석 완료" (the load-time automatic one said "최신 결과 · 자동").
+    await until(`${L}.getState().runState.status === "success" && document.getElementById("engine-status").textContent.startsWith("해석 완료")`, "the run to finish");
+    assert.equal(await ev(`document.activeElement.matches(${JSON.stringify(STEP_INPUT)})`), true, "the re-rendered step field has the focus");
+    // The whole text is still selected, so typing replaces it (a caret at either end would keep the old text next to "2u").
+    await ctx.cdp.send("Input.insertText", { text: "2u" });
+    await settle();
+    assert.deepEqual(await draftsOf(), [{ kind: "setting", id: null, property: "step", value: "2u" }]);
+    assert.equal((await state()).settings.step, before.settings.step, "typing does not commit");
+    assert.equal((await state()).historyDepth, before.historyDepth, "the re-render committed nothing");
   });
 
   test("drafts: pointercancel keeps a pending draft (canvas drag cancelled, touch on the discard button cancelled)", async () => {
