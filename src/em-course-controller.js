@@ -15,7 +15,8 @@ import {
 } from './em-course-ui.js';
 
 const TOPICS = [...new Set(EXPERIMENTS.map(d => topicOf(d.id)))];
-// The Hayt Ch.8 (6주차) subjects come first in the subject select, the Electromagnetics 1 review subjects after them.
+// The subject select: Hayt Ch.9 (7주차) first, then the Ch.8 (6주차) subjects, the Electromagnetics 1 review subjects last.
+const CH9_TOPICS = ['자기유도', '변위전류·Maxwell'].filter(name => TOPICS.includes(name));
 const CH8_TOPICS = ['자기력·토크', '자성체·경계', '자기회로', '에너지·인덕턴스'].filter(name => TOPICS.includes(name));
 const FIRST_EXPERIMENT = 'force-lorentz';
 const LAST_KEY = 'circuit-lab.em-course.last';
@@ -94,8 +95,15 @@ export function createEMCourseController(root, { onClose, initial = null, onChan
       if (setParam(link, value)) syncParameterStrip($('#em-course-parameters'), def, data.params);
       return;
     }
+    const result = evaluate(def, data.params, point);
+    // view.strictProbe: a cursor past an end of the sweep (arrow key, typed number) is refused with the reason; the last valid
+    // point and answer stay. A pointer drag never gets here past an end: the view clamps it to the graph's range.
+    if (def.view?.strictProbe) {
+      if (result.status === 'invalid') { data.error = result.reason || '이 위치는 계산 범위 밖입니다.'; renderNumeric(); return; }
+      data.error = '';
+    }
     data.point = point;
-    data.result = evaluate(def, data.params, point);
+    data.result = result;
     renderNumeric();
   }
   const radialView = createRadialProfileView($('#em-course-radial-canvas'), radius => {
@@ -560,8 +568,9 @@ export function createEMCourseController(root, { onClose, initial = null, onChan
         element.append(...names.map(title => option(title, title)));
         return element;
       };
-      const review = TOPICS.filter(title => !CH8_TOPICS.includes(title));
-      topic.replaceChildren(...[CH8_TOPICS.length && group('Hayt Ch.8 (6주차)', CH8_TOPICS), review.length && group('전자기1 복습', review)].filter(Boolean));
+      const review = TOPICS.filter(title => !CH8_TOPICS.includes(title) && !CH9_TOPICS.includes(title));
+      topic.replaceChildren(...[CH9_TOPICS.length && group('Hayt Ch.9 (7주차)', CH9_TOPICS), CH8_TOPICS.length && group('Hayt Ch.8 (6주차)', CH8_TOPICS),
+        review.length && group('전자기1 복습', review)].filter(Boolean));
     }
     topic.value = name;
     const select = $('#em-course-select');

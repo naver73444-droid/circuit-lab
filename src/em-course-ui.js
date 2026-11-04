@@ -3,6 +3,7 @@
 import { appendCourseMath } from './course-math-view.js';
 import { siComplex, siText, siVector } from './em-format.js';
 import { formatParam, isParamVisible, paramSpec, rangeFromValue } from './em-course-params.js';
+import { zeroed } from './em-course-lecture.js';
 
 const statusLabel = { valid: '유효', singular: '특이점', boundary: '경계', invalid: '입력 오류', unsupported: '지원 범위 밖' };
 const UNITS = { E: 'V/m', D: 'C/m²', B: 'T', H: 'A/m' };
@@ -185,6 +186,10 @@ export function syncParameterStrip(host, definition, params) {
 
 // ---- answer -----------------------------------------------------------------------------------------------------
 
+// A scalar may carry `zero` (the largest size that quantity takes): residue of an exact zero reads 0 on screen (zeroed()).
+// The value itself is never rounded.
+const shownValue = s => (s.zero > 0 ? zeroed(s.value, s.zero) : s.value);
+
 /** The selectable quantities of a result: [{ key, label, text, group }]; group is '답' | '중간값' | '좌표'. */
 export function answerItems(result, definition) {
   const answers = definition?.answerKeys || [], coordinates = definition?.coordinateKeys || [];
@@ -197,7 +202,7 @@ export function answerItems(result, definition) {
     items.push({ key: `magnitude:${key}`, label: `|${key}| 크기`, text: `|${key}|=${siText(Math.hypot(...v), unit)}`, group: '중간값' });
   }
   for (const s of result.scalars || []) {
-    if (Number.isFinite(s.value)) items.push({ key: `scalar:${s.key}`, label: s.label, text: `${s.label}=${siText(s.value, s.unit || '')}`, group: groupOf(s.key) });
+    if (Number.isFinite(s.value)) items.push({ key: `scalar:${s.key}`, label: s.label, text: `${s.label}=${siText(shownValue(s), s.unit || '')}`, group: groupOf(s.key) });
   }
   for (const p of result.phasors || []) {
     if (Number.isFinite(p.re) && Number.isFinite(p.im)) {
@@ -254,7 +259,7 @@ export function renderValues(dl, result) {
     add(`${key} (x, y, z)`, siVector(vector, UNITS[key] || ''));
     add(`|${key}|`, siText(Math.hypot(...vector), UNITS[key] || ''));
   }
-  for (const item of result.scalars || []) if (Number.isFinite(item.value)) add(item.label || item.key, siText(item.value, item.unit || ''));
+  for (const item of result.scalars || []) if (Number.isFinite(item.value)) add(item.label || item.key, siText(shownValue(item), item.unit || ''));
   for (const p of result.phasors || []) {
     if (Number.isFinite(p.re) && Number.isFinite(p.im)) add(`${p.label} · 복소/극형`, siComplex(p.re, p.im, p.unit || ''));
   }

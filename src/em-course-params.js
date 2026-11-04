@@ -142,7 +142,8 @@ export function topicOf(id) {
   if (id.startsWith('gauss-')) return '가우스법칙';
   if (id.startsWith('wave-')) return '파동·반사';
   if (id.startsWith('transmission-')) return '전송선';
-  if (['faraday-loop', 'motional-rod'].includes(id)) return '자기유도';
+  if (id.startsWith('emf-') || ['faraday-loop', 'motional-rod'].includes(id)) return '자기유도';
+  if (id.startsWith('maxwell-')) return '변위전류·Maxwell';
   if (['dielectric-interface', 'layered-plate'].includes(id)) return '유전체·경계';
   if (id.startsWith('coax-current') || ['wire-current', 'loop-axis', 'ampere-wire'].includes(id)) return '정자계·암페어';
   return '정전계·정전용량';

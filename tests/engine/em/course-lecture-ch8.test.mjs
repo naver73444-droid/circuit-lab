@@ -7,7 +7,7 @@ import { paramSpec, topicOf } from '../../../src/em-course-params.js';
 import { AMU, E_CHARGE, MU0 } from '../../../src/em-course-constants.js';
 
 const GROUPS = { '자기력·토크': 'force-', '자성체·경계': 'matter-', '자기회로': 'mcircuit-', '에너지·인덕턴스': 'induct-' };
-const lecture = EXPERIMENTS.filter(d => d.lecture);
+const lecture = EXPERIMENTS.filter(d => d.lecture?.week === 6); // the Ch.9 (7주차) experiments have their own file
 const defaults = def => Object.fromEntries(def.parameters.map(p => [p.key, p.initial]));
 const run = (id, over = {}, s = undefined, point = null) => {
   const def = getExperiment(id), params = { ...defaults(def), ...over };
@@ -20,7 +20,7 @@ const MU0_LECTURE = 4 * Math.PI * 1e-7; // the lecture's μ₀; CODATA differs b
 // ---- registry --------------------------------------------------------------------------------------------------------------
 test('21 lecture experiments are registered with unique ids, four groups and lecture tags', () => {
   assert.equal(lecture.length, 21);
-  assert.equal(EXPERIMENTS.length, 44);
+  assert.equal(EXPERIMENTS.length, 47); // 23 original + 21 Ch.8 + 3 Ch.9
   assert.equal(new Set(EXPERIMENTS.map(d => d.id)).size, EXPERIMENTS.length);
   const counts = { '자기력·토크': 8, '자성체·경계': 4, '자기회로': 3, '에너지·인덕턴스': 6 };
   for (const [topic, prefix] of Object.entries(GROUPS)) {
