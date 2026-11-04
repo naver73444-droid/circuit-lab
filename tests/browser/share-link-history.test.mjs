@@ -1,5 +1,5 @@
 // A #p= share link is opened once: going back/forward through the app's own history (workspace steps) never opens it again
-// over later work. Real server + headless Edge (throw-away profile, see harness.mjs).
+// over later work; a link to an old file shows how its sources were changed. Real server + headless Edge (throw-away profile, see harness.mjs).
 // Run with `node --test tests/browser/share-link-history.test.mjs`.
 import { describe, test, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -104,5 +104,30 @@ describe("share link and the back button", { timeout: 300000 }, () => {
     await back();
     await sleep(800);
     assert.equal(await count(), linked + 1, "back onto a stale #p= entry keeps the current work");
+  });
+
+  test("a link to an old AC file says how its sources changed, and the automatic run does not hide it", async () => {
+    await navigate(`/?example=divider`);
+    // The divider's 12 V DC supply with AC 1∠0°, saved for the AC analysis by a version before the generator model (no `sources` marker).
+    const hash = await ev(`(async () => {
+      const share = await import("/src/share-url.js");
+      const format = await import("/src/project-format.js");
+      const examples = await import("/src/examples.js");
+      const e = examples.cloneExample("divider");
+      Object.assign(e.circuit.components.find((c) => c.type === "V").props, { mode: "DC", dc: "12", acMagnitude: "1", acPhase: "0" });
+      const payload = JSON.parse(format.serializeProject({ title: e.name, subtitle: e.description, circuit: e.circuit, settings: { ...e.settings, analysis: "ac", phasorFrequency: "1k" }, probes: [] }));
+      delete payload.sources;
+      const out = await share.encodeProjectToHash(JSON.stringify(payload), { baseHref: location.href.split("#")[0], compress: true });
+      return out.hash;
+    })()`);
+    await openLinkFromBlank(hash);
+    const notice = `document.getElementById("canvas-notices").textContent`;
+    const note = "V1: DC 12 V → 사인 2 Vpp · 1 kHz · +12 V, 위상 0°";
+    assert.ok((await ev(notice)).includes("예전 파일의 전원을 바꿨습니다"), "the migration notice is shown");
+    assert.ok((await ev(notice)).includes(note), "DC 12 V with AC 1 V became a 2 Vpp sine around 12 V");
+    // The automatic run starts 250 ms after a change and rewrites the status line; the notice stays (12 s).
+    await sleep(1500);
+    await settle();
+    assert.ok((await ev(notice)).includes(note), "still shown after the automatic run");
   });
 });

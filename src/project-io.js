@@ -187,6 +187,9 @@ export function createProjectIO(deps) {
     }, { autosave: save });
     setTool("select");
     fitCanvas();
+    // An older file whose sources moved into the generator model says what changed (source-model.js migrateGeneratorSources). A notice,
+    // not the status line: the automatic run that follows rewrites the status line.
+    if (project.notes?.length) notices.show({ text: `예전 파일의 전원을 바꿨습니다 · ${project.notes.join(" · ")}`, autoHideMs: 12000 });
     return true;
   }
 
@@ -196,8 +199,7 @@ export function createProjectIO(deps) {
       const project = deserializeProject(await file.text(), defaultSettings());
       if (state.generation !== importGeneration) throw new Error("읽는 동안 회로가 변경되어 불러오기를 취소했습니다. 파일을 다시 선택하세요.");
       if (!openProject(project, { fallbackTitle: file.name.replace(/\.json$/i, ""), fallbackSubtitle: "JSON에서 불러온 회로", resultText: "JSON에서 회로를 불러왔습니다. 해석 실행으로 계산하세요." })) return;
-      // An older file whose sources moved into the generator model says what changed (source-model.js migrateGeneratorSources).
-      setStatus(["JSON 불러오기 완료", ...(project.notes ?? [])].join(" · "), "ready");
+      setStatus("JSON 불러오기 완료", "ready");
     } catch (error) {
       elements["error-box"].innerHTML = `<strong>JSON 불러오기 실패</strong>${escapeHtml(error.message)}`;
       elements["error-box"].classList.remove("hidden");

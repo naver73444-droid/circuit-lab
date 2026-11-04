@@ -198,45 +198,80 @@ export function analysisCircuit(circuit) {
 /** Written by serializeProject: a file whose sources already follow this model is read as it is. */
 export const SOURCE_MODEL = "generator";
 
+const refOf = (component) => component.props.ref ?? component.id;
+const differs = (a, b) => Math.abs(a - b) > 1e-12 * Math.max(1, Math.abs(b));
+
 /** "V1: DC 값 5 V를 사인 오프셋으로 옮김" — a sine's offset takes the old DC value (the old engine's DC operating point read props.dc). */
 function moveDcToOffset(component, notes) {
   const props = component.props, dc = props.dc ?? "0";
   if (num(dc) === num(props.offset ?? 0)) return;
   props.offset = String(dc);
-  if (Number.isFinite(num(dc))) notes.push(`${props.ref ?? component.id}: DC 값 ${si(num(dc), unitOf(component))}를 사인 오프셋으로 옮김`);
+  if (Number.isFinite(num(dc))) notes.push(`${refOf(component)}: DC 값 ${si(num(dc), unitOf(component))}를 사인 오프셋으로 옮김`);
+}
+
+/**
+ * A DC or PULSE source of an old AC file becomes a sine at the file's phasor frequency (peak `amplitude`, cos phase `phase`). It is
+ * centred on the old dc value when `biased` (a diode: that value set the operating point) or for a DC source (its level); a square
+ * without a diode is centred on its average, not on a dc value the student never saw.
+ */
+function toSine(props, { biased, amplitude = "0", phase = 0, frequency }) {
+  const average = waveOf(props) === "SQUARE" ? averageLevel(props) : NaN;
+  const offset = !biased && Number.isFinite(average) ? store(average) : String(props.dc ?? "0");
+  Object.assign(props, { mode: "SIN", offset, amplitude: String(amplitude), phase: toEnginePhase(phase), frequency: String(frequency) });
+}
+
+/** What the student saw of a source: its canvas label and, for a sine with an amplitude, its phase (null otherwise). */
+function seen(component) {
+  const props = component.props, sounding = waveOf(props) === "SIN" && num(props.amplitude) !== 0;
+  return { label: generatorLabel(component), phase: sounding ? generatorFieldText(props, "phase") : null };
+}
+/**
+ * "V1: DC 12 V → 사인 2 Vpp · 1 kHz · +12 V, 위상 0°" when a migration changed the label or a sine's phase; the old phase is written
+ * when it changed ("V1: 사인 2 Vpp · 60 Hz, 위상 -90° → 0°" for a phase alone).
+ */
+function noteChange(component, before, notes) {
+  const after = seen(component), ref = refOf(component);
+  if (after.label === before.label && after.phase === before.phase) return;
+  // The same label means the same wave and Vpp, so both are sounding sines here.
+  if (after.label === before.label) { notes.push(`${ref}: ${after.label}, 위상 ${before.phase}° → ${after.phase}°`); return; }
+  const phase = (value) => value === null ? "" : `, 위상 ${value}°`;
+  notes.push(`${ref}: ${before.label}${before.phase !== after.phase ? phase(before.phase) : ""} → ${after.label}${phase(after.phase)}`);
 }
 
 /**
  * One source of a file saved for the AC analysis before sources were generators: its separate AC magnitude/phase was what the file
  * computed, so it moves into the waveform and the AC answers stay the same. A sine whose own peak/phase differ takes the AC value
- * (peak = AC magnitude, cos phase = AC phase); a DC or PULSE source with a non-zero AC part becomes that sine around its old DC value at
- * `frequency` (the file's phasor frequency). `biased` (the circuit has a diode): a sine's offset also takes the old DC value, which set
- * the diode's operating point for the AC run. Changes component.props in place; returns it.
+ * (peak = AC magnitude, cos phase = AC phase); a DC or PULSE source with a non-zero AC part becomes that sine at `frequency`.
+ * `biased` (the circuit has a diode): the old DC value set the diode's operating point for the AC run, so a sine's offset takes it, a
+ * square's sine is centred on it (toSine), and an AC 0 square whose average differs becomes a 0 Vpp sine around it.
  */
-export function migrateGeneratorSource(component, { analysis, frequency = "1k", biased = false, notes = [] } = {}) {
-  if (analysis !== "ac" || !isGeneratorSource(component) || component.props?.acMagnitude === undefined) return component;
+function migrateAcSource(component, { frequency, biased, notes }) {
   const props = component.props;
+  if (props?.acMagnitude === undefined) return;
   const magnitude = num(props.acMagnitude), phase = num(props.acPhase ?? 0);
-  if (!Number.isFinite(magnitude) || !Number.isFinite(phase)) return component;
-  const sinPhase = toEnginePhase(phase);
-  if (props.mode === "SIN") {
-    if (biased) moveDcToOffset(component, notes);
-    const same = Math.abs(num(props.amplitude ?? 0) - magnitude) <= 1e-12 * Math.max(1, magnitude) && Math.abs(((fromEnginePhase(props.phase) - phase) % 360 + 540) % 360 - 180) < 1e-9;
-    if (!same) Object.assign(props, { amplitude: String(props.acMagnitude), phase: sinPhase });
+  if (!Number.isFinite(magnitude) || !Number.isFinite(phase)) return;
+  if (props.mode === "SIN" && biased) moveDcToOffset(component, notes);
+  const before = seen(component), wave = waveOf(props);
+  if (wave === "SIN") {
+    const same = !differs(num(props.amplitude ?? 0), magnitude) && Math.abs(((fromEnginePhase(props.phase) - phase) % 360 + 540) % 360 - 180) < 1e-9;
+    if (!same) Object.assign(props, { amplitude: String(props.acMagnitude), phase: toEnginePhase(phase) });
   } else if (magnitude !== 0) {
-    Object.assign(props, { mode: "SIN", offset: String(props.dc ?? "0"), amplitude: String(props.acMagnitude), phase: sinPhase, frequency: String(frequency) });
+    toSine(props, { biased, amplitude: props.acMagnitude, phase, frequency });
+  } else if (biased && wave === "SQUARE") {
+    const average = averageLevel(props), dc = num(props.dc ?? 0);
+    if (Number.isFinite(average) && Number.isFinite(dc) && differs(average, dc)) toSine(props, { biased, frequency });
   }
-  return component;
+  noteChange(component, before, notes);
 }
 
 /**
  * The parts of a file saved before sources were generators (`analysis` = the file's analysis, `frequency` its phasor frequency), changed
- * in place so that the analysis the file was saved for gives the same answers. Returns the notes for the status line (empty when
- * nothing a student set was moved or lost).
- *   AC: each source as migrateGeneratorSource (offsets move only with a diode, where the DC bias changes the AC answer). When no sine is
- *       left but a source had an explicit AC 0, the first such source (a DC one first, so a square keeps its waveform) becomes a 0 Vpp
- *       sine: analysisCircuit then gives every source AC 0, as the file did, instead of making one the 1 V input. A file with no AC
- *       values at all keeps the 1 V input.
+ * in place so that the analysis the file was saved for gives the same answers. Returns the notes for the notice shown on opening (one per
+ * source whose waveform, level or phase changed).
+ *   AC: each source as migrateAcSource (the bias moves only with a diode, where it changes the AC answer). When no sine is left but a
+ *       source had an explicit AC 0, the first such source (a DC one first, so a square keeps its waveform) becomes a 0 Vpp sine:
+ *       analysisCircuit then gives every source AC 0, as the file did, instead of making one the 1 V input. A file with no AC values
+ *       at all keeps the 1 V input.
  *   DC: the old engine took a source's DC operating point from props.dc, a field the old inspector showed in the DC analysis; the new
  *       model takes a sine's offset and a square's average. A sine's offset takes dc; a square whose average differs cannot keep it and
  *       stays as it is, with a note.
@@ -250,17 +285,21 @@ export function migrateGeneratorSources(components, { analysis, frequency = "1k"
       if (props.dc === undefined) continue;
       if (wave === "SIN") moveDcToOffset(component, notes);
       const average = wave === "SQUARE" ? averageLevel(props) : NaN, old = num(props.dc);
-      if (Number.isFinite(average) && Number.isFinite(old) && Math.abs(average - old) > 1e-12 * Math.max(1, Math.abs(old))) {
-        notes.push(`${props.ref ?? component.id}: 구형의 DC 해석 값이 예전 DC 값 ${si(old, unitOf(component))}가 아닌 파형 평균 ${si(average, unitOf(component))}입니다`);
+      if (Number.isFinite(average) && Number.isFinite(old) && differs(average, old)) {
+        notes.push(`${refOf(component)}: 구형의 DC 해석 값이 예전 DC 값 ${si(old, unitOf(component))}가 아닌 파형 평균 ${si(average, unitOf(component))}입니다`);
       }
     }
   } else if (analysis === "ac") {
     const biased = components.some((component) => component.type === "D");
-    sources.forEach((component) => migrateGeneratorSource(component, { analysis, frequency, biased, notes }));
+    sources.forEach((component) => migrateAcSource(component, { frequency, biased, notes }));
     if (!sources.some((component) => waveOf(component.props) === "SIN")) {
       const silent = sources.filter((component) => component.props?.acMagnitude !== undefined && num(component.props.acMagnitude) === 0);
       const quiet = silent.find((component) => waveOf(component.props) === "DC") ?? silent[0];
-      if (quiet) Object.assign(quiet.props, { mode: "SIN", offset: String(quiet.props.dc ?? "0"), amplitude: "0", phase: "90", frequency: String(frequency) });
+      if (quiet) {
+        const before = seen(quiet);
+        toSine(quiet.props, { biased, frequency });
+        noteChange(quiet, before, notes);
+      }
     }
   }
   return notes;

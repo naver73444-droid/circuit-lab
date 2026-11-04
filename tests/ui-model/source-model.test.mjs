@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { componentDefaults, parseValue, simulateACAtFrequency, simulateDC } from "../../src/circuit-engine.js";
 import { steadyStateRun, suggestAnalysis } from "../../src/analysis-policy.js";
 import { deserializeProject, serializeProject } from "../../src/project-format.js";
-import { analysisCircuit, averageLevel, generatorEdit, generatorFieldText, generatorLabel, generatorView, migrateGeneratorSource, migrateGeneratorSources, siValueText } from "../../src/source-model.js";
+import { analysisCircuit, averageLevel, generatorEdit, generatorFieldText, generatorLabel, generatorView, migrateGeneratorSources, siValueText } from "../../src/source-model.js";
 
 const source = (type = "V", props = {}) => ({ id: `${type}1`, type, props: { ...componentDefaults(type), ref: `${type}1`, ...props } });
 const apply = (component, key, value) => { const patch = generatorEdit(component, key, value); assert.ok(patch, `${key} = ${value}`); Object.assign(component.props, patch); return component; };
@@ -93,20 +93,34 @@ test("the AC and DC answers of a lab RC follow the generator: 5 Vpp 1 kHz sine w
 
 test("files from before: in a file saved for AC, the separate AC values move into the waveform; DC/transient files keep their waveforms", () => {
   const ac = { analysis: "ac", frequency: "159.155" };
-  const defaultSine = migrateGeneratorSource(source("V", { mode: "SIN", acMagnitude: "1", acPhase: "0" }), ac);
+  /** One source migrated as a file: [the source, the notes]. */
+  const migrate = (component, options = ac) => [component, migrateGeneratorSources([component], options)];
+  const [defaultSine, sineNotes] = migrate(source("V", { mode: "SIN", acMagnitude: "1", acPhase: "0" }));
   assert.deepEqual([defaultSine.props.amplitude, defaultSine.props.phase], ["1", "90"], "AC 1∠0° on a default 5 V sine: the AC answer stays 1∠0°");
-  const dcWithAc = migrateGeneratorSource(source("V", { mode: "DC", dc: "3", acMagnitude: "10", acPhase: "30" }), ac);
+  assert.deepEqual(sineNotes, ["V1: 사인 10 Vpp · 60 Hz, 위상 -90° → 사인 2 Vpp · 60 Hz, 위상 0°"], "the amplitude change is announced, with the old cos phase (sin 0° = cos −90°)");
+  // A phase alone: 1 V peak at sin 0° (cos −90°) takes AC 1∠0°; the label is the same, so the note gives both phases.
+  const [turned, turnedNotes] = migrate(source("V", { mode: "SIN", amplitude: "1", phase: "0", acMagnitude: "1", acPhase: "0" }));
+  assert.equal(turned.props.phase, "90");
+  assert.deepEqual(turnedNotes, ["V1: 사인 2 Vpp · 60 Hz, 위상 -90° → 0°"]);
+  const [dcWithAc, dcNotes] = migrate(source("V", { mode: "DC", dc: "3", acMagnitude: "10", acPhase: "30" }));
   assert.deepEqual([dcWithAc.props.mode, dcWithAc.props.offset, dcWithAc.props.amplitude, dcWithAc.props.phase, dcWithAc.props.frequency], ["SIN", "3", "10", "120", "159.155"]);
-  const current = migrateGeneratorSource(source("I", { mode: "DC", dc: "0" }), ac);
+  assert.deepEqual(dcNotes, ["V1: DC 3 V → 사인 20 Vpp · 159.155 Hz · +3 V, 위상 30°"], "DC → sine is announced");
+  const [current] = migrate(source("I", { mode: "DC", dc: "0" }));
   assert.equal(current.props.amplitude, "1m", "an I source keeps its 1 mA AC (not 1 A)");
-  const off = migrateGeneratorSource(source("V", { mode: "DC", acMagnitude: "0" }), ac);
-  assert.equal(off.props.mode, "DC", "AC 0 alone stays a DC source (only the file-level rule may make it a silent sine)");
-  const linear = migrateGeneratorSource(source("V", { mode: "SIN", dc: "5", offset: "0", acMagnitude: "1", acPhase: "0" }), ac);
+  const off = source("V", { mode: "DC", acMagnitude: "0" });
+  assert.deepEqual(migrateGeneratorSources([off, source("V", { ref: "V2", mode: "SIN", amplitude: "1", phase: "90", acMagnitude: "1", acPhase: "0" })], ac), []);
+  assert.equal(off.props.mode, "DC", "AC 0 next to a sine stays a DC source (only the no-sine rule may make it a silent sine)");
+  const [linear] = migrate(source("V", { mode: "SIN", dc: "5", offset: "0", acMagnitude: "1", acPhase: "0" }));
   assert.equal(linear.props.offset, "0", "without a diode the hidden DC value (5 V) is not moved into the offset");
   assert.equal(generatorLabel(linear), "사인 2 Vpp · 60 Hz","the label keeps no +5 V");
-  const matching = migrateGeneratorSource(source("V", { mode: "SIN", amplitude: "2", phase: "0", acMagnitude: "2", acPhase: "-90" }), ac);
+  // A 0–5 V square, 1 ms high in 4 ms, with the hidden default dc 5 V: without a diode its sine is centred on its average 5·1/4 = 1.25 V.
+  const [square, squareNotes] = migrate(source("V", { mode: "PULSE", pulseV1: "0", pulseV2: "5", pulseWidth: "1m", pulsePeriod: "4m", acMagnitude: "1", acPhase: "0" }), { analysis: "ac", frequency: "1k" });
+  assert.deepEqual([square.props.mode, square.props.offset, square.props.amplitude], ["SIN", "1.25", "1"]);
+  assert.deepEqual(squareNotes, ["V1: 구형 5 Vpp · 250 Hz · +2.5 V → 사인 2 Vpp · 1 kHz · +1.25 V, 위상 0°"], "no +5 V from the hidden dc");
+  const [matching, matchingNotes] = migrate(source("V", { mode: "SIN", amplitude: "2", phase: "0", acMagnitude: "2", acPhase: "-90" }));
   assert.deepEqual([matching.props.amplitude, matching.props.phase], ["2", "0"], "a sine that already gives its AC value is kept");
-  const transient = migrateGeneratorSource(source("V", { mode: "SIN", acMagnitude: "2" }), { analysis: "transient" });
+  assert.deepEqual(matchingNotes, []);
+  const [transient] = migrate(source("V", { mode: "SIN", acMagnitude: "2" }), { analysis: "transient" });
   assert.deepEqual([transient.props.amplitude, transient.props.phase], ["5", "0"], "a transient file keeps its 5 V sine");
   // Two sources with their own AC parts give the same AC answer before and after.
   const part = (id, type, props, nets) => ({ id, type, x: 100, y: 100, rotation: 0, props: { ...componentDefaults(type), ref: id, ...props }, nets });
@@ -118,7 +132,7 @@ test("files from before: in a file saved for AC, the separate AC values move int
   const circuit = { version: 3, geometryVersion: 2, components: all.map(({ nets, ...c }) => c), wires, junctions: [] };
   const before = simulateACAtFrequency(circuit, "1k").points[0].componentCurrents.R3;
   const migrated = structuredClone(circuit);
-  migrated.components.forEach((c) => migrateGeneratorSource(c, ac));
+  migrateGeneratorSources(migrated.components, ac);
   const after = simulateACAtFrequency(analysisCircuit(migrated).circuit, "1k").points[0].componentCurrents.R3;
   near(after.re, before.re, 1e-12, "Re I(R3)"); near(after.im, before.im, 1e-12, "Im I(R3)");
 });
@@ -135,13 +149,15 @@ function migrationCircuit(props, diode = false) {
 const voltageAt = (result, pin) => result.points[0].nodeVoltages[result.topology.nodeIdByPin[pin]];
 
 test("옛 AC 이전: dc=5, offset=0인 SIN의 다이오드 동작점과 AC 5.807 mV를 보존한다", () => {
-  for (const [amplitude, phase] of [["1", "90"], ["8", "45"]]) {
+  // A sine of 8 V peak at 45° (sin = cos −45°) also takes the AC 1∠0°: 16 Vpp → 2 Vpp and −45° → 0°, announced after the offset.
+  const retuned = ["V1: 사인 16 Vpp · 60 Hz · +5 V, 위상 -45° → 사인 2 Vpp · 60 Hz · +5 V, 위상 0°"];
+  for (const [amplitude, phase, more] of [["1", "90", []], ["8", "45", retuned]]) {
     const before = migrationCircuit({ mode: "SIN", dc: "5", offset: "0", amplitude, phase, acMagnitude: "1", acPhase: "0" }, true);
     const dcBefore = simulateDC(before), acBefore = simulateACAtFrequency(before, "1k");
     const migrated = structuredClone(before);
     const notes = migrateGeneratorSources(migrated.components, { analysis: "ac", frequency: "1k" });
     assert.equal(migrated.components[0].props.offset, "5", "the old engine reads dc for the AC operating point, even when offset is present");
-    assert.deepEqual(notes, ["V1: DC 값 5 V를 사인 오프셋으로 옮김"], "the status line says the offset moved");
+    assert.deepEqual(notes, ["V1: DC 값 5 V를 사인 오프셋으로 옮김", ...more], "the notice says the offset moved");
     const prepared = analysisCircuit(migrated);
     assert.equal(prepared.circuit.components[0].props.dc, "5");
     const dcAfter = simulateDC(prepared.circuit), acAfter = simulateACAtFrequency(prepared.circuit, "1k");
@@ -155,8 +171,9 @@ test("옛 AC 이전: dc=5, offset=0인 SIN의 다이오드 동작점과 AC 5.807
   }
 });
 
-test("옛 AC 이전: DC/PULSE의 명시적 AC=0은 무입력을 유지하고 DC 평균도 보존한다", () => {
-  for (const mode of ["DC", "PULSE"]) {
+test("옛 AC 이전: DC/PULSE의 명시적 AC=0은 무입력을 유지하고, 다이오드가 없으면 보이던 파형의 평균을 오프셋으로 쓴다", () => {
+  // The DC source keeps its 5 V level; the default 0–5 V square (1 s high in 2 s) is centred on its average 2.5 V, not the hidden dc 5 V.
+  for (const [mode, level] of [["DC", 5], ["PULSE", 2.5]]) {
     const circuit = migrationCircuit({ mode, dc: "5", acMagnitude: "0", acPhase: "30" });
     migrateGeneratorSources(circuit.components, { analysis: "ac", frequency: "2k" });
     const prepared = analysisCircuit(circuit);
@@ -164,8 +181,8 @@ test("옛 AC 이전: DC/PULSE의 명시적 AC=0은 무입력을 유지하고 DC 
     assert.equal(circuit.components[0].props.frequency, "2k");
     assert.equal(prepared.acInput, null);
     assert.equal(prepared.circuit.components[0].props.acMagnitude, "0");
-    // A silent AC source drives a 1 kΩ load with 0 V; its DC operating point remains 5 V.
-    near(voltageAt(simulateDC(prepared.circuit), "R1:0"), 5, 1e-9, "DC level");
+    // A silent AC source drives a 1 kΩ load with 0 V; its DC level is the offset.
+    near(voltageAt(simulateDC(prepared.circuit), "R1:0"), level, 1e-9, `${mode} DC level`);
     const v = voltageAt(simulateACAtFrequency(prepared.circuit, "2k"), "R1:0");
     near(Math.hypot(v.re, v.im), 0, 1e-12, "AC load voltage");
   }
@@ -223,7 +240,8 @@ test("옛 AC 이전: 다른 사인이 있으면 AC 0인 DC·PULSE는 그대로 �
   assert.equal(plan.source, "V3", "the first periodic source triggers");
   // A file with only the DC supply: no sine is left, so V1 becomes the silent 0 Vpp sine — and is still not a time source.
   const lone = oldCircuit(rows.slice(0, 2));
-  migrateGeneratorSources(lone.components, { analysis: "ac", frequency: "159.155" });
+  assert.deepEqual(migrateGeneratorSources(lone.components, { analysis: "ac", frequency: "159.155" }), ["V1: DC 12 V → 사인 0 Vpp · 159.155 Hz · +12 V"],
+    "the silent sine is announced, with no phase (0 Vpp)");
   assert.deepEqual([lone.components[0].props.mode, lone.components[0].props.amplitude, lone.components[0].props.offset], ["SIN", "0", "12"]);
   assert.equal(analysisCircuit(lone).acInput, null, "the file's AC 0 is kept (no 1 V input)");
   assert.equal(suggestAnalysis(lone, oldSettings, "auto").settings.analysis, "dc", "a 0 Vpp sine is a DC level for the automatic choice");
@@ -232,6 +250,41 @@ test("옛 AC 이전: 다른 사인이 있으면 AC 0인 DC·PULSE는 그대로 �
   const both = oldCircuit(rows.slice(2, 4).concat(rows.slice(0, 2)));
   migrateGeneratorSources(both.components, { analysis: "ac" });
   assert.deepEqual(both.components.filter((c) => c.type === "V").map((c) => c.props.mode), ["PULSE", "SIN"]);
+});
+
+test("옛 AC 이전: 다이오드 회로에서 AC 0 구형의 평균이 예전 dc와 다르면 0 Vpp 사인(오프셋 = dc)으로 바꿔 동작점을 지킨다", () => {
+  // 10 mV sine through 10 µF into the diode node, biased from a square (dc 1 V, AC 0; the default 0–5 V wave averages 2.5 V) via 1 kΩ.
+  const withSine = oldCircuit([["V1", "V", { mode: "SIN", dc: "0", offset: "0", amplitude: "10m", phase: "90", frequency: "1k", acMagnitude: "10m", acPhase: "0" }, ["s", "0"]],
+    ["C1", "C", { value: "10u" }, ["s", "out"]], ["V2", "V", { mode: "PULSE", dc: "1", acMagnitude: "0" }, ["p", "0"]],
+    ["R1", "R", { value: "1k" }, ["p", "out"]], ["D1", "D", { is: "1e-12", n: "1" }, ["out", "0"]]]);
+  const acBefore = voltageAt(simulateACAtFrequency(withSine, "1k"), "D1:0");
+  const notes = migrateGeneratorSources(withSine.components, { analysis: "ac", frequency: "1k" });
+  const v2 = withSine.components.find((c) => c.id === "V2").props;
+  assert.deepEqual([v2.mode, v2.amplitude, v2.offset], ["SIN", "0", "1"]);
+  assert.deepEqual(notes, ["V2: 구형 5 Vpp · 500 mHz · +2.5 V → 사인 0 Vpp · 1 kHz · +1 V"], "only the square changed (the sine already gives its AC value)");
+  const prepared = analysisCircuit(withSine);
+  assert.equal(prepared.acInput, null);
+  const out = voltageAt(simulateACAtFrequency(prepared.circuit, "1k"), "D1:0");
+  // DC: (1 − 0.519 V)/1 kΩ ≈ 0.481 mA, rd ≈ 25.85 mV/0.481 mA ≈ 53.8 Ω. AC: 10 mV over −j15.9 Ω (10 µF at 1 kHz) into rd‖1 kΩ ≈ 51.0 Ω
+  // → |Vout| ≈ 10 mV · 51.0/|51.0 − j15.9| ≈ 9.55 mV (with the 2.5 V average instead: rd ≈ 13 Ω, ≈ 6.4 mV).
+  near(Math.hypot(out.re, out.im), 9.55e-3, 0.2e-3, "|Vout| at the old 1 V bias");
+  near(out.re, acBefore.re, 1e-10, "AC real part"); near(out.im, acBefore.im, 1e-10, "AC imaginary part");
+
+  // No sine: a DC supply (2 V, AC 0) and the same square, each through 1 kΩ to the diode. The square becomes the silent sine, so the
+  // supply stays DC, and the diode keeps its operating point: Thevenin 1.5 V behind 500 Ω → I ≈ 1.90 mA, Vd ≈ 0.552 V.
+  const rows = [["V1", "V", { mode: "DC", dc: "2", acMagnitude: "0" }, ["a", "0"]], ["R1", "R", { value: "1k" }, ["a", "out"]],
+    ["V2", "V", { mode: "PULSE", dc: "1", acMagnitude: "0" }, ["p", "0"]], ["R2", "R", { value: "1k" }, ["p", "out"]], ["D1", "D", { is: "1e-12", n: "1" }, ["out", "0"]]];
+  const noSine = oldCircuit(rows);
+  const dcBefore = voltageAt(simulateDC(noSine), "D1:0");
+  assert.deepEqual(migrateGeneratorSources(noSine.components, { analysis: "ac", frequency: "1k" }), ["V2: 구형 5 Vpp · 500 mHz · +2.5 V → 사인 0 Vpp · 1 kHz · +1 V"]);
+  assert.deepEqual(noSine.components.filter((c) => c.type === "V").map((c) => c.props.mode), ["DC", "SIN"]);
+  const dcAfter = voltageAt(simulateDC(analysisCircuit(noSine).circuit), "D1:0");
+  near(dcAfter, 0.552, 0.01, "Vd at Thevenin 1.5 V / 500 Ω");
+  near(dcAfter, dcBefore, 1e-9, "diode operating point as the old file");
+  // A square whose average already is its dc (2.5 V) keeps its waveform.
+  const even = oldCircuit(rows.map((row) => (row[0] === "V2" ? [row[0], row[1], { ...row[2], dc: "2.5" }, row[3]] : row)));
+  migrateGeneratorSources(even.components, { analysis: "ac", frequency: "1k" });
+  assert.equal(even.components.find((c) => c.id === "V2").props.mode, "PULSE");
 });
 
 test("옛 AC 파일 열기(deserializeProject): 다이오드 회로의 SIN dc=5는 DC 5 V·|Vout| 5.807 mV를 지키고 상태줄에 알린다", () => {

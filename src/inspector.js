@@ -532,6 +532,10 @@ export function createInspector(deps) {
 
   function renderAnalysisSettings() {
     if (!workspace.circuitActive) { workspace.renderDeferred = true; return; }
+    // A run that finishes while a field has the focus re-renders the fields: the same field keeps the focus and the selection, so the
+    // next keystroke still lands in it (typed text is a draft, put back below by applyInputDrafts).
+    const active = elements["analysis-settings"].contains(document.activeElement) ? document.activeElement : null;
+    const focused = active?.dataset.setting ? { key: active.dataset.setting, start: active.selectionStart, end: active.selectionEnd } : null;
     // Only the fields of the chosen analysis are shown; DC has none.
     if (state.settings.analysis === "dc") {
       elements["analysis-settings"].innerHTML = "";
@@ -598,6 +602,11 @@ export function createInspector(deps) {
         input.dispatchEvent(new Event("change"));
       });
     });
+    const again = focused && elements["analysis-settings"].querySelector(`[data-setting="${focused.key}"]`);
+    if (again && !elements["analysis-settings"].contains(document.activeElement)) {
+      again.focus({ preventScroll: true });
+      try { again.setSelectionRange(focused.start, focused.end); } catch { /* no selection to keep */ }
+    }
     elements["ac-view-toggle"].classList.toggle("hidden", state.settings.analysis !== "ac");
   }
 

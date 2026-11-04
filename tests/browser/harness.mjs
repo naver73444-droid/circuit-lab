@@ -307,12 +307,26 @@ export const partSel = (id) => `.component[data-id="${id}"] .component-hit`;
 
 const mouse = (type, x, y, extra = {}) => ctx.cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra });
 
-/** Centre of the first match, scrolled into view; the element at that point must be the target or inside it. */
+/**
+ * Centre of the first match, scrolled into view; the element at that point must be the target or inside it. The point is read once the
+ * element has stopped moving (up to about 1 s): a phone's smooth scroll to a result, or a canvas fit, would otherwise move it between
+ * this read and the click.
+ */
 export async function center(selector, { allowCovered = false } = {}) {
-  const point = await ev(`(() => {
-    const e = document.querySelector(${JSON.stringify(selector)}); if (!e) return null;
+  const point = await ev(`(async () => {
+    const find = () => document.querySelector(${JSON.stringify(selector)});
+    const frame = () => new Promise((done) => { const t = setTimeout(done, 50); requestAnimationFrame(() => { clearTimeout(t); done(); }); });
+    let e = find(); if (!e) return null;
     e.scrollIntoView({ block: "nearest", inline: "nearest" });
-    const r = e.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2;
+    let r = e.getBoundingClientRect();
+    for (let i = 0; i < 60; i += 1) {
+      await frame();
+      e = find(); if (!e) return null;
+      const n = e.getBoundingClientRect();
+      if (n.x === r.x && n.y === r.y && n.width === r.width && n.height === r.height) break;
+      r = n;
+    }
+    const x = r.x + r.width / 2, y = r.y + r.height / 2;
     const hit = document.elementFromPoint(x, y);
     const describe = (n) => n ? (n.tagName.toLowerCase() + (n.id ? "#" + n.id : "") + (typeof n.className === "string" && n.className ? "." + n.className.trim().split(/\\s+/).join(".") : "")) : "nothing";
     return { x, y, w: r.width, h: r.height, reachable: Boolean(hit && e.contains(hit)), hit: describe(hit) };

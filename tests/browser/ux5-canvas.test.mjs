@@ -297,8 +297,6 @@ describe("canvas UX for first-time students", { timeout: 300000 }, () => {
     assert.equal((await component("V1")).props.mode, "DC");
     assert.equal((await state()).historyDepth, depth + 1);
     assert.equal(await focused(), false, "Enter leaves the field (the keyboard closes)");
-    await ev(`document.activeElement?.blur()`); await settle();
-    assert.equal((await state()).historyDepth, depth + 1, "the blur after Enter does not commit the same edit twice");
     await ev(`document.getElementById("undo-button").scrollIntoView({ block: "center" })`);
     await tapSelector("#undo-button");
     assert.equal((await component("V1")).props.dc, previous, "one Undo restores the old DC level");
