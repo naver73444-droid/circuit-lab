@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clamp, formatNumber, formatSI, formatQuantity, niceTicks, sampleCurve, midpointRect, controlDefaults, r1 } from '../../../src/signals-util.js';
+import { clamp, formatComplex, formatNumber, formatSI, formatQuantity, niceTicks, sampleCurve, midpointRect, controlDefaults, r1 } from '../../../src/signals-util.js';
 
 test('formatNumber: three significant digits, typographic minus, no trailing zeros', () => {
   assert.equal(formatNumber(0), '0');
@@ -11,6 +11,16 @@ test('formatNumber: three significant digits, typographic minus, no trailing zer
   assert.equal(formatNumber(NaN), '—');
   assert.equal(formatNumber(123456), '1.23×10^5');
   assert.equal(formatNumber(0.0001234), '1.23×10^−4');
+});
+
+test('formatComplex: one shared complex format (re ± j im, a part below 1e-12 left out, four digits)', () => {
+  assert.equal(formatComplex({ re: 0.25, im: 0.25 }), '0.25+j0.25');
+  assert.equal(formatComplex({ re: 0.2, im: -0.4 }), '0.2−j0.4');
+  assert.equal(formatComplex({ re: 0, im: -1 }), '−j1');
+  assert.equal(formatComplex({ re: 1e-13, im: 1 }), 'j1');
+  assert.equal(formatComplex({ re: -0.5, im: 1e-13 }), '−0.5');
+  assert.equal(formatComplex({ re: 0, im: 0 }), '0');
+  assert.equal(formatComplex({ re: 0, im: -2 / Math.PI ** 2 }), '−j0.2026'); // 2/π² = 0.20264…
 });
 
 test('formatSI picks the prefix and carries rounding', () => {

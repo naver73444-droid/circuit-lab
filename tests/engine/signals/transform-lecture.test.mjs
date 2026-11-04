@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TRANSFORM_FAMILIES, spectrumValue, timeSignal, transformMetrics, transformControls, transformLesson, describeTransform, transformFrame,
-  signalEnergy, bandEnergy, timeRange, freqRange, cosineAutocorrelation,
+  signalEnergy, bandEnergy, timeRange, freqRange, cosineAutocorrelation, isProofFamily,
 } from '../../../src/signals-transform-model.js';
 import { controlDefaults } from '../../../src/signals-util.js';
 
@@ -282,6 +282,8 @@ test('every family draws finite frames; ranges and metrics exist', () => {
       }
       assert.doesNotMatch(describeTransform(value, p), /NaN|undefined|Infinity/);
     }
+    // 성질 증명 예시는 그림 범위를 proofFrame 안에서 정한다(위 프레임 검사로 충분, transform-proofs 시험에서 따로 검사).
+    if (isProofFamily(value)) continue;
     assert.ok(timeRange(value, defaults(value)).hi > timeRange(value, defaults(value)).lo);
     assert.ok(freqRange(value, defaults(value)).hi > freqRange(value, defaults(value)).lo);
   }
@@ -300,4 +302,31 @@ test('Fourier transform: the carrier / cos / PSD / bandwidth sliders are Hz insi
   }
   assert.match(transformLesson.formula('rect', { axis: 0 }), /X\(f\)=X\(ω\), ω=2πf/);
   assert.equal(transformLesson.controls('rect', {}).find((c) => c.key === 'T').label, 'τ 폭');
+});
+
+// Ch04_4 p11·p12·p16 증명 예시: 자유 예시의 일반 파형 순회(프레임·축·formula·read)는 proof도 포함하고,
+// 반진폭 폭(metrics)은 proof에 만들지 않는다. 수치 계약 전체는 transform-proofs.test.mjs.
+test('Ch04_4 성질 증명 예시: 강의 결과식이 lesson 수식에 있고 축을 바꿔도 같은 물리값을 읽는다', () => {
+  const proofs = TRANSFORM_FAMILIES.map((f) => f.value).filter((v) => v.startsWith('proof-'));
+  assert.deepEqual(proofs, ['proof-scale', 'proof-sin', 'proof-integral']);
+  for (const family of proofs) {
+    assert.throws(() => transformMetrics(family, defaults(family)), RangeError);
+    for (const axis of [0, 1]) {
+      const p = { ...defaults(family), line: 4, axis };
+      assert.match(transformLesson.formula(family, p), /^X\(ω\)=∫ x\(t\) e\^\(−jωt\) dt;/);
+      assert.ok(transformLesson.read(family, p).length > 20);
+      assert.equal(transformFrame(family, p).panes.length, 3);
+    }
+  }
+  // p12: x(at)↔(1/|a|)X(ω/a), 설계 예 a=−2에서 Y(ω)=1/(2−jω) → ω=2에서 0.25+j0.25
+  assert.ok(transformLesson.formula('proof-scale', { a: -2, line: 4, axis: 1 }).includes('Y(ω)=(1/|a|) X(ω/a)'));
+  assert.match(describeTransform('proof-scale', { a: -2, line: 4, axis: 1 }), /Y=0\.25\+j0\.25/);
+  // p11: x(t)sin(ω₀t)↔½[X(ω−ω₀)e^(−jπ/2)+X(ω+ω₀)e^(jπ/2)], T=2·f₀=2에서 Y(±f₀)=∓j
+  assert.ok(transformLesson.formula('proof-sin', { f0: 2, line: 4, axis: 0 }).includes('Y(ω)=[e^(−jπ/2)X(ω−ω₀)+e^(jπ/2)X(ω+ω₀)]/2'));
+  assert.match(describeTransform('proof-sin', { f0: 2, line: 4, axis: 0 }), /Y\(\+\)=−j1, Y\(−\)=j1/);
+  // p16: ∫x↔X(ω)/(jω)+πX(0)δ(ω), Π(t)에서 δ 면적 ω축 π · f축 1/2
+  assert.deepEqual(transformFrame('proof-integral', { axis: 1 }).panes[1].texts.map((t) => t.text), ['면적 π']);
+  assert.deepEqual(transformFrame('proof-integral', { axis: 0 }).panes[1].texts.map((t) => t.text), ['면적 1/2']);
+  // a=0은 lesson normalize가 0.25로 바꾼다
+  assert.deepEqual(transformLesson.normalize('proof-scale', { a: 0, line: 2 }).params, { line: 2, a: 0.25 });
 });

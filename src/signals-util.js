@@ -30,6 +30,16 @@ export function formatNumber(value, digits = 3) {
   return text.replace(/-/g, MINUS);
 }
 
+// Complex c as "0.25+j0.25", "−j1", "0" (a part below 1e-12 is left out).
+export function formatComplex(c, digits = 4) {
+  const re = Math.abs(c.re) < 1e-12 ? 0 : c.re;
+  const im = Math.abs(c.im) < 1e-12 ? 0 : c.im;
+  if (!im) return formatNumber(re, digits);
+  const jPart = `j${formatNumber(Math.abs(im), digits)}`;
+  if (!re) return `${im < 0 ? MINUS : ''}${jPart}`;
+  return `${formatNumber(re, digits)}${im < 0 ? MINUS : '+'}${jPart}`;
+}
+
 const PREFIXES = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n']];
 
 // SI formatting with a prefix chosen so the mantissa is in [1, 1000): 0.25 s -> "250 ms".

@@ -2,12 +2,17 @@
 //  step: RC unit-step response s(t) and h(t)=ds/dt (Ex 2.8, 2.18)   natural: series RLC natural response (Ex 2.14, 2.15)
 //  forced: first-order response to A cos(wt) = transient + steady state (Ex 2.16)   bibo: causality and BIBO stability from h(t)
 //  test: linearity / time-invariance test (expected vs actual output, Ex 2.1, 2.2)
+//  ode2-review / ode2-rlc: second-order unit-step response, s and h = ds/dt (Review p9, Ex 2.19) — signals-lti-step-model.js
 // Impulse-response examples 2.20-2.22 live in the convolution lesson (same definitions).
 import { formatNumber, sampleCurve, jumpList, niceTicks } from './signals-util.js';
 import { choiceControl } from './signals-axis.js';
+import {
+  ODE2_FAMILIES, isOde2Family, ode2Controls, ode2Cursor, ode2Describe, ode2Formula, ode2Frame, ode2Read,
+} from './signals-lti-step-model.js';
 
 export const LTI_FAMILIES = [
   { value: 'step', label: 'RC 계단응답과 h=ds/dt (Ex 2.8)' },
+  ...ODE2_FAMILIES,
   { value: 'nat-a', label: 'RLC 자연응답 · 실근 (Ex 2.14)' },
   { value: 'nat-b', label: 'RLC 자연응답 · 복소근 (Ex 2.15a)' },
   { value: 'nat-c', label: 'RLC 자연응답 · 중근 (Ex 2.15b)' },
@@ -16,6 +21,9 @@ export const LTI_FAMILIES = [
   { value: 'bibo-osc', label: '인과성·BIBO · e^(−σt) sin(5t) u(t)' },
   { value: 'test', label: '선형성·시불변성 시험 (Ex 2.1, 2.2)' },
 ];
+
+// Examples with a draggable time marker (cursor): the RC step response and the two second-order step responses.
+export const hasTimeMarker = (family) => family === 'step' || isOde2Family(family);
 
 const num = (v) => formatNumber(v, 4);
 const pts = (fn, lo, hi, n = 500, edges = []) => sampleCurve(fn, lo, hi, n, edges, { gaps: true });
@@ -297,6 +305,7 @@ function testFrame(p) {
 
 export function ltiFrame(family, params, cursor = 0) {
   if (family === 'step') return stepFrame(params, cursor);
+  if (isOde2Family(family)) return ode2Frame(family, params, cursor);
   if (family.startsWith('nat-')) return naturalFrame(family, params);
   if (family === 'forced') return forcedFrame(params);
   if (family === 'bibo' || family === 'bibo-osc') return biboFrame(family, params);
@@ -309,6 +318,7 @@ const slider = (key, label, min, max, step, initial, unit = '') => ({ key, label
 
 function ltiControls(family) {
   if (family === 'step') return [slider('tau', 'τ = RC', 0.05, 2, 0.05, 0.25, 's')];
+  if (isOde2Family(family)) return ode2Controls(family);
   if (family.startsWith('nat-')) return [slider('R', 'R 저항', 0.2, 14, 0.2, RLC_PRESETS[family].R, 'Ω'), slider('y0', 'y(0) 초기 전압', -3, 3, 0.5, RLC_PRESETS[family].y0, 'V')];
   if (family === 'forced') return [slider('omega', 'ω 입력 각주파수', 1, 20, 1, 8, 'rad/s'), slider('a', 'a=1/RC', 1, 10, 1, 4, '1/s'), slider('y0', 'y(0) 초기값', -5, 10, 1, 5), slider('A', 'A 입력 진폭', 0, 20, 1, FORCED_A)];
   if (family === 'bibo') return [slider('a', 'a (극점 s=−a)', -1, 3, 0.25, 1), slider('d', 'd 지연(+)/앞섬(−)', -1, 1, 0.25, 0, 's')];
@@ -347,11 +357,13 @@ export const ltiLesson = {
   controls: ltiControls,
   scrub: false,
   cursor(family, params) {
+    if (isOde2Family(family)) return ode2Cursor(family);
     if (family !== 'step') return null;
     const { hi } = stepWindow(params.tau ?? 0.25);
     return { min: 0, max: hi, step: hi / 150, initial: (params.tau ?? 0.25) * 0.5, unit: 's', symbol: 't', discrete: false };
   },
   describe({ family, params, cursor }) {
+    if (isOde2Family(family)) return ode2Describe(family, params, cursor);
     if (family === 'step') {
       const t = cursor;
       if (atStepJump(t)) return `τ=RC=${num(params.tau)} s · t=0: s=0, h(0)은 미정의 — 좌극한 h(0⁻)=0, 우극한 h(0⁺)=1/τ=${num(1 / params.tau)} (접선은 우극한 기울기)`;
@@ -374,13 +386,15 @@ export const ltiLesson = {
     return `${TEST_SYSTEMS[params.sys].label} · 이론 판정: ${e.linear ? '선형' : '비선형'}, ${e.timeInvariant ? '시불변' : '시변'} · 이 입력의 곡선: 선형성 ${lin}, 시불변성 ${tim}${hints.length ? ` · ${hints.join(' · ')}` : ''}`;
   },
   read(family) {
+    if (isOde2Family(family)) return ode2Read(family);
     if (family === 'step') return '선형·시불변이므로 계단응답을 미분하면 임펄스응답입니다: h=ds/dt. 접선의 기울기가 그 시각의 h(t)이고 t=τ에서 63.2%입니다.';
     if (family.startsWith('nat-')) return 'R을 키우면 특성근이 켤레 복소 → 중근 → 두 실근으로 갈라집니다. 입력은 0이고 초기 전압·전류가 응답을 만듭니다.';
     if (family === 'forced') return '강제응답은 과도(초기값이 정함, 사라짐)와 정상상태(입력 주파수 성분)의 합입니다. 초기 조건은 둘을 더한 뒤에 적용합니다.';
     if (family === 'test') return '선형·시불변 여부는 시스템 식으로 정해지고, 곡선 일치는 이 입력에서만의 결과입니다. 일치해도 α나 T를 바꿔 반례를 찾아 보세요.';
     return '인과는 t<0에서 h(t)=0, BIBO 안정은 ∫|h|dt<∞ 입니다. 극점이 왼쪽 반평면(a>0, σ>0)이면 누적이 수렴합니다.';
   },
-  formula(family) {
+  formula(family, params = {}) {
+    if (isOde2Family(family)) return ode2Formula(family, params);
     if (family === 'step') return 's(t)=(1−e^(−t/τ))u(t); h(t)=ds/dt=(1/τ)e^(−t/τ)u(t); τ=RC';
     if (family.startsWith('nat-')) return 'y″+(R/L)y′+y/(LC)=0; s²+(R/L)s+1/(LC)=0; y(0)=y₀; y′(0)=i(0)/C';
     if (family === 'forced') return 'y′+a y=A cos(ωt); y_ss=[aA cos ωt+Aω sin ωt]/(a²+ω²); y=c e^(−at)+y_ss; c=y(0)−y_ss(0)';
