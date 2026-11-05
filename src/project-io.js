@@ -4,6 +4,7 @@ import { normalizeAcBasis } from "./ac-basis.js";
 import { deserializeProject, serializeProject } from "./project-format.js";
 import { CURRENT_GEOMETRY_VERSION, circuitGeometryVersion } from "./circuit-geometry.js";
 import { currentProbeLabel } from "./current-direction.js";
+import { acrossProbeKey, acrossProbeLabel } from "./probe-voltage.js";
 import { escapeHtml } from "./safe-dom.js";
 import { PROBE_COLORS, defaultSettings, newProjectId } from "./editor-session.js";
 import { createAutosave, describeSavedAt, isEmptyProject } from "./persistence.js";
@@ -110,6 +111,9 @@ export function createProjectIO(deps) {
       "series-resonance": [{ kind: "current", componentId: "R1" }, { kind: "voltage", componentId: "C1", pin: 0 }],
       "lowpass-2nd": [{ kind: "voltage", componentId: "R1", pin: 0 }],
     };
+    // The 11/05 lab examples: vs, v_C across the capacitor (+ on the L side) and the loop current i.
+    const lab = [{ kind: "voltage", componentId: "V1", pin: 0 }, { kind: "voltage", componentId: "C1", across: true }, { kind: "current", componentId: "R1" }];
+    for (const labId of ["lab-rlc-27", "lab-rlc-200", "lab-rlc-2k2"]) defaults[labId] = lab;
     mutate(() => {
       resetProjectSession();
       state.projectId = newProjectId();
@@ -123,6 +127,7 @@ export function createProjectIO(deps) {
       if (example.acBasis) state.acBasis = normalizeAcBasis(example.acBasis);
       state.probes = (defaults[id] ?? []).map((probe, index) => {
         const component = state.circuit.components.find((item) => item.id === probe.componentId);
+        if (probe.across) return { ...probe, key: acrossProbeKey(probe.componentId), wireId: null, label: acrossProbeLabel(component), color: PROBE_COLORS[index] };
         if (probe.kind === "voltage") return { ...probe, key: `V:${probe.componentId}:${probe.pin}`, label: `V(${component.props.ref}.${probe.pin + 1})`, color: PROBE_COLORS[index] };
         const key = `I:${probe.componentId}${probe.winding === 2 ? ":2" : ""}`;
         return { ...probe, key, label: currentProbeLabel(component, circuitGeometryVersion(state.circuit), probe.winding), color: PROBE_COLORS[index] };

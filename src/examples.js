@@ -14,6 +14,34 @@ function circuit(components, wires) {
   return { version: 1, geometryVersion: CURRENT_GEOMETRY_VERSION, components, wires };
 }
 
+// The 11/05 lab: a generator square 0→6 V (6 Vpp · 1 kHz · +3 V, duty 50 %) drives i through + → L 1 mH → C 100 nF (+ at the L side)
+// → R → −, for three R. Step 0.2 µs: the engine's backward Euler at 1 µs damps the 27 Ω ringing (63 µs period) visibly too fast.
+function rlcLab(id, value, name, note) {
+  return {
+    id,
+    name,
+    description: "11/05 실험: 구형 6 Vpp·1 kHz·+3 V(0→6 V, 듀티 50 %), 전류 i는 전원 + → L 1 mH → C 100 nF → R → 전원 −. "
+      + `ω0 = 1/√(LC) = 100 krad/s(f0 = 15.92 kHz). ${note}`,
+    settings: { analysis: "transient", start: "0", end: "3m", step: "0.2u" },
+    circuit: circuit(
+      [
+        component("V1", "V", 120, 250, { mode: "PULSE", pulseV1: "0", pulseV2: "6", pulseDelay: "0", pulseRise: "0", pulseFall: "0", pulseWidth: "500u", pulsePeriod: "1m", ref: "V1" }, 90),
+        component("L1", "L", 280, 130, { value: "1m", ic: "0", ref: "L1" }),
+        component("C1", "C", 450, 130, { value: "100n", ic: "0", ref: "C1" }),
+        component("R1", "R", 570, 270, { value, ref: "R1" }, 90),
+        component("G1", "GND", 330, 410, { ref: "GND" }),
+      ],
+      [
+        wire("W1", "V1", 0, "L1", 0),
+        wire("W2", "L1", 1, "C1", 0),
+        wire("W3", "C1", 1, "R1", 0),
+        wire("W4", "R1", 1, "G1", 0),
+        wire("W5", "V1", 1, "G1", 0),
+      ],
+    ),
+  };
+}
+
 export const examples = [
   {
     id: "divider",
@@ -326,6 +354,12 @@ export const examples = [
       ],
     ),
   },
+  rlcLab("lab-rlc-27", "27", "RLC 직렬 실험 11/05 (27 Ω 부족감쇠)",
+    "R = 27 Ω: α = R/2L = 13.5 k/s, ζ = α/ω0 = 0.135 부족감쇠 — ωd ≈ 99.09 krad/s(15.77 kHz)로 울리고 v_C 첫 최대 ≈ 6 + 6·e^(−ζπ/√(1−ζ²)) ≈ 9.9 V(간격 0.2 µs의 화면 값은 약 9.8 V)."),
+  rlcLab("lab-rlc-200", "200", "RLC 직렬 실험 11/05 (200 Ω 임계감쇠)",
+    "R = 200 Ω: α = 100 k/s, ζ = 1 임계감쇠 — v_C가 넘치지 않고 가장 빨리 6 V에 닿습니다(v_C = 6[1 − (1 + ω0t)e^(−ω0t)])."),
+  rlcLab("lab-rlc-2k2", "2.2k", "RLC 직렬 실험 11/05 (2.2 kΩ 과감쇠)",
+    "R = 2.2 kΩ: α = 1.1 M/s, ζ = 11 과감쇠 — 느린 극 s₁ = −α + √(α² − ω0²) ≈ −4.55 k/s(τ ≈ 220 µs)라 첫 반주기 끝 v_C ≈ 5.38 V로 6 V에 못 미치고, 정상상태에서는 약 0.56 V ↔ 5.44 V를 오갑니다."),
 ];
 
 export function cloneExample(id) {

@@ -31,10 +31,14 @@ const EXPECTED = {
   "ideal-transformer": ["V(R2.1)", "V(C1.2)"], // Vo = V(R2.1) of the textbook example
   "series-resonance": ["V(C1.1)", "V(L1.1)"], // same series loop as rlc: V_C, then the L–C node
   "lowpass-2nd": ["V(R1.1)"], // Vo across R ∥ C
+  // 11/05 lab, + → L → C → R → −: the C–R node is furthest (R's other end is ground), then the L–C node read on C.
+  "lab-rlc-27": ["V(R1.1)", "V(C1.1)"],
+  "lab-rlc-200": ["V(R1.1)", "V(C1.1)"],
+  "lab-rlc-2k2": ["V(R1.1)", "V(C1.1)"],
 };
 
-test("추천 프로브: 예제 13개 모두 기대한 출력 노드(V 1–2개)와 전원 전류 I(V1)를 고른다", () => {
-  assert.equal(examples.length, 13);
+test("추천 프로브: 예제 16개 모두 기대한 출력 노드(V 1–2개)와 전원 전류 I(V1)를 고른다", () => {
+  assert.equal(examples.length, 16);
   for (const example of examples) {
     const suggestion = suggestProbes(example.circuit);
     assert.deepEqual(suggestion.voltage.map((probe) => probe.label), EXPECTED[example.id], example.id);
